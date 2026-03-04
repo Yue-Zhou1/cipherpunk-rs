@@ -1,0 +1,21 @@
+name: Container Images
+
+on:
+  push:
+    paths:
+      - "containers/**"
+      - ".github/workflows/containers.yml"
+  pull_request:
+    paths:
+      - "containers/**"
+      - ".github/workflows/containers.yml"
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version centralization
+        run: bash containers/check_version_dedup.sh
+      - name: Build all tool images and verify versions
+        run: bash containers/build_and_verify.sh
