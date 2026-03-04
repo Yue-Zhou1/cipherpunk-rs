@@ -209,3 +209,66 @@ async fn export_zip_with_multiple_findings_creates_single_archive_with_all_findi
     assert!(has_a, "missing entries for finding A");
     assert!(has_b, "missing entries for finding B");
 }
+
+#[tokio::test]
+async fn phase1_fixture_pack_exports_zip_and_retriggers_rule_match_deterministically() {
+    let (image, digest) = repo_digest("busybox:1.36");
+    let dir = tempdir().expect("tempdir");
+    let store = EvidenceStore::new(dir.path());
+    let finding_id = FindingId::new("F-CRYPTO-0099");
+
+    let pack = EvidencePack {
+        manifest: EvidenceManifest {
+            finding_id: "F-CRYPTO-0099".to_string(),
+            title: "Phase1 rule finding".to_string(),
+            agent_version: "0.1.0".to_string(),
+            source_commit: "a1b2c3d4".to_string(),
+            source_content_hash: Some("sha256:content".to_string()),
+            tool: "rule-engine".to_string(),
+            tool_version: "0.1.0".to_string(),
+            container_image: image,
+            container_digest: digest,
+            reproduction_command: "sh -lc 'grep -q aead_encrypt /evidence/harness/src/lib.rs && echo rule-match'"
+                .to_string(),
+            expected_output_description: "rule-match".to_string(),
+            files: vec![],
+            environment_manifest: None,
+        },
+        files: vec![EvidenceFile::text(
+            "harness/src/lib.rs",
+            "pub fn demo() { aead_encrypt(key, nonce, msg); }\n",
+        )],
+    };
+
+    store
+        .save_pack(&finding_id, &pack)
+        .await
+        .expect("save phase1 pack");
+
+    let zip_path = dir.path().join("phase1-evidence-pack.zip");
+    store
+        .export_zip(std::slice::from_ref(&finding_id), &zip_path)
+        .await
+        .expect("export zip");
+    assert!(zip_path.exists(), "expected evidence zip");
+
+    let script_path = dir.path().join("F-CRYPTO-0099").join("reproduce.sh");
+    let output = Command::new("env")
+        .args([
+            "-i",
+            "PATH=/usr/local/bin:/usr/bin:/bin",
+            "bash",
+            script_path.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .expect("run reproduce.sh");
+    assert!(
+        output.status.success(),
+        "reproduce failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("rule-match"),
+        "expected deterministic rule-match output"
+    );
+}

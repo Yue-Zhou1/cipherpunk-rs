@@ -9,3 +9,4 @@ audit-agent-core = { path = "../core" }
 
 [dev-dependencies]
 chrono = "0.4"
+tempfile = "3"
