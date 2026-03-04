@@ -44,42 +44,74 @@ MADSIM_TAG="audit-agent/madsim:${MADSIM_VERSION}"
 MIRI_TAG="audit-agent/miri:${MIRI_TOOLCHAIN}"
 FUZZ_TAG="audit-agent/fuzz:${CARGO_FUZZ_VERSION}-${CARGO_AUDIT_VERSION}"
 
-docker build \
-  -f "${ROOT_DIR}/containers/kani/Dockerfile" \
+build_image() {
+  local dockerfile="$1"
+  local tag="$2"
+  shift 2
+
+  if [[ "${USE_BUILDX_CACHE:-0}" == "1" ]]; then
+    local buildx_driver
+    buildx_driver="$(docker buildx inspect 2>/dev/null | awk '/Driver:/ { print $2; exit }' || true)"
+    if [[ "${buildx_driver}" == "docker-container" || "${buildx_driver}" == "kubernetes" ]]; then
+      local cache_dir="${DOCKER_CACHE_DIR:-${ROOT_DIR}/.docker-buildx-cache}"
+      mkdir -p "${cache_dir}"
+      docker buildx build \
+        --load \
+        --cache-from "type=local,src=${cache_dir}" \
+        --cache-to "type=local,dest=${cache_dir},mode=max" \
+        -f "${dockerfile}" \
+        -t "${tag}" \
+        "$@" \
+        "${ROOT_DIR}"
+    else
+      echo "buildx driver '${buildx_driver:-unknown}' does not support local cache export; building without explicit cache flags"
+      docker buildx build \
+        --load \
+        -f "${dockerfile}" \
+        -t "${tag}" \
+        "$@" \
+        "${ROOT_DIR}"
+    fi
+  else
+    docker build \
+      -f "${dockerfile}" \
+      -t "${tag}" \
+      "$@" \
+      "${ROOT_DIR}"
+  fi
+}
+
+build_image \
+  "${ROOT_DIR}/containers/kani/Dockerfile" \
+  "${KANI_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
   --build-arg KANI_VERSION="${KANI_VERSION}" \
-  --build-arg KANI_RUSTC_TOOLCHAIN="${KANI_TOOLCHAIN}" \
-  -t "${KANI_TAG}" \
-  "${ROOT_DIR}"
+  --build-arg KANI_RUSTC_TOOLCHAIN="${KANI_TOOLCHAIN}"
 
-docker build \
-  -f "${ROOT_DIR}/containers/z3/Dockerfile" \
+build_image \
+  "${ROOT_DIR}/containers/z3/Dockerfile" \
+  "${Z3_TAG}" \
   --build-arg UBUNTU_BASE_IMAGE="${UBUNTU_BASE}" \
-  --build-arg Z3_VERSION="${Z3_VERSION}" \
-  -t "${Z3_TAG}" \
-  "${ROOT_DIR}"
+  --build-arg Z3_VERSION="${Z3_VERSION}"
 
-docker build \
-  -f "${ROOT_DIR}/containers/madsim/Dockerfile" \
+build_image \
+  "${ROOT_DIR}/containers/madsim/Dockerfile" \
+  "${MADSIM_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
-  --build-arg MADSIM_VERSION="${MADSIM_VERSION}" \
-  -t "${MADSIM_TAG}" \
-  "${ROOT_DIR}"
+  --build-arg MADSIM_VERSION="${MADSIM_VERSION}"
 
-docker build \
-  -f "${ROOT_DIR}/containers/miri/Dockerfile" \
+build_image \
+  "${ROOT_DIR}/containers/miri/Dockerfile" \
+  "${MIRI_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
-  --build-arg MIRI_RUSTC_TOOLCHAIN="${MIRI_TOOLCHAIN}" \
-  -t "${MIRI_TAG}" \
-  "${ROOT_DIR}"
+  --build-arg MIRI_RUSTC_TOOLCHAIN="${MIRI_TOOLCHAIN}"
 
-docker build \
-  -f "${ROOT_DIR}/containers/fuzz/Dockerfile" \
+build_image \
+  "${ROOT_DIR}/containers/fuzz/Dockerfile" \
+  "${FUZZ_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
   --build-arg CARGO_FUZZ_VERSION="${CARGO_FUZZ_VERSION}" \
-  --build-arg CARGO_AUDIT_VERSION="${CARGO_AUDIT_VERSION}" \
-  -t "${FUZZ_TAG}" \
-  "${ROOT_DIR}"
+  --build-arg CARGO_AUDIT_VERSION="${CARGO_AUDIT_VERSION}"
 
 # version checks
 docker run --rm "${KANI_TAG}" /usr/local/cargo/bin/cargo install --list | grep -F "kani-verifier v${KANI_VERSION}" >/dev/null

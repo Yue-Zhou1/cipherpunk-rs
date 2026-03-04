@@ -137,9 +137,7 @@ impl SourceResolver {
         let head = repo.head()?.target().context("HEAD has no target")?;
         if head != oid {
             return Err(anyhow::anyhow!(
-                "TOCTOU guard failed: HEAD {} does not match requested {}",
-                head,
-                oid
+                "TOCTOU guard failed: HEAD {head} does not match requested {oid}"
             ));
         }
 

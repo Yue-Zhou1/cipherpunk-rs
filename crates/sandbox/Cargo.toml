@@ -1,0 +1,12 @@
+[package]
+name = "sandbox"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+bollard = "0.17"
+futures-util = "0.3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }
