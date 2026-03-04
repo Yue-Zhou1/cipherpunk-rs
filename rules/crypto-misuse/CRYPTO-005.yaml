@@ -1,0 +1,17 @@
+id: CRYPTO-005
+title: "Missing point validation (small-subgroup check absent)"
+severity: High
+category: CryptoMisuse
+description: |
+  Point verification appears to omit subgroup validation.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "verify_point_no_subgroup_check"
+  semantic_checks:
+    - missing_small_subgroup_check
+references:
+  - "https://safecurves.cr.yp.to/"
+remediation: |
+  Validate points are on-curve and in the prime-order subgroup.

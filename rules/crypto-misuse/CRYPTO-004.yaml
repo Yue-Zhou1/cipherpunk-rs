@@ -1,0 +1,17 @@
+id: CRYPTO-004
+title: "Weak or deterministic RNG in crypto-critical path"
+severity: Critical
+category: CryptoMisuse
+description: |
+  Deterministic RNG constructor appears in a crypto-critical code path.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "deterministic_rng_new"
+  semantic_checks:
+    - rng_is_predictable
+references:
+  - "https://csrc.nist.gov/publications/detail/sp/800-90a/rev-1/final"
+remediation: |
+  Replace deterministic RNG with CSPRNG seeded from trusted entropy.

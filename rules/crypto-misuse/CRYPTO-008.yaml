@@ -1,0 +1,17 @@
+id: CRYPTO-008
+title: "unsafe block in signature verification critical path"
+severity: Medium
+category: CryptoMisuse
+description: |
+  Signature verification path enters unsafe code without clear invariant guards.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "unsafe_signature_verify"
+  semantic_checks:
+    - unsafe_in_verification_path
+references:
+  - "https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html"
+remediation: |
+  Remove unsafe from verification path or document and enforce invariants.

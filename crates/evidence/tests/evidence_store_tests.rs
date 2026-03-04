@@ -46,6 +46,7 @@ fn sample_pack(image: &str, digest: &str, reproduce_cmd: &str) -> EvidencePack {
             reproduction_command: reproduce_cmd.to_string(),
             expected_output_description: "prints reproduced".to_string(),
             files: vec![],
+            environment_manifest: None,
         },
         files: vec![
             EvidenceFile::text("harness/src/lib.rs", "pub fn harness() {}\n"),

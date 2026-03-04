@@ -1,0 +1,17 @@
+id: CRYPTO-006
+title: "Unchecked unwrap() on crypto result type in hot path"
+severity: Medium
+category: CryptoMisuse
+description: |
+  Crypto result is unwrapped directly in a hot path.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "unwrap_crypto_result"
+  semantic_checks:
+    - unchecked_unwrap
+references:
+  - "https://doc.rust-lang.org/std/result/"
+remediation: |
+  Handle crypto errors explicitly instead of unwrapping.

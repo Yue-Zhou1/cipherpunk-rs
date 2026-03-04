@@ -1,0 +1,17 @@
+id: CRYPTO-003
+title: "Field element deserialization without canonicality check"
+severity: High
+category: CryptoMisuse
+description: |
+  Field deserialization path appears without canonicality validation.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "deserialize_field_unchecked"
+  semantic_checks:
+    - missing_canonicality_check
+references:
+  - "https://datatracker.ietf.org/doc/html/rfc9380"
+remediation: |
+  Enforce canonical field-element checks before use.

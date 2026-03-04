@@ -1,0 +1,17 @@
+id: CRYPTO-007
+title: "Hardcoded cryptographic constant (key/seed in source)"
+severity: Critical
+category: CryptoMisuse
+description: |
+  Hardcoded key or seed material appears in source.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "hardcoded_key_material"
+  semantic_checks:
+    - hardcoded_secret_present
+references:
+  - "https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password"
+remediation: |
+  Move key material to secure runtime secret management.

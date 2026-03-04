@@ -9,6 +9,15 @@ use zip::CompressionMethod;
 use zip::write::FileOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentManifest {
+    pub rust_toolchain: String,
+    pub cargo_lock_hash: String,
+    pub workspace_root: PathBuf,
+    pub audit_id: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceManifest {
     pub finding_id: String,
     pub title: String,
@@ -22,6 +31,8 @@ pub struct EvidenceManifest {
     pub reproduction_command: String,
     pub expected_output_description: String,
     pub files: Vec<String>,
+    #[serde(default)]
+    pub environment_manifest: Option<EnvironmentManifest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

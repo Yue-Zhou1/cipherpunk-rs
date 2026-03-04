@@ -1,0 +1,17 @@
+id: CRYPTO-002
+title: "Missing domain separator in transcript/hash"
+severity: High
+category: CryptoMisuse
+description: |
+  Transcript hash call appears without explicit domain separation.
+detection:
+  patterns:
+    - type: function_call
+      name_matches:
+        - "transcript_hash_no_domain"
+  semantic_checks:
+    - missing_domain_separator
+references:
+  - "https://eprint.iacr.org/2020/081"
+remediation: |
+  Add an explicit protocol domain separator before hashing.
