@@ -1,0 +1,263 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "CodeLocation": {
+      "properties": {
+        "crate_name": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line_range": {
+          "items": [
+            {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "module": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "crate_name",
+        "file",
+        "line_range",
+        "module"
+      ],
+      "type": "object"
+    },
+    "Evidence": {
+      "properties": {
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "container_digest": {
+          "type": "string"
+        },
+        "counterexample": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seed": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "smt2_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool_versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "trace_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "container_digest",
+        "tool_versions"
+      ],
+      "type": "object"
+    },
+    "FindingCategory": {
+      "enum": [
+        "UnderConstrained",
+        "SpecMismatch",
+        "CryptoMisuse",
+        "Replay",
+        "DoS",
+        "Race",
+        "Incentive",
+        "UnsafeUB",
+        "SideChannel",
+        "SupplyChain"
+      ],
+      "type": "string"
+    },
+    "FindingId": {
+      "type": "string"
+    },
+    "FindingStatus": {
+      "enum": [
+        "Open",
+        "Acknowledged",
+        "Fixed",
+        "Regressed",
+        "WontFix"
+      ],
+      "type": "string"
+    },
+    "Framework": {
+      "enum": [
+        "Halo2",
+        "Circom",
+        "SP1",
+        "RISC0",
+        "MadSim",
+        "Loom",
+        "Static"
+      ],
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "Critical",
+        "High",
+        "Medium",
+        "Low",
+        "Observation"
+      ],
+      "type": "string"
+    },
+    "VerificationStatus": {
+      "oneOf": [
+        {
+          "enum": [
+            "Verified"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Unverified": {
+              "properties": {
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Unverified"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "properties": {
+    "affected_components": {
+      "items": {
+        "$ref": "#/definitions/CodeLocation"
+      },
+      "type": "array"
+    },
+    "category": {
+      "$ref": "#/definitions/FindingCategory"
+    },
+    "evidence": {
+      "$ref": "#/definitions/Evidence"
+    },
+    "evidence_gate_level": {
+      "format": "uint8",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "exploit_path": {
+      "type": "string"
+    },
+    "framework": {
+      "$ref": "#/definitions/Framework"
+    },
+    "id": {
+      "$ref": "#/definitions/FindingId"
+    },
+    "impact": {
+      "type": "string"
+    },
+    "llm_generated": {
+      "type": "boolean"
+    },
+    "prerequisites": {
+      "type": "string"
+    },
+    "recommendation": {
+      "type": "string"
+    },
+    "regression_check": {
+      "type": "boolean"
+    },
+    "regression_test": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "severity": {
+      "$ref": "#/definitions/Severity"
+    },
+    "status": {
+      "$ref": "#/definitions/FindingStatus"
+    },
+    "title": {
+      "type": "string"
+    },
+    "verification_status": {
+      "$ref": "#/definitions/VerificationStatus"
+    }
+  },
+  "required": [
+    "affected_components",
+    "category",
+    "evidence",
+    "evidence_gate_level",
+    "exploit_path",
+    "framework",
+    "id",
+    "impact",
+    "llm_generated",
+    "prerequisites",
+    "recommendation",
+    "regression_check",
+    "severity",
+    "status",
+    "title",
+    "verification_status"
+  ],
+  "title": "Finding",
+  "type": "object"
+}

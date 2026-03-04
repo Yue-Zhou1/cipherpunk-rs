@@ -1,0 +1,28 @@
+[package]
+name = "intake"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = "1"
+audit-agent-core = { path = "../core" }
+chrono = { version = "0.4", features = ["clock"] }
+flate2 = "1"
+git2 = { version = "0.19", default-features = false, features = ["https", "ssh"] }
+hex = "0.4"
+num-bigint = { version = "0.4", features = ["serde"] }
+pdf-extract = "0.7"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tar = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+toml = "0.8"
+walkdir = "2"
+zip = "2"
+
+[dev-dependencies]
+tempfile = "3"
