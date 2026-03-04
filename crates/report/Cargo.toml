@@ -1,0 +1,11 @@
+[package]
+name = "report"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+audit-agent-core = { path = "../core" }
+
+[dev-dependencies]
+chrono = "0.4"

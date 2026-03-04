@@ -6,7 +6,7 @@ use crate::audit_yaml::AuditYaml;
 use crate::finding::Finding;
 
 pub fn finding_json_schema_value() -> Value {
-    schema_as_value::<Finding>()
+    schema_as_value::<Vec<Finding>>()
 }
 
 pub fn audit_yaml_json_schema_value() -> Value {
