@@ -22,6 +22,18 @@ pub fn render_technical_report(findings: &[Finding], manifest: &AuditManifest) -
         out.push_str(&format!("- Category: `{:?}`\n", finding.category));
         out.push_str(&format!("- Framework: `{:?}`\n", finding.framework));
 
+        // Verification status badge
+        match &finding.verification_status {
+            audit_agent_core::finding::VerificationStatus::Verified => {
+                out.push_str("- **Status:** \u{2705} Verified\n");
+                out.push_str("  > Backed by tool output. Reproducible.\n");
+            }
+            audit_agent_core::finding::VerificationStatus::Unverified { reason } => {
+                out.push_str("- **Status:** \u{26a0} Unverified\n");
+                out.push_str(&format!("  > {reason}\n"));
+            }
+        }
+
         if let Some(primary) = finding.affected_components.first() {
             out.push_str(&format!(
                 "- Location: `{}`:{}-{}\n",
@@ -37,6 +49,20 @@ pub fn render_technical_report(findings: &[Finding], manifest: &AuditManifest) -
                 }
                 out.push_str("```\n\n");
             }
+        }
+
+        // Attack scenario
+        if !finding.prerequisites.is_empty()
+            || !finding.exploit_path.is_empty()
+        {
+            out.push_str("### Attack Scenario\n");
+            if !finding.prerequisites.is_empty() {
+                out.push_str(&format!("- **Prerequisites:** {}\n", finding.prerequisites));
+            }
+            if !finding.exploit_path.is_empty() {
+                out.push_str(&format!("- **Exploit Path:** {}\n", finding.exploit_path));
+            }
+            out.push('\n');
         }
 
         let reproduce = finding

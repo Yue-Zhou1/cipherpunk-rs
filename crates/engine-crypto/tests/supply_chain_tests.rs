@@ -6,6 +6,33 @@ use engine_crypto::supply_chain::{CargoAuditAdvisory, DependencyKind, SupplyChai
 use intake::workspace::WorkspaceAnalyzer;
 use tempfile::tempdir;
 
+#[test]
+fn parses_cargo_audit_json_output() {
+    let json = r#"{
+      "vulnerabilities": {
+        "list": [
+          {
+            "advisory": {
+              "id": "RUSTSEC-2024-0001",
+              "package": "some-crate"
+            },
+            "affected": {
+              "functions": {
+                "some_crate::vulnerable_fn": [">=0.1.0"]
+              }
+            }
+          }
+        ]
+      }
+    }"#;
+    let advisories = engine_crypto::supply_chain::parse_cargo_audit_json(json)
+        .expect("parse cargo audit json");
+    assert_eq!(advisories.len(), 1);
+    assert_eq!(advisories[0].cve_id, "RUSTSEC-2024-0001");
+    assert_eq!(advisories[0].crate_name, "some-crate");
+    assert_eq!(advisories[0].affected_fn, "some_crate::vulnerable_fn");
+}
+
 fn write_file(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create parent dir");

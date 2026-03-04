@@ -4,7 +4,7 @@ use std::fs;
 use anyhow::Result;
 use audit_agent_core::finding::Severity;
 use audit_agent_core::workspace::CargoWorkspace;
-use regex::Regex;
+use tree_sitter::Parser;
 use walkdir::WalkDir;
 
 pub struct SupplyChainAnalyzer {
@@ -119,10 +119,15 @@ impl SupplyChainAnalyzer {
 }
 
 fn build_tree_sitter_call_graph(workspace: &CargoWorkspace) -> Result<HashMap<String, HashSet<String>>> {
-    let fn_def_re = Regex::new(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)").expect("fn regex");
-    let call_re = Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(").expect("call regex");
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::language())
+        .map_err(|e| anyhow::anyhow!("failed to set language: {e}"))?;
+
     let excluded = HashSet::from([
         "if", "for", "while", "loop", "match", "return", "Some", "None", "Ok", "Err",
+        "format", "println", "eprintln", "vec", "assert", "assert_eq", "assert_ne",
+        "panic", "todo", "unimplemented", "unreachable",
     ]);
 
     let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
@@ -136,37 +141,81 @@ fn build_tree_sitter_call_graph(workspace: &CargoWorkspace) -> Result<HashMap<St
                 continue;
             }
             let content = fs::read_to_string(entry.path())?;
+            let Some(tree) = parser.parse(&content, None) else {
+                continue;
+            };
 
-            let mut current_fn: Option<String> = None;
-            let mut brace_depth: i32 = 0;
-            for line in content.lines() {
-                if let Some(captures) = fn_def_re.captures(line) {
-                    let name = captures[1].to_string();
-                    current_fn = Some(name.clone());
-                    edges.entry(name).or_default();
-                    brace_depth = 0;
-                }
-
-                if let Some(caller) = current_fn.as_ref() {
-                    for cap in call_re.captures_iter(line) {
-                        let callee = cap[1].to_string();
-                        if excluded.contains(callee.as_str()) || callee == *caller {
-                            continue;
-                        }
-                        edges.entry(caller.clone()).or_default().insert(callee);
-                    }
-                }
-
-                brace_depth += line.matches('{').count() as i32;
-                brace_depth -= line.matches('}').count() as i32;
-                if brace_depth <= 0 && line.contains('}') {
-                    current_fn = None;
-                }
-            }
+            collect_call_edges(&content, tree.root_node(), &excluded, &mut edges);
         }
     }
 
     Ok(edges)
+}
+
+fn collect_call_edges(
+    content: &str,
+    node: tree_sitter::Node,
+    excluded: &HashSet<&str>,
+    edges: &mut HashMap<String, HashSet<String>>,
+) {
+    // Find function definitions
+    if node.kind() == "function_item" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let fn_name = &content[name_node.start_byte()..name_node.end_byte()];
+            edges.entry(fn_name.to_string()).or_default();
+
+            // Find all call_expression nodes inside this function's body
+            if let Some(body) = node.child_by_field_name("body") {
+                collect_calls_in_body(content, body, fn_name, excluded, edges);
+            }
+        }
+    }
+
+    // Recurse into children (but not into nested function bodies — those are handled above)
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.kind() != "function_item" || node.kind() != "function_item" {
+                collect_call_edges(content, child, excluded, edges);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn collect_calls_in_body(
+    content: &str,
+    node: tree_sitter::Node,
+    caller: &str,
+    excluded: &HashSet<&str>,
+    edges: &mut HashMap<String, HashSet<String>>,
+) {
+    if node.kind() == "call_expression" {
+        if let Some(fn_node) = node.child(0) {
+            let fn_text = &content[fn_node.start_byte()..fn_node.end_byte()];
+            // Get the final segment of any path: "module::func" -> "func"
+            let callee = fn_text.rsplit("::").next().unwrap_or(fn_text);
+            if !excluded.contains(callee) && callee != caller {
+                edges
+                    .entry(caller.to_string())
+                    .or_default()
+                    .insert(callee.to_string());
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            collect_calls_in_body(content, cursor.node(), caller, excluded, edges);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
 }
 
 fn detect_crypto_entries(edges: &HashMap<String, HashSet<String>>) -> HashSet<String> {
@@ -231,4 +280,52 @@ fn severity_rank(severity: &Severity) -> u8 {
         Severity::Low => 2,
         Severity::Observation => 1,
     }
+}
+
+/// Parse the JSON output of `cargo audit --json` into advisories.
+pub fn parse_cargo_audit_json(output: &str) -> Result<Vec<CargoAuditAdvisory>> {
+    // cargo audit --json produces: { "vulnerabilities": { "list": [ { "advisory": { "id": "...", ... }, "versions": { ... }, "affected": { "functions": { "crate::fn": [...] } } } ] } }
+    let parsed: serde_json::Value = serde_json::from_str(output)?;
+    let mut advisories = Vec::new();
+
+    let empty_list = vec![];
+    let vuln_list = parsed
+        .get("vulnerabilities")
+        .and_then(|v| v.get("list"))
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty_list);
+
+    for vuln in vuln_list {
+        let advisory = vuln.get("advisory");
+        let cve_id = advisory
+            .and_then(|a| a.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("UNKNOWN")
+            .to_string();
+        let crate_name = advisory
+            .and_then(|a| a.get("package"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Extract affected function names from the "affected.functions" map
+        let affected_fns: Vec<String> = vuln
+            .get("affected")
+            .and_then(|a| a.get("functions"))
+            .and_then(|f| f.as_object())
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default();
+
+        let affected_fn = affected_fns.first().cloned().unwrap_or_default();
+
+        advisories.push(CargoAuditAdvisory {
+            cve_id,
+            crate_name,
+            affected_fn,
+            severity: Severity::Medium, // default; caller can adjust based on CVSS
+            dependency_kind: DependencyKind::Normal,
+        });
+    }
+
+    Ok(advisories)
 }

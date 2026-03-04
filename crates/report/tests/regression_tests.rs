@@ -85,6 +85,7 @@ fn phase1_output_layout_matches_io_contract_structure() {
     let suite = generate_regression_tests(&[sample_finding()]);
     write_phase1_output_layout(
         &out_dir,
+        "# Executive Summary\n",
         "# Technical\n",
         "[]",
         "{\"version\":\"2.1.0\",\"runs\":[]}",

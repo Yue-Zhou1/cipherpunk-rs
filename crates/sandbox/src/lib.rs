@@ -88,6 +88,8 @@ pub enum SandboxError {
     Timeout,
     #[error("sandbox process OOM-killed")]
     OomKilled,
+    #[error("network allowlist mode is not yet implemented")]
+    AllowlistNotImplemented,
 }
 
 impl SandboxExecutor {
@@ -114,6 +116,10 @@ impl SandboxExecutor {
         let image = self.image_registry.resolve(&request.image);
         self.ensure_image(&image).await?;
 
+        if matches!(request.network, NetworkPolicy::Allowlist(_)) {
+            return Err(SandboxError::AllowlistNotImplemented);
+        }
+
         let container_name = format!("audit-sandbox-{}", Uuid::new_v4().simple());
         let host_config = HostConfig {
             mounts: Some(
@@ -131,10 +137,7 @@ impl SandboxExecutor {
             ),
             memory: Some((request.budget.memory_mb * 1024 * 1024) as i64),
             nano_cpus: Some((request.budget.cpu_cores * 1_000_000_000.0) as i64),
-            network_mode: Some(match request.network {
-                NetworkPolicy::Disabled => "none".to_string(),
-                NetworkPolicy::Allowlist(_) => "bridge".to_string(),
-            }),
+            network_mode: Some("none".to_string()),
             ..Default::default()
         };
 

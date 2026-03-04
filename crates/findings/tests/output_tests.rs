@@ -101,9 +101,51 @@ fn sarif_output_has_expected_shape() {
 }
 
 #[test]
+fn sarif_output_validates_against_sarif_schema() {
+    let manifest = sample_manifest();
+    let findings = sample_findings();
+    let sarif = to_sarif(&findings, &manifest);
+    let sarif_json = serde_json::to_string_pretty(&sarif).expect("serialize sarif");
+    let sarif_value: serde_json::Value = serde_json::from_str(&sarif_json).expect("parse sarif json");
+
+    // Validate required SARIF 2.1.0 structure
+    assert_eq!(sarif_value["version"], "2.1.0");
+    assert_eq!(
+        sarif_value["$schema"],
+        "https://json.schemastore.org/sarif-2.1.0.json"
+    );
+    let runs = sarif_value["runs"].as_array().expect("runs array");
+    assert!(!runs.is_empty());
+    let run = &runs[0];
+    assert!(run["tool"]["driver"]["name"].is_string());
+    assert!(run["tool"]["driver"]["version"].is_string());
+    let results = run["results"].as_array().expect("results array");
+    for result in results {
+        assert!(result["ruleId"].is_string(), "missing ruleId");
+        assert!(result["level"].is_string(), "missing level");
+        assert!(result["message"]["text"].is_string(), "missing message.text");
+        let locations = result["locations"].as_array().expect("locations array");
+        for loc in locations {
+            assert!(
+                loc["physicalLocation"]["artifactLocation"]["uri"].is_string(),
+                "missing artifact URI"
+            );
+            assert!(
+                loc["physicalLocation"]["region"]["startLine"].is_number(),
+                "missing startLine"
+            );
+            assert!(
+                loc["physicalLocation"]["region"]["endLine"].is_number(),
+                "missing endLine"
+            );
+        }
+    }
+}
+
+#[test]
 fn findings_json_validates_against_committed_finding_schema() {
     let findings = sample_findings();
-    let findings_json = to_findings_json(&findings);
+    let findings_json = to_findings_json(&findings).expect("serialize findings");
     let instance: serde_json::Value = serde_json::from_str(&findings_json).expect("valid json");
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

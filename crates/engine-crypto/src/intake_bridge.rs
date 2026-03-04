@@ -113,7 +113,7 @@ fn infer_entry_point_kind(function: &str) -> EntryPointKind {
     } else if lower.contains("ingest") {
         EntryPointKind::Ingest
     } else {
-        EntryPointKind::GuestEntry
+        EntryPointKind::Unknown
     }
 }
 

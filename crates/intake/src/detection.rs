@@ -47,6 +47,7 @@ pub enum EntryPointKind {
     Prover,
     Ingest,
     GuestEntry,
+    Unknown,
 }
 
 const HALO2_SIGNATURES: &[&str] = &[
