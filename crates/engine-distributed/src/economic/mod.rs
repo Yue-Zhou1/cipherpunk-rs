@@ -181,12 +181,14 @@ impl EconomicAttackChecker {
             return default_description;
         };
 
+        let safe_name = sanitize_prompt_input(&vector.name);
+        let safe_summary = sanitize_prompt_input(&default_description);
         let prompt = format!(
             "Improve readability of this economic risk note without changing technical content.\n\
              Vector: {} - {}\n\
              Evidence summary: {}\n\
              Output only improved text.",
-            vector.id, vector.name, default_description
+            vector.id, safe_name, safe_summary
         );
         llm_call(
             llm.as_ref(),
@@ -270,7 +272,7 @@ fn run_detection(
         } => {
             let matches = find_matching_calls(fn_patterns, &scan.calls);
             let triggered =
-                workspace_has_compiled_code(workspace, semantic_index) && matches.is_empty();
+                workspace_has_compiled_code(workspace, semantic_index, scan) && matches.is_empty();
             DetectionOutcome {
                 triggered,
                 description: description.clone(),
@@ -333,13 +335,22 @@ fn run_detection(
     }
 }
 
-fn workspace_has_compiled_code(workspace: &CargoWorkspace, semantic_index: &SemanticIndex) -> bool {
-    !workspace.members.is_empty()
-        && (!semantic_index.call_graph.is_empty()
-            || workspace
-                .members
-                .iter()
-                .any(|member| member.path.join("src").exists()))
+fn workspace_has_compiled_code(
+    workspace: &CargoWorkspace,
+    semantic_index: &SemanticIndex,
+    scan: &WorkspaceScan,
+) -> bool {
+    let has_rust_targets = workspace.members.iter().any(|member| {
+        member.path.join("src/lib.rs").exists() || member.path.join("src/main.rs").exists()
+    });
+
+    let has_semantic_calls = semantic_index
+        .call_graph
+        .values()
+        .any(|callees| !callees.is_empty());
+    let has_ast_calls = !scan.calls.is_empty();
+
+    has_rust_targets && (has_semantic_calls || has_ast_calls)
 }
 
 fn find_matching_calls<'a>(patterns: &[String], calls: &'a [SymbolHit]) -> Vec<&'a SymbolHit> {
@@ -591,4 +602,57 @@ fn default_location(workspace: &CargoWorkspace) -> CodeLocation {
         line_range: (1, 1),
         snippet: Some("// no direct location captured".to_string()),
     }
+}
+
+fn sanitize_prompt_input(text: &str) -> String {
+    const MAX_CHARS: usize = 4_000;
+    let mut cleaned = String::with_capacity(text.len().min(MAX_CHARS));
+    for ch in text.chars() {
+        if ch == '\n' || ch == '\t' || !ch.is_control() {
+            cleaned.push(ch);
+        }
+        if cleaned.len() >= MAX_CHARS {
+            break;
+        }
+    }
+
+    let mut out = String::new();
+    for line in cleaned.lines() {
+        let trimmed = line.trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("system:")
+            || lower.starts_with("assistant:")
+            || lower.starts_with("user:")
+        {
+            out.push_str("[role-label-redacted]\n");
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+
+    let mut sanitized = out
+        .replace("```", "'''")
+        .replace("<|", "< ")
+        .replace("|>", " >")
+        .replace("<<", "< ")
+        .replace(">>", " >");
+
+    for marker in [
+        "SYSTEM:",
+        "System:",
+        "system:",
+        "ASSISTANT:",
+        "Assistant:",
+        "assistant:",
+        "USER:",
+        "User:",
+        "user:",
+    ] {
+        sanitized = sanitized.replace(marker, "[role-label-redacted]:");
+    }
+    sanitized
 }

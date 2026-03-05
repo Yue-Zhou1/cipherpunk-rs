@@ -191,42 +191,97 @@ pub fn confirm_workspace(
 }
 
 pub fn export_audit_yaml(config: &AuditConfig, path: &Path) -> Result<()> {
-    let source_map = match &config.source.origin {
+    #[derive(Serialize)]
+    struct ExportAuditYaml {
+        source: ExportSource,
+        scope: ExportScope,
+        engines: EngineConfig,
+        budget: ExportBudget,
+        optional_inputs: OptionalInputs,
+        llm: LlmConfig,
+    }
+
+    #[derive(Serialize)]
+    struct ExportSource {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        local_path: Option<PathBuf>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        archive: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    struct ExportScope {
+        target_crates: Vec<String>,
+        exclude_crates: Vec<String>,
+        features: Vec<Vec<String>>,
+        detected_frameworks: Vec<audit_agent_core::finding::Framework>,
+    }
+
+    #[derive(Serialize)]
+    struct ExportBudget {
+        kani_timeout_secs: u64,
+        z3_timeout_secs: u64,
+        fuzz_duration_secs: u64,
+        madsim_ticks: u64,
+        max_llm_retries: u8,
+        semantic_index_timeout_secs: u64,
+    }
+
+    let source = match &config.source.origin {
         SourceOrigin::Git {
             url,
             original_ref: _,
-        } => serde_json::json!({
-            "url": url,
-            "commit": config.source.commit_hash
-        }),
-        SourceOrigin::Local { original_path } => serde_json::json!({
-            "local_path": original_path
-        }),
-        SourceOrigin::Archive { original_filename } => serde_json::json!({
-            "archive": original_filename
-        }),
+        } => ExportSource {
+            url: Some(url.clone()),
+            local_path: None,
+            commit: Some(config.source.commit_hash.clone()),
+            archive: None,
+        },
+        SourceOrigin::Local { original_path } => ExportSource {
+            url: None,
+            local_path: Some(original_path.clone()),
+            commit: Some(config.source.commit_hash.clone()),
+            archive: None,
+        },
+        SourceOrigin::Archive { original_filename } => ExportSource {
+            url: None,
+            local_path: Some(config.source.local_path.clone()),
+            commit: Some(config.source.commit_hash.clone()),
+            archive: Some(original_filename.clone()),
+        },
     };
 
-    let yaml = serde_yaml::to_string(&serde_json::json!({
-        "source": source_map,
-        "scope": {
-            "target_crates": config.scope.target_crates,
-            "exclude_crates": config.scope.excluded_crates,
-            "features": config.scope.build_matrix.iter().map(|variant| variant.features.clone()).collect::<Vec<_>>(),
+    let export = ExportAuditYaml {
+        source,
+        scope: ExportScope {
+            target_crates: config.scope.target_crates.clone(),
+            exclude_crates: config.scope.excluded_crates.clone(),
+            features: config
+                .scope
+                .build_matrix
+                .iter()
+                .map(|variant| variant.features.clone())
+                .collect(),
+            detected_frameworks: config.scope.detected_frameworks.clone(),
         },
-        "engines": {
-            "crypto_zk": config.engines.crypto_zk,
-            "distributed": config.engines.distributed
+        engines: config.engines.clone(),
+        budget: ExportBudget {
+            kani_timeout_secs: config.budget.kani_timeout_secs,
+            z3_timeout_secs: config.budget.z3_timeout_secs,
+            fuzz_duration_secs: config.budget.fuzz_duration_secs,
+            madsim_ticks: config.budget.madsim_ticks,
+            max_llm_retries: config.budget.max_llm_retries,
+            semantic_index_timeout_secs: config.budget.semantic_index_timeout_secs,
         },
-        "budget": {
-            "kani_timeout_secs": config.budget.kani_timeout_secs,
-            "z3_timeout_secs": config.budget.z3_timeout_secs,
-            "fuzz_duration_secs": config.budget.fuzz_duration_secs,
-            "madsim_ticks": config.budget.madsim_ticks,
-            "max_llm_retries": config.budget.max_llm_retries,
-            "semantic_index_timeout_secs": config.budget.semantic_index_timeout_secs
-        }
-    }))?;
+        optional_inputs: config.optional_inputs.clone(),
+        llm: config.llm.clone(),
+    };
+
+    let yaml = serde_yaml::to_string(&export)?;
 
     fs::write(path, yaml).with_context(|| format!("write audit yaml {}", path.display()))?;
     Ok(())

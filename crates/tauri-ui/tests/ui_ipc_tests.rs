@@ -122,6 +122,16 @@ fn export_audit_yaml_roundtrips_with_config_parser() {
     export_audit_yaml(&sample_config(), &path).expect("export yaml");
     let parsed = ConfigParser::parse(&path);
     assert!(parsed.is_ok(), "exported yaml should parse in intake");
+
+    let yaml = fs::read_to_string(&path).expect("read exported yaml");
+    assert!(
+        yaml.contains("llm:"),
+        "exported yaml should include llm section from resolved config"
+    );
+    assert!(
+        yaml.contains("optional_inputs:"),
+        "exported yaml should include optional_inputs section from resolved config"
+    );
 }
 
 #[test]

@@ -144,6 +144,12 @@ fn two_file_change_reanalyzes_only_affected_crates_and_cache_hit_exceeds_80_perc
     assert_eq!(diff.affected_crates.len(), 2);
     assert_eq!(diff.rerun_tasks.len(), 2);
     assert!(
+        diff.rerun_tasks
+            .iter()
+            .all(|task| matches!(task, intake::diff::TaskId::AnalyzeFile(_))),
+        "incremental diff should schedule per-file analysis tasks"
+    );
+    assert!(
         diff.cache_hit_rate > 0.80,
         "expected >80% cache hit, got {}",
         diff.cache_hit_rate
@@ -173,4 +179,29 @@ fn cargo_toml_change_triggers_full_rerun() {
 
     assert!(diff.full_rerun_required);
     assert_eq!(diff.rerun_tasks.len(), 50);
+    assert!(
+        diff.rerun_tasks
+            .iter()
+            .all(|task| matches!(task, intake::diff::TaskId::AnalyzeCrate(_))),
+        "full rerun should schedule per-crate analysis tasks"
+    );
+}
+
+#[test]
+fn analysis_cache_persists_findings_across_instances() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cache_path = dir.path().join("analysis-cache.sled");
+    let finding = sample_finding("crate-1");
+
+    {
+        let cache = AnalysisCache::open(&cache_path).expect("open persistent cache");
+        cache.insert("base-commit", &[finding.clone()]);
+    }
+
+    {
+        let cache = AnalysisCache::open(&cache_path).expect("re-open persistent cache");
+        let loaded = cache.get("base-commit");
+        assert_eq!(loaded.len(), 1, "cached findings should persist on disk");
+        assert_eq!(loaded[0].id, finding.id);
+    }
 }

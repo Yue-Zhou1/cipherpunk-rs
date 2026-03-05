@@ -1,0 +1,14 @@
+vectors:
+  - id: ECON-008
+    name: "No bridge finality verification call"
+    category: Bridge
+    detection:
+      type: CallSiteAbsent
+      fn_patterns:
+        - "BridgeFinalityVerifier::verify"
+        - "L1ProofVerifier::verify_state_root"
+        - "BridgeExitGuard::validate_proof"
+      description: "No call site found that verifies bridge proof finality before mint/release"
+    severity: Observation
+    spec_refs:
+      - "EIP-4844"

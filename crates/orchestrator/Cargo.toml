@@ -1,5 +1,5 @@
 [package]
-name = "report"
+name = "orchestrator"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
@@ -7,15 +7,14 @@ version.workspace = true
 [dependencies]
 anyhow = "1"
 audit-agent-core = { path = "../core" }
+chrono = "0.4"
 findings = { path = "../findings" }
+intake = { path = "../intake" }
 llm = { path = "../llm" }
-printpdf = "0.7"
+report = { path = "../report" }
 serde_json = "1"
 
 [dev-dependencies]
-anyhow = "1"
 async-trait = "0.1"
-chrono = "0.4"
-lopdf = "0.34"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

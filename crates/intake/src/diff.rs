@@ -10,6 +10,7 @@ use audit_agent_core::workspace::CargoWorkspace;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TaskId {
     AnalyzeCrate(String),
+    AnalyzeFile(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -17,30 +18,71 @@ pub struct DiffAnalysis {
     pub base_commit: String,
     pub head_commit: String,
     pub affected_crates: Vec<String>,
+    pub affected_files: Vec<PathBuf>,
     pub full_rerun_required: bool,
     pub rerun_tasks: Vec<TaskId>,
     pub cached_findings: Vec<Finding>,
     pub cache_hit_rate: f32,
 }
 
-#[derive(Default)]
 pub struct AnalysisCache {
     inner: RwLock<HashMap<String, Vec<Finding>>>,
+    persistent_db: Option<sled::Db>,
+}
+
+impl Default for AnalysisCache {
+    fn default() -> Self {
+        Self {
+            inner: RwLock::new(HashMap::new()),
+            persistent_db: None,
+        }
+    }
 }
 
 impl AnalysisCache {
+    pub fn open(path: &Path) -> Result<Self> {
+        let db = sled::open(path).with_context(|| format!("open sled db {}", path.display()))?;
+        Ok(Self {
+            inner: RwLock::new(HashMap::new()),
+            persistent_db: Some(db),
+        })
+    }
+
     pub fn insert(&self, commit: &str, findings: &[Finding]) {
         if let Ok(mut guard) = self.inner.write() {
             guard.insert(commit.to_string(), findings.to_vec());
         }
+        if let Some(db) = &self.persistent_db
+            && let Ok(encoded) = serde_json::to_vec(findings)
+        {
+            let _ = db.insert(commit.as_bytes(), encoded);
+            let _ = db.flush();
+        }
     }
 
     pub fn get(&self, commit: &str) -> Vec<Finding> {
-        self.inner
+        if let Some(cached) = self
+            .inner
             .read()
             .ok()
             .and_then(|guard| guard.get(commit).cloned())
-            .unwrap_or_default()
+        {
+            return cached;
+        }
+
+        let Some(db) = &self.persistent_db else {
+            return vec![];
+        };
+        let Ok(Some(bytes)) = db.get(commit.as_bytes()) else {
+            return vec![];
+        };
+        let Ok(findings) = serde_json::from_slice::<Vec<Finding>>(&bytes) else {
+            return vec![];
+        };
+        if let Ok(mut guard) = self.inner.write() {
+            guard.insert(commit.to_string(), findings.clone());
+        }
+        findings
     }
 }
 
@@ -87,14 +129,23 @@ impl DiffModeAnalyzer {
             affected.into_iter().collect::<Vec<_>>()
         };
 
-        let rerun_tasks = affected_crates
-            .iter()
-            .cloned()
-            .map(TaskId::AnalyzeCrate)
-            .collect::<Vec<_>>();
+        let rerun_tasks = if full_rerun_required {
+            affected_crates
+                .iter()
+                .cloned()
+                .map(TaskId::AnalyzeCrate)
+                .collect::<Vec<_>>()
+        } else {
+            changed_files
+                .iter()
+                .cloned()
+                .map(TaskId::AnalyzeFile)
+                .collect::<Vec<_>>()
+        };
 
         let changed_set = affected_crates.iter().cloned().collect::<HashSet<_>>();
         let previous = self.cache.get(base);
+        let previous_total = previous.len();
         let mut cached_findings = Vec::<Finding>::new();
         for mut finding in previous {
             let finding_crate = finding
@@ -112,7 +163,6 @@ impl DiffModeAnalyzer {
             cached_findings.push(finding);
         }
 
-        let previous_total = self.cache.get(base).len();
         let cache_hit_rate = if previous_total == 0 {
             0.0
         } else {
@@ -123,6 +173,7 @@ impl DiffModeAnalyzer {
             base_commit: base.to_string(),
             head_commit: head.to_string(),
             affected_crates,
+            affected_files: changed_files,
             full_rerun_required,
             rerun_tasks,
             cached_findings,
@@ -154,9 +205,13 @@ fn changed_files(repo_root: &Path, base: &str, head: &str) -> Result<Vec<PathBuf
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout
+    let mut unique = BTreeSet::<PathBuf>::new();
+    for path in stdout
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(PathBuf::from)
-        .collect::<Vec<_>>())
+    {
+        unique.insert(path);
+    }
+    Ok(unique.into_iter().collect())
 }
