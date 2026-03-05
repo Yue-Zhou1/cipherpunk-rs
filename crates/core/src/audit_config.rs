@@ -68,6 +68,7 @@ pub struct BudgetConfig {
     pub fuzz_duration_secs: u64,
     pub madsim_ticks: u64,
     pub max_llm_retries: u8,
+    pub semantic_index_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

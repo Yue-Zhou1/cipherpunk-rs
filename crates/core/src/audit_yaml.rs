@@ -36,4 +36,5 @@ pub struct AuditYamlBudget {
     pub fuzz_duration_secs: Option<u64>,
     pub madsim_ticks: Option<u64>,
     pub max_llm_retries: Option<u8>,
+    pub semantic_index_timeout_secs: Option<u64>,
 }

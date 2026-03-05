@@ -158,6 +158,7 @@ fn audit_config_and_manifest_round_trip() {
             fuzz_duration_secs: 3600,
             madsim_ticks: 100_000,
             max_llm_retries: 3,
+            semantic_index_timeout_secs: 120,
         },
         optional_inputs: sample_optional_inputs(),
         llm: audit_agent_core::audit_config::LlmConfig {
@@ -215,6 +216,7 @@ fn audit_context_is_constructible_with_all_fields() {
             fuzz_duration_secs: 3600,
             madsim_ticks: 100_000,
             max_llm_retries: 3,
+            semantic_index_timeout_secs: 120,
         },
         optional_inputs: sample_optional_inputs(),
         llm: audit_agent_core::audit_config::LlmConfig {

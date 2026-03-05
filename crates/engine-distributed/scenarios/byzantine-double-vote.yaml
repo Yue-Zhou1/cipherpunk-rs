@@ -1,0 +1,6 @@
+name: "Single Byzantine Double Vote"
+description: "One validator sends conflicting votes"
+steps:
+  - Wait: { ticks: 100 }
+  - DoubleVote: { node: 0, at_height: 50 }
+  - CheckInvariant: safety

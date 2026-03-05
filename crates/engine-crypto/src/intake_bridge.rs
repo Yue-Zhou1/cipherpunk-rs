@@ -117,7 +117,10 @@ fn infer_entry_point_kind(function: &str) -> EntryPointKind {
     }
 }
 
-fn build_environment_manifest(config: &AuditConfig, workspace: &CargoWorkspace) -> Result<EnvironmentManifest> {
+fn build_environment_manifest(
+    config: &AuditConfig,
+    workspace: &CargoWorkspace,
+) -> Result<EnvironmentManifest> {
     let cargo_lock_hash = hash_cargo_lock(&workspace.root)?;
     let rust_toolchain = detect_rust_toolchain();
 

@@ -14,12 +14,20 @@ pub fn generate_regression_tests(findings: &[Finding]) -> RegressionTestSuite {
     }
 
     let mut tests = String::new();
+    let mut kani_harnesses = Vec::<KaniHarness>::new();
     tests.push_str("//! Auto-generated regression tests for crypto audit findings.\n");
     tests.push_str("//! Each test verifies the vulnerable pattern is still detectable.\n\n");
     tests.push_str("#[cfg(test)]\n");
     tests.push_str("mod generated_crypto_regressions {\n");
 
     for (idx, finding) in findings.iter().enumerate() {
+        if let Some(harness_source) = finding.regression_test.as_ref() {
+            kani_harnesses.push(KaniHarness {
+                finding_id: finding.id.to_string(),
+                source: harness_source.clone(),
+            });
+        }
+
         let snippet = finding
             .affected_components
             .first()
@@ -33,7 +41,10 @@ pub fn generate_regression_tests(findings: &[Finding]) -> RegressionTestSuite {
             .map(|c| c.file.display().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        tests.push_str(&format!("    /// Regression test for finding: {}\n", finding.id));
+        tests.push_str(&format!(
+            "    /// Regression test for finding: {}\n",
+            finding.id
+        ));
         tests.push_str(&format!("    /// Original location: {file_path}\n"));
         tests.push_str("    #[test]\n");
         tests.push_str(&format!("    fn regression_{test_name}_{idx}() {{\n"));
@@ -45,18 +56,14 @@ pub fn generate_regression_tests(findings: &[Finding]) -> RegressionTestSuite {
             "        // This pattern triggered rule {}. If the vulnerable code was fixed,\n",
             finding.id
         ));
-        tests.push_str(
-            "        // this snippet should no longer match the pattern.\n",
-        );
+        tests.push_str("        // this snippet should no longer match the pattern.\n");
         tests.push_str(
             "        assert!(!snippet.is_empty(), \"captured snippet must not be empty\");\n",
         );
         tests.push_str(
             "        // TODO: Re-run rule evaluator on this snippet to verify detection.\n",
         );
-        tests.push_str(
-            "        // For now, assert the pattern string is present.\n",
-        );
+        tests.push_str("        // For now, assert the pattern string is present.\n");
 
         // Extract the key pattern from the snippet - look for the function call
         if let Some(component) = finding.affected_components.first() {
@@ -75,7 +82,7 @@ pub fn generate_regression_tests(findings: &[Finding]) -> RegressionTestSuite {
 
     RegressionTestSuite {
         crypto_tests: Some(tests),
-        kani_harnesses: vec![],
+        kani_harnesses,
         madsim_scenarios: vec![],
     }
 }
@@ -129,6 +136,25 @@ pub fn write_phase1_output_layout(
         output_dir.join("regression-tests/crypto_misuse_tests.rs"),
         crypto_tests,
     )?;
+
+    for harness in &regression.kani_harnesses {
+        fs::write(
+            output_dir.join(format!(
+                "regression-tests/kani_harnesses/{}.rs",
+                harness.finding_id
+            )),
+            &harness.source,
+        )?;
+    }
+
+    for (idx, scenario) in regression.madsim_scenarios.iter().enumerate() {
+        fs::write(
+            output_dir.join(format!(
+                "regression-tests/madsim_scenarios/scenario_{idx}.rs"
+            )),
+            scenario,
+        )?;
+    }
 
     Ok(())
 }

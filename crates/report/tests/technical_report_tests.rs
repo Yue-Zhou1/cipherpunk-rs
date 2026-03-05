@@ -92,11 +92,27 @@ fn technical_report_renders_snippets_and_inline_reproduce_commands() {
     assert!(report.contains("```rust"));
     assert!(report.contains("transcript_hash_no_domain"));
     assert!(report.contains("Reproduce: `bash evidence-pack/F-CRYPTO-0002/reproduce.sh`"));
-    assert_eq!(report.matches("```").count() % 2, 0, "broken markdown fences");
-    assert!(report.contains("Verified"), "should contain verification status");
-    assert!(report.contains("Attack Scenario"), "should contain attack scenario");
-    assert!(report.contains("Prerequisites:"), "should contain prerequisites");
-    assert!(report.contains("Exploit Path:"), "should contain exploit path");
+    assert_eq!(
+        report.matches("```").count() % 2,
+        0,
+        "broken markdown fences"
+    );
+    assert!(
+        report.contains("Verified"),
+        "should contain verification status"
+    );
+    assert!(
+        report.contains("Attack Scenario"),
+        "should contain attack scenario"
+    );
+    assert!(
+        report.contains("Prerequisites:"),
+        "should contain prerequisites"
+    );
+    assert!(
+        report.contains("Exploit Path:"),
+        "should contain exploit path"
+    );
 }
 
 #[test]
@@ -109,5 +125,9 @@ fn executive_report_includes_score_counts_and_top_findings() {
     assert!(report.contains("Finding Summary"));
     assert!(report.contains("High"));
     assert!(report.contains("Missing domain separator"));
-    assert!(report.contains("Deploy") || report.contains("Fix before deploy") || report.contains("Do not deploy"));
+    assert!(
+        report.contains("Deploy")
+            || report.contains("Fix before deploy")
+            || report.contains("Do not deploy")
+    );
 }

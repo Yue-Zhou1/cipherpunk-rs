@@ -109,6 +109,10 @@ impl SandboxExecutor {
         })
     }
 
+    pub fn resolved_image(&self, image: &ToolImage) -> String {
+        self.image_registry.resolve(image)
+    }
+
     pub async fn execute(
         &self,
         request: ExecutionRequest,

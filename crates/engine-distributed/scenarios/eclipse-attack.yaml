@@ -1,0 +1,5 @@
+name: "Eclipse Attack on Validator"
+description: "Surround target node, verify it cannot progress"
+steps:
+  - Eclipse: { target: 2, duration_ticks: 2000 }
+  - CheckInvariant: { liveness_except_nodes: [2] }

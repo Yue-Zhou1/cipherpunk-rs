@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use audit_agent_core::audit_config::{
-    AuditConfig, BuildVariant, BudgetConfig, CandidateConstraint, Confidence, EngineConfig,
+    AuditConfig, BudgetConfig, BuildVariant, CandidateConstraint, Confidence, EngineConfig,
     EntryPoint, ExtractionMethod, LlmConfig, OptionalInputs, ParsedSpecDocument, ResolvedScope,
     ResolvedSource, SourceOrigin, SpecSection, StructuredConstraint,
 };
@@ -77,6 +77,7 @@ pub fn verify_proof() {}
             fuzz_duration_secs: 3600,
             madsim_ticks: 100_000,
             max_llm_retries: 3,
+            semantic_index_timeout_secs: 120,
         },
         optional_inputs: OptionalInputs {
             spec_document: Some(ParsedSpecDocument {
@@ -163,7 +164,10 @@ async fn writes_environment_manifest_into_engine_evidence_pack_manifest_json() {
 
     let pack = EvidencePack {
         manifest,
-        files: vec![EvidenceFile::text("harness/src/lib.rs", "pub fn check() {}\n")],
+        files: vec![EvidenceFile::text(
+            "harness/src/lib.rs",
+            "pub fn check() {}\n",
+        )],
     };
 
     let store = EvidenceStore::new(dir.path().join("evidence"));

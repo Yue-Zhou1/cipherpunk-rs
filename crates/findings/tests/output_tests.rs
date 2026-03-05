@@ -106,7 +106,8 @@ fn sarif_output_validates_against_sarif_schema() {
     let findings = sample_findings();
     let sarif = to_sarif(&findings, &manifest);
     let sarif_json = serde_json::to_string_pretty(&sarif).expect("serialize sarif");
-    let sarif_value: serde_json::Value = serde_json::from_str(&sarif_json).expect("parse sarif json");
+    let sarif_value: serde_json::Value =
+        serde_json::from_str(&sarif_json).expect("parse sarif json");
 
     // Validate required SARIF 2.1.0 structure
     assert_eq!(sarif_value["version"], "2.1.0");
@@ -123,7 +124,10 @@ fn sarif_output_validates_against_sarif_schema() {
     for result in results {
         assert!(result["ruleId"].is_string(), "missing ruleId");
         assert!(result["level"].is_string(), "missing level");
-        assert!(result["message"]["text"].is_string(), "missing message.text");
+        assert!(
+            result["message"]["text"].is_string(),
+            "missing message.text"
+        );
         let locations = result["locations"].as_array().expect("locations array");
         for loc in locations {
             assert!(
@@ -154,8 +158,8 @@ fn findings_json_validates_against_committed_finding_schema() {
         .parent()
         .expect("repo root")
         .to_path_buf();
-    let schema_text = fs::read_to_string(repo_root.join("docs/finding-schema.json"))
-        .expect("read schema file");
+    let schema_text =
+        fs::read_to_string(repo_root.join("docs/finding-schema.json")).expect("read schema file");
     let schema: serde_json::Value = serde_json::from_str(&schema_text).expect("valid schema json");
 
     let validator = JSONSchema::options()

@@ -25,8 +25,8 @@ fn parses_cargo_audit_json_output() {
         ]
       }
     }"#;
-    let advisories = engine_crypto::supply_chain::parse_cargo_audit_json(json)
-        .expect("parse cargo audit json");
+    let advisories =
+        engine_crypto::supply_chain::parse_cargo_audit_json(json).expect("parse cargo audit json");
     assert_eq!(advisories.len(), 1);
     assert_eq!(advisories[0].cve_id, "RUSTSEC-2024-0001");
     assert_eq!(advisories[0].crate_name, "some-crate");
@@ -107,7 +107,10 @@ fn harmless_fn() {}
         .expect("reachable result");
     assert!(reachable.reachable_from_crypto_path);
     assert!(
-        matches!(reachable.adjusted_severity, Severity::Critical | Severity::High),
+        matches!(
+            reachable.adjusted_severity,
+            Severity::Critical | Severity::High
+        ),
         "reachable advisory should escalate to High or Critical"
     );
     assert!(

@@ -228,8 +228,9 @@ async fn phase1_fixture_pack_exports_zip_and_retriggers_rule_match_deterministic
             tool_version: "0.1.0".to_string(),
             container_image: image,
             container_digest: digest,
-            reproduction_command: "sh -lc 'grep -q aead_encrypt /evidence/harness/src/lib.rs && echo rule-match'"
-                .to_string(),
+            reproduction_command:
+                "sh -lc 'grep -q aead_encrypt /evidence/harness/src/lib.rs && echo rule-match'"
+                    .to_string(),
             expected_output_description: "rule-match".to_string(),
             files: vec![],
             environment_manifest: None,

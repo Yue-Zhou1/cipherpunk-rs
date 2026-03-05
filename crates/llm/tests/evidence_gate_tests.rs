@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use llm::{CompletionOpts, EvidenceGate, HarnessCode, LlmProvider};
+use std::sync::Arc;
 
 struct SyntaxFixProvider;
 
@@ -173,4 +174,39 @@ pub fn harness() {
         result.level_reached >= 1,
         "comment/string mentions of assert should not trigger assertion-mutation blocking: {result:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn validate_runs_concurrently_without_binary_path_collisions() {
+    let gate = Arc::new(EvidenceGate::without_sandbox_for_tests());
+    let harness = HarnessCode {
+        file_name: "harness.rs".to_string(),
+        source: r#"
+pub mod kani {
+    pub fn any<T: Default>() -> T { T::default() }
+    pub fn assume(_cond: bool) {}
+    pub fn assert(cond: bool) { assert!(cond); }
+}
+pub fn harness() {
+    let x: u64 = kani::any();
+    kani::assume(x < 5);
+    let y = x + 1;
+    kani::assert(y > 0);
+}
+"#
+        .to_string(),
+    };
+
+    let tasks: Vec<_> = (0..24)
+        .map(|_| {
+            let gate = gate.clone();
+            let harness = harness.clone();
+            tokio::spawn(async move { gate.validate(&harness, "kani::assert(y > 0);").await })
+        })
+        .collect();
+
+    for task in tasks {
+        let result = task.await.expect("join validate task");
+        assert!(result.passed, "concurrent validate should pass: {result:?}");
+    }
 }

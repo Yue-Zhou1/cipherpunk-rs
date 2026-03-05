@@ -67,7 +67,10 @@ impl RuleEvaluator {
                 continue;
             }
             let path = entry.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default();
             if ext != "yml" && ext != "yaml" {
                 continue;
             }
@@ -131,7 +134,10 @@ impl RuleEvaluator {
     pub async fn evaluate_workspace(&self, ctx: &CryptoEngineContext) -> Vec<RuleMatch> {
         let mut all_matches = Vec::new();
         for member in &ctx.workspace.members {
-            for entry in WalkDir::new(&member.path).into_iter().filter_map(|e| e.ok()) {
+            for entry in WalkDir::new(&member.path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
                 if !entry.file_type().is_file() {
                     continue;
                 }
