@@ -31,8 +31,28 @@ pub fn render_technical_report(findings: &[Finding], manifest: &AuditManifest) -
             audit_agent_core::finding::VerificationStatus::Unverified { reason } => {
                 out.push_str("- **Status:** \u{26a0} Unverified\n");
                 out.push_str(&format!("  > {reason}\n"));
+                if matches!(
+                    finding.category,
+                    audit_agent_core::finding::FindingCategory::Incentive
+                ) && matches!(
+                    finding.severity,
+                    audit_agent_core::finding::Severity::Observation
+                ) {
+                    out.push_str("  > Unverified — requires manual protocol review.\n");
+                }
             }
         }
+
+        let analysis_source = match finding
+            .evidence
+            .tool_versions
+            .get("analysis_origin")
+            .map(String::as_str)
+        {
+            Some("cache") => "Cached",
+            _ => "New analysis",
+        };
+        out.push_str(&format!("- Analysis Source: {analysis_source}\n"));
 
         if let Some(primary) = finding.affected_components.first() {
             out.push_str(&format!(

@@ -382,7 +382,7 @@ fn rust_source_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn trait_method_key(trait_name: &str, method: &str) -> String {
-    format!("{}::{}", trait_name, method)
+    format!("{trait_name}::{method}")
 }
 
 fn last_path_segment(symbol: &str) -> &str {

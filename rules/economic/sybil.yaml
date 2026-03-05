@@ -1,0 +1,25 @@
+vectors:
+  - id: ECON-006
+    name: "Known bad fee-floor bypass call present"
+    category: Sybil
+    detection:
+      type: CallSitePresent
+      fn_patterns:
+        - "unsafe_batch_pricing::disable_fee_floor"
+        - "disable_fee_floor"
+      description: "Known bad fee-floor bypass call is present in transaction processing path"
+    severity: Observation
+    spec_refs: []
+
+  - id: ECON-007
+    name: "No anti-sybil eligibility gate call"
+    category: Sybil
+    detection:
+      type: CallSiteAbsent
+      fn_patterns:
+        - "SybilGuard::validate_identity"
+        - "RateLimiter::allow_sender"
+        - "EligibilityOracle::check"
+      description: "No call site found that performs anti-sybil eligibility checks"
+    severity: Observation
+    spec_refs: []

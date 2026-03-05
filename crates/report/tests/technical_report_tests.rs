@@ -131,3 +131,43 @@ fn executive_report_includes_score_counts_and_top_findings() {
             || report.contains("Do not deploy")
     );
 }
+
+#[test]
+fn technical_report_labels_economic_findings_as_manual_review_required() {
+    let mut finding = sample_finding();
+    finding.id = FindingId::new("ECON-001");
+    finding.title = "No transaction ordering constraint".to_string();
+    finding.category = FindingCategory::Incentive;
+    finding.framework = Framework::Static;
+    finding.severity = Severity::Observation;
+    finding.verification_status = VerificationStatus::Unverified {
+        reason: "Pattern-based analysis".to_string(),
+    };
+
+    let report = render_technical_report(&[finding], &sample_manifest());
+    assert!(
+        report.contains("Unverified — requires manual protocol review"),
+        "economic findings should carry explicit manual-review labeling"
+    );
+}
+
+#[test]
+fn technical_report_labels_cached_and_new_analysis_sources() {
+    let mut cached = sample_finding();
+    cached.id = FindingId::new("F-CACHED-0001");
+    cached
+        .evidence
+        .tool_versions
+        .insert("analysis_origin".to_string(), "cache".to_string());
+
+    let mut new_finding = sample_finding();
+    new_finding.id = FindingId::new("F-NEW-0001");
+    new_finding
+        .evidence
+        .tool_versions
+        .insert("analysis_origin".to_string(), "new".to_string());
+
+    let report = render_technical_report(&[cached, new_finding], &sample_manifest());
+    assert!(report.contains("Analysis Source: Cached"));
+    assert!(report.contains("Analysis Source: New analysis"));
+}

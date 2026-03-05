@@ -15,6 +15,8 @@ rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+tree-sitter = "0.22"
+tree-sitter-rust = "0.21"
 walkdir = "2"
 
 [dev-dependencies]

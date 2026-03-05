@@ -1,6 +1,7 @@
 pub mod config;
 pub mod confirmation;
 pub mod detection;
+pub mod diff;
 pub mod optional_inputs;
 pub mod source;
 pub mod workspace;
@@ -31,6 +32,7 @@ pub struct OptionalInputsRaw {
     pub previous_audit_path: Option<PathBuf>,
     pub invariants_path: Option<PathBuf>,
     pub entry_points_path: Option<PathBuf>,
+    pub no_llm_prose: bool,
 }
 
 pub struct IntakeResult {
@@ -169,7 +171,7 @@ impl IntakeOrchestrator {
             llm: LlmConfig {
                 api_key_present: !llm_missing,
                 provider: std::env::var("LLM_PROVIDER").ok(),
-                no_llm_prose: false,
+                no_llm_prose: optional.no_llm_prose,
             },
             output_dir: validated.output_dir,
         };
