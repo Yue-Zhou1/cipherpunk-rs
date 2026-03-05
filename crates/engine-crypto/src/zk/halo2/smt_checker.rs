@@ -79,11 +79,11 @@ impl Halo2SmtRunner for SandboxHalo2SmtRunner {
             .context("failed to execute Halo2 SMT query in sandbox")?;
 
         Ok(Halo2SmtExecutionOutput {
+            z3_version: z3_version_from_image_ref(&output.container_digest),
             stdout: output.stdout,
             stderr: output.stderr,
             exit_code: output.exit_code,
             container_digest: output.container_digest,
-            z3_version: z3_version_from_image_ref(&self.sandbox.resolved_image(&ToolImage::Z3)),
         })
     }
 }
