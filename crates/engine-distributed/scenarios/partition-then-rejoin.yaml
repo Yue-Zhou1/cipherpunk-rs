@@ -1,0 +1,8 @@
+name: "Network Partition + Rejoin"
+description: "Isolate a minority partition, verify no fork, then rejoin"
+steps:
+  - Partition: { nodes: [2, 3], duration_ticks: 1000 }
+  - CheckInvariant: safety
+  - Wait: { ticks: 500 }
+  - CheckInvariant: liveness
+  - CheckInvariant: safety

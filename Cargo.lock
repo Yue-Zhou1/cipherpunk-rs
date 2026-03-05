@@ -597,6 +597,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-distributed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "audit-agent-core",
+ "engine-crypto",
+ "intake",
+ "llm",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

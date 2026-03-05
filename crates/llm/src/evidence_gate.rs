@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use regex::Regex;
 use sandbox::SandboxExecutor;
@@ -11,6 +12,7 @@ use crate::provider::{CompletionOpts, LlmProvider, LlmRole, llm_call};
 static ASSERTION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:kani\s*::\s*assert!?|assert!)\s*\(").expect("assertion regex compiles")
 });
+static PERSIST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessCode {
@@ -232,7 +234,8 @@ impl EvidenceGate {
 fn compile_harness(harness: &HarnessCode) -> Result<(PathBuf, String), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir failed: {e}"))?;
     let source_path = dir.path().join(&harness.file_name);
-    let binary_path = dir.path().join("harness-bin");
+    let binary_path =
+        next_binary_path().map_err(|e| format!("failed to allocate binary path: {e}"))?;
 
     let mut source = harness.source.clone();
     if !source.contains("fn main(") {
@@ -251,38 +254,46 @@ fn compile_harness(harness: &HarnessCode) -> Result<(PathBuf, String), String> {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
     }
 
-    let persisted =
-        persist_binary(&binary_path).map_err(|e| format!("persist binary failed: {e}"))?;
     Ok((
-        persisted,
+        binary_path,
         String::from_utf8_lossy(&output.stderr).trim().to_string(),
     ))
 }
 
 fn run_binary(binary: &PathBuf) -> Result<String, String> {
-    let output = Command::new(binary)
-        .output()
-        .map_err(|e| format!("failed to run harness: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    for attempt in 0..4 {
+        match Command::new(binary).output() {
+            Ok(output) => {
+                if !output.status.success() {
+                    return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+                }
+                return Ok(format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Err(error) if error.raw_os_error() == Some(26) && attempt < 3 => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => {
+                return Err(format!("failed to run harness: {error}"));
+            }
+        }
     }
-    Ok(format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ))
+    Err("failed to run harness: retries exhausted".to_string())
 }
 
-fn persist_binary(binary_path: &PathBuf) -> Result<PathBuf, std::io::Error> {
+fn next_binary_path() -> Result<PathBuf, std::io::Error> {
     let dir = std::env::temp_dir().join("audit-agent-evidence-gate");
     std::fs::create_dir_all(&dir)?;
-    let unique = std::time::SystemTime::now()
+    let timestamp_nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos().to_string())
-        .unwrap_or_else(|_| "0".to_string());
-    let target = dir.join(format!("harness-{unique}"));
-    std::fs::copy(binary_path, &target)?;
-    Ok(target)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let counter = PERSIST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    Ok(dir.join(format!("harness-{pid}-{timestamp_nanos}-{counter}")))
 }
 
 fn count_assertions(source: &str) -> usize {
