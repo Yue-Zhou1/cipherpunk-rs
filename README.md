@@ -1,4 +1,4 @@
-# Audit Agent
+# Cipherpunk Audit Agent
 
 Automated security audit pipeline for Rust and ZK-focused codebases. Detects
 crypto misuse, ZK constraint bugs (Circom/Halo2), distributed consensus flaws,

@@ -31,7 +31,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    Analyze(AnalyzeArgs),
+    Analyze(Box<AnalyzeArgs>),
     Diff(DiffArgs),
 }
 
@@ -109,7 +109,7 @@ pub struct DiffArgs {
 pub async fn run_cli(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Analyze(args) => {
-            let outputs = run_analyze(args).await?;
+            let outputs = run_analyze(*args).await?;
             println!(
                 "Audit completed: id={}, findings={}, output_dir={}",
                 outputs.manifest.audit_id,
