@@ -236,3 +236,44 @@ async fn run_executes_engines_and_returns_outputs() {
     assert_eq!(outputs.findings.len(), 1);
     assert_eq!(outputs.manifest.audit_id, "audit-orchestrator-test");
 }
+
+#[tokio::test]
+async fn produce_outputs_aggregates_manifest_tool_versions_and_container_digests() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let mut finding = sample_finding();
+    finding.id = FindingId::new("F-CRYPTO-999");
+    finding
+        .evidence
+        .tool_versions
+        .insert("semantic_backend".to_string(), "rust-analyzer".to_string());
+    finding
+        .evidence
+        .tool_versions
+        .insert("z3".to_string(), "4.13.0".to_string());
+    finding.evidence.container_digest = "sha256:deadbeef".to_string();
+
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip);
+    let config = sample_config(dir.path(), &output_dir);
+    let outputs = orchestrator
+        .produce_outputs(&[finding], &config)
+        .await
+        .expect("produce outputs");
+
+    assert_eq!(
+        outputs.manifest.tool_versions.get("semantic_backend"),
+        Some(&"rust-analyzer".to_string())
+    );
+    assert_eq!(
+        outputs.manifest.tool_versions.get("z3"),
+        Some(&"4.13.0".to_string())
+    );
+    assert_eq!(
+        outputs.manifest.container_digests.get("F-CRYPTO-999"),
+        Some(&"sha256:deadbeef".to_string())
+    );
+}

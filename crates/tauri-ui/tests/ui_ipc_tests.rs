@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use audit_agent_core::audit_config::{
     AuditConfig, BudgetConfig, EngineConfig, LlmConfig, OptionalInputs, ResolvedScope,
@@ -13,6 +15,7 @@ use tauri_ui::{
     OutputType, branch_resolution_banner, crate_decision_style, download_output, export_audit_yaml,
     get_reproduce_preview, llm_missing_details, warning_message,
 };
+use tauri_ui::ipc::{ConfirmWorkspaceRequest, SourceInputIpc, SourceKind, UiSessionState};
 use tempfile::tempdir;
 
 fn sample_config() -> AuditConfig {
@@ -57,6 +60,64 @@ fn sample_config() -> AuditConfig {
         },
         output_dir: PathBuf::from("audit-output"),
     }
+}
+
+fn run_git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run git command");
+    if !output.status.success() {
+        panic!(
+            "git {:?} failed:\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+fn create_local_workspace_repo(root: &Path) -> (PathBuf, String) {
+    let repo_root = root.join("repo");
+    fs::create_dir_all(repo_root.join("rollup-core/src")).expect("create repo crate");
+    fs::write(
+        repo_root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"rollup-core\"]\nresolver = \"2\"\n",
+    )
+    .expect("write workspace manifest");
+    fs::write(
+        repo_root.join("rollup-core/Cargo.toml"),
+        "[package]\nname = \"rollup-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write crate manifest");
+    fs::write(
+        repo_root.join("rollup-core/src/lib.rs"),
+        "pub fn verifier_ready() -> bool { true }\n",
+    )
+    .expect("write crate source");
+
+    run_git(&repo_root, &["init", "-q"]);
+    run_git(&repo_root, &["config", "user.name", "test"]);
+    run_git(&repo_root, &["config", "user.email", "test@example.com"]);
+    run_git(&repo_root, &["add", "."]);
+    run_git(&repo_root, &["commit", "-qm", "initial"]);
+
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&repo_root)
+        .output()
+        .expect("read git sha");
+    if !output.status.success() {
+        panic!(
+            "git rev-parse HEAD failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    (repo_root, sha)
 }
 
 #[test]
@@ -166,6 +227,24 @@ fn download_output_supports_all_six_phase5_outputs() {
 }
 
 #[test]
+fn download_output_uses_markdown_report_when_pdf_is_unavailable() {
+    let dir = tempdir().expect("tempdir");
+    let output_dir = dir.path().join("audit-output");
+    fs::create_dir_all(&output_dir).expect("mkdir");
+    fs::write(
+        output_dir.join("report-executive.md"),
+        "# executive report markdown only",
+    )
+    .expect("write markdown");
+
+    let dest = dir.path().join("download-exec.md");
+    download_output(&output_dir, OutputType::ExecutivePdf, &dest).expect("download output");
+
+    let content = fs::read_to_string(dest).expect("read downloaded report");
+    assert!(content.contains("executive report markdown only"));
+}
+
+#[test]
 fn reproduce_preview_returns_inline_copyable_script() {
     let dir = tempdir().expect("tempdir");
     let evidence_root = dir.path().join("evidence-pack");
@@ -179,4 +258,90 @@ fn reproduce_preview_returns_inline_copyable_script() {
     let preview = get_reproduce_preview(&evidence_root, "F-TEST-1").expect("preview");
     assert!(preview.copyable);
     assert!(preview.script.contains("echo ok"));
+}
+
+#[test]
+fn output_type_serializes_as_snake_case_for_frontend_contract() {
+    let parsed: OutputType = serde_json::from_str("\"findings_json\"").expect("deserialize");
+    assert_eq!(parsed, OutputType::FindingsJson);
+
+    let encoded = serde_json::to_string(&OutputType::RegressionTestsZip).expect("serialize");
+    assert_eq!(encoded, "\"regression_tests_zip\"");
+}
+
+#[test]
+fn session_confirm_workspace_requires_source_resolution_first() {
+    let mut session = UiSessionState::new(PathBuf::from(".audit-work"));
+    let error = session
+        .confirm_workspace(ConfirmWorkspaceRequest {
+            confirmed: true,
+            ambiguous_crates: HashMap::new(),
+            no_llm_prose: false,
+        })
+        .expect_err("confirm_workspace should enforce source resolution order");
+    assert!(error
+        .to_string()
+        .contains("resolve_source must be called before confirm_workspace"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn session_flow_exports_yaml_and_downloads_output_after_confirmation() {
+    let dir = tempdir().expect("tempdir");
+    let (repo_root, commit_sha) = create_local_workspace_repo(dir.path());
+
+    let mut session = UiSessionState::new(dir.path().join(".audit-work"));
+    let resolved = session
+        .resolve_source(SourceInputIpc {
+            kind: SourceKind::Local,
+            value: repo_root.display().to_string(),
+            commit_or_ref: Some(commit_sha.clone()),
+        })
+        .await
+        .expect("resolve local source");
+    assert_eq!(resolved.source.commit_hash, commit_sha);
+
+    let summary = session.detect_workspace().expect("detect workspace");
+    assert!(
+        summary
+            .crates
+            .iter()
+            .any(|decision| matches!(
+                decision,
+                CrateDecision::InScope { meta } if meta.name == "rollup-core"
+            )),
+        "workspace detection should include rollup-core as in-scope"
+    );
+
+    let confirmation = session
+        .confirm_workspace(ConfirmWorkspaceRequest {
+            confirmed: true,
+            ambiguous_crates: HashMap::new(),
+            no_llm_prose: false,
+        })
+        .expect("confirm workspace");
+    assert!(confirmation.audit_id.starts_with("audit-"));
+
+    let output_dir = session
+        .audit_config()
+        .expect("audit config set after confirmation")
+        .output_dir
+        .clone();
+    fs::create_dir_all(&output_dir).expect("mkdir output");
+    fs::write(output_dir.join("findings.json"), "[]").expect("write findings");
+
+    let yaml_path = dir.path().join("resolved-audit.yaml");
+    session
+        .export_audit_yaml(&yaml_path)
+        .expect("export resolved yaml");
+    assert!(yaml_path.exists(), "resolved audit yaml should be exported");
+
+    let dest = dir.path().join("downloads/findings.json");
+    let response = session
+        .download_output(&confirmation.audit_id, OutputType::FindingsJson, &dest)
+        .expect("download output");
+    assert_eq!(response.dest, dest);
+    assert_eq!(
+        fs::read_to_string(response.dest).expect("read downloaded output"),
+        "[]"
+    );
 }

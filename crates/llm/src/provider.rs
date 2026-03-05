@@ -1,5 +1,9 @@
-use anyhow::{Result, anyhow};
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use reqwest::Client;
+use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LlmRole {
@@ -34,18 +38,23 @@ pub trait LlmProvider: Send + Sync {
 pub struct OpenAiProvider {
     pub api_key: String,
     pub model: String,
+    pub base_url: String,
+    client: Client,
 }
 
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
     pub api_key: String,
     pub model: String,
+    pub base_url: String,
+    client: Client,
 }
 
 #[derive(Debug, Clone)]
 pub struct OllamaProvider {
     pub base_url: String,
     pub model: String,
+    client: Client,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,13 +62,31 @@ pub struct TemplateFallback;
 
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
-    async fn complete(&self, _prompt: &str, _opts: &CompletionOpts) -> Result<String> {
+    async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String> {
         if !self.is_available() {
             return Err(anyhow!("OpenAI API key is missing"));
         }
-        Err(anyhow!(
-            "OpenAI provider is currently a stub; use TemplateFallback until remote adapter is implemented"
-        ))
+
+        let url = format!(
+            "{}/v1/chat/completions",
+            trim_trailing_slash(&self.base_url)
+        );
+        let payload = serde_json::json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": temperature(opts),
+            "max_tokens": opts.max_tokens,
+        });
+
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&payload)
+            .send()
+            .await?;
+
+        parse_openai_response(response).await
     }
 
     fn name(&self) -> &str {
@@ -73,13 +100,29 @@ impl LlmProvider for OpenAiProvider {
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
-    async fn complete(&self, _prompt: &str, _opts: &CompletionOpts) -> Result<String> {
+    async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String> {
         if !self.is_available() {
             return Err(anyhow!("Anthropic API key is missing"));
         }
-        Err(anyhow!(
-            "Anthropic provider is currently a stub; use TemplateFallback until remote adapter is implemented"
-        ))
+
+        let url = format!("{}/v1/messages", trim_trailing_slash(&self.base_url));
+        let payload = serde_json::json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": temperature(opts),
+            "max_tokens": opts.max_tokens,
+        });
+
+        let response = self
+            .client
+            .post(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&payload)
+            .send()
+            .await?;
+
+        parse_anthropic_response(response).await
     }
 
     fn name(&self) -> &str {
@@ -93,13 +136,24 @@ impl LlmProvider for AnthropicProvider {
 
 #[async_trait]
 impl LlmProvider for OllamaProvider {
-    async fn complete(&self, _prompt: &str, _opts: &CompletionOpts) -> Result<String> {
+    async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String> {
         if !self.is_available() {
             return Err(anyhow!("Ollama base URL is missing"));
         }
-        Err(anyhow!(
-            "Ollama provider is currently a stub; use TemplateFallback until remote adapter is implemented"
-        ))
+
+        let url = format!("{}/api/generate", trim_trailing_slash(&self.base_url));
+        let payload = serde_json::json!({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": false,
+            "options": {
+                "temperature": temperature(opts),
+                "num_predict": opts.max_tokens,
+            }
+        });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+        parse_ollama_response(response).await
     }
 
     fn name(&self) -> &str {
@@ -162,10 +216,12 @@ fn openai_provider() -> Option<OpenAiProvider> {
     if api_key.trim().is_empty() {
         return None;
     }
-    Some(OpenAiProvider {
+    OpenAiProvider::new(
         api_key,
-        model: "gpt-4o-mini".to_string(),
-    })
+        std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+        std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com".to_string()),
+    )
+    .ok()
 }
 
 fn anthropic_provider() -> Option<AnthropicProvider> {
@@ -173,10 +229,13 @@ fn anthropic_provider() -> Option<AnthropicProvider> {
     if api_key.trim().is_empty() {
         return None;
     }
-    Some(AnthropicProvider {
+    AnthropicProvider::new(
         api_key,
-        model: "claude-3-5-sonnet".to_string(),
-    })
+        std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-3-5-sonnet".to_string()),
+        std::env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com".to_string()),
+    )
+    .ok()
 }
 
 fn ollama_provider() -> Option<OllamaProvider> {
@@ -184,10 +243,11 @@ fn ollama_provider() -> Option<OllamaProvider> {
     if base_url.trim().is_empty() {
         return None;
     }
-    Some(OllamaProvider {
+    OllamaProvider::new(
         base_url,
-        model: "llama3".to_string(),
-    })
+        std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_string()),
+    )
+    .ok()
 }
 
 pub async fn llm_call(
@@ -200,6 +260,149 @@ pub async fn llm_call(
     let response = provider.complete(prompt, opts).await?;
     tracing::trace!(role = ?role, chars = response.len(), "LLM response");
     Ok(response)
+}
+
+fn http_client() -> Result<Client> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(120))
+        .build()
+        .context("failed to build HTTP client for LLM provider")
+}
+
+impl OpenAiProvider {
+    pub fn new(api_key: String, model: String, base_url: String) -> Result<Self> {
+        Ok(Self {
+            api_key,
+            model,
+            base_url,
+            client: http_client()?,
+        })
+    }
+}
+
+impl AnthropicProvider {
+    pub fn new(api_key: String, model: String, base_url: String) -> Result<Self> {
+        Ok(Self {
+            api_key,
+            model,
+            base_url,
+            client: http_client()?,
+        })
+    }
+}
+
+impl OllamaProvider {
+    pub fn new(base_url: String, model: String) -> Result<Self> {
+        Ok(Self {
+            base_url,
+            model,
+            client: http_client()?,
+        })
+    }
+}
+
+fn trim_trailing_slash(value: &str) -> &str {
+    value.trim_end_matches('/')
+}
+
+fn temperature(opts: &CompletionOpts) -> f32 {
+    f32::from(opts.temperature_millis) / 1_000.0
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiMessage {
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChoice {
+    message: OpenAiMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiResponse {
+    choices: Vec<OpenAiChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicContent {
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicResponse {
+    content: Vec<AnthropicContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaResponse {
+    response: String,
+}
+
+async fn parse_openai_response(response: reqwest::Response) -> Result<String> {
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "OpenAI request failed ({status}): {}",
+            truncate_body(&body)
+        ));
+    }
+    let parsed: OpenAiResponse =
+        serde_json::from_str(&body).context("invalid OpenAI response JSON")?;
+    parsed
+        .choices
+        .into_iter()
+        .next()
+        .map(|choice| choice.message.content)
+        .filter(|content| !content.trim().is_empty())
+        .context("OpenAI response missing message content")
+}
+
+async fn parse_anthropic_response(response: reqwest::Response) -> Result<String> {
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Anthropic request failed ({status}): {}",
+            truncate_body(&body)
+        ));
+    }
+    let parsed: AnthropicResponse =
+        serde_json::from_str(&body).context("invalid Anthropic response JSON")?;
+    parsed
+        .content
+        .into_iter()
+        .find_map(|part| part.text)
+        .filter(|content| !content.trim().is_empty())
+        .context("Anthropic response missing text content")
+}
+
+async fn parse_ollama_response(response: reqwest::Response) -> Result<String> {
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Ollama request failed ({status}): {}",
+            truncate_body(&body)
+        ));
+    }
+    let parsed: OllamaResponse =
+        serde_json::from_str(&body).context("invalid Ollama response JSON")?;
+    if parsed.response.trim().is_empty() {
+        return Err(anyhow!("Ollama response missing generated text"));
+    }
+    Ok(parsed.response)
+}
+
+fn truncate_body(body: &str) -> String {
+    const LIMIT: usize = 300;
+    if body.len() <= LIMIT {
+        body.to_string()
+    } else {
+        format!("{}...", &body[..LIMIT])
+    }
 }
 
 mod template_library {

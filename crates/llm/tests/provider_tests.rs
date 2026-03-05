@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use llm::{CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, provider_from_env};
+use mockito::Matcher;
 use std::process::Command;
 
 struct EchoProvider;
@@ -82,33 +83,107 @@ async fn llm_call_routes_through_provider() {
 }
 
 #[tokio::test]
-async fn concrete_remote_providers_are_explicitly_stubbed() {
-    let openai = llm::OpenAiProvider {
-        api_key: "key".to_string(),
-        model: "gpt-4o-mini".to_string(),
-    };
-    let anthropic = llm::AnthropicProvider {
-        api_key: "key".to_string(),
-        model: "claude-3-5-sonnet".to_string(),
-    };
-    let ollama = llm::OllamaProvider {
-        base_url: "http://localhost:11434".to_string(),
-        model: "llama3".to_string(),
-    };
-    for (name, provider) in [
-        ("openai", &openai as &dyn LlmProvider),
-        ("anthropic", &anthropic as &dyn LlmProvider),
-        ("ollama", &ollama as &dyn LlmProvider),
-    ] {
-        let err = provider
-            .complete("hello", &CompletionOpts::default())
-            .await
-            .expect_err("provider should be marked as stub");
-        assert!(
-            err.to_string().to_ascii_lowercase().contains("stub"),
-            "{name} provider must explicitly declare stub status"
-        );
-    }
+async fn openai_provider_makes_chat_completion_request() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/v1/chat/completions")
+        .match_header("authorization", "Bearer key")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 32
+        })))
+        .with_status(200)
+        .with_body(r#"{"choices":[{"message":{"content":"openai-ok"}}]}"#)
+        .create_async()
+        .await;
+
+    let openai = llm::OpenAiProvider::new(
+        "key".to_string(),
+        "gpt-4o-mini".to_string(),
+        server.url(),
+    )
+    .expect("openai provider");
+    let response = openai
+        .complete(
+            "hello",
+            &CompletionOpts {
+                temperature_millis: 100,
+                max_tokens: 32,
+            },
+        )
+        .await
+        .expect("openai response");
+    assert_eq!(response, "openai-ok");
+    request.assert_async().await;
+}
+
+#[tokio::test]
+async fn anthropic_provider_makes_messages_request() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/v1/messages")
+        .match_header("x-api-key", "key")
+        .match_header("anthropic-version", "2023-06-01")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 48
+        })))
+        .with_status(200)
+        .with_body(r#"{"content":[{"type":"text","text":"anthropic-ok"}]}"#)
+        .create_async()
+        .await;
+
+    let anthropic = llm::AnthropicProvider::new(
+        "key".to_string(),
+        "claude-3-5-sonnet".to_string(),
+        server.url(),
+    )
+    .expect("anthropic provider");
+    let response = anthropic
+        .complete(
+            "hello",
+            &CompletionOpts {
+                temperature_millis: 200,
+                max_tokens: 48,
+            },
+        )
+        .await
+        .expect("anthropic response");
+    assert_eq!(response, "anthropic-ok");
+    request.assert_async().await;
+}
+
+#[tokio::test]
+async fn ollama_provider_makes_generate_request() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/api/generate")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "llama3",
+            "prompt": "hello",
+            "stream": false
+        })))
+        .with_status(200)
+        .with_body(r#"{"response":"ollama-ok"}"#)
+        .create_async()
+        .await;
+
+    let ollama =
+        llm::OllamaProvider::new(server.url(), "llama3".to_string()).expect("ollama provider");
+    let response = ollama
+        .complete(
+            "hello",
+            &CompletionOpts {
+                temperature_millis: 350,
+                max_tokens: 24,
+            },
+        )
+        .await
+        .expect("ollama response");
+    assert_eq!(response, "ollama-ok");
+    request.assert_async().await;
 }
 
 #[test]

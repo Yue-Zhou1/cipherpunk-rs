@@ -144,6 +144,7 @@ impl AuditOrchestrator {
         );
 
         let finding_counts = FindingCounts::from(&deduplicated);
+        let (tool_versions, container_digests) = aggregate_manifest_metadata(&deduplicated);
         let now = Utc::now();
         let manifest = AuditManifest {
             audit_id: config.audit_id.clone(),
@@ -152,8 +153,8 @@ impl AuditOrchestrator {
             started_at: now,
             completed_at: Some(now),
             scope: config.scope.clone(),
-            tool_versions: HashMap::new(),
-            container_digests: HashMap::new(),
+            tool_versions: tool_versions.clone(),
+            container_digests: container_digests.clone(),
             finding_counts: finding_counts.clone(),
             risk_score: finding_counts.risk_score(),
             engines_run: self
@@ -183,8 +184,8 @@ impl AuditOrchestrator {
             started_at: now,
             completed_at: Some(now),
             scope: config.scope.clone(),
-            tool_versions: HashMap::new(),
-            container_digests: HashMap::new(),
+            tool_versions,
+            container_digests,
             finding_counts: finding_counts.clone(),
             risk_score: finding_counts.risk_score(),
             engines_run: self
@@ -215,4 +216,30 @@ fn read_written_manifest(output_dir: &Path) -> Result<AuditManifest> {
     let path = output_dir.join("audit-manifest.json");
     let content = std::fs::read_to_string(&path)?;
     Ok(serde_json::from_str(&content)?)
+}
+
+fn aggregate_manifest_metadata(
+    findings: &[Finding],
+) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut tool_versions = HashMap::<String, String>::new();
+    let mut container_digests = HashMap::<String, String>::new();
+
+    for finding in findings {
+        for (key, value) in &finding.evidence.tool_versions {
+            // First-writer-wins policy: keep the first observed tool version for each key.
+            // This preserves deterministic manifest metadata across repeated findings.
+            tool_versions
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+
+        let digest = finding.evidence.container_digest.trim();
+        if digest.is_empty() || digest.eq_ignore_ascii_case("n/a") {
+            continue;
+        }
+
+        container_digests.insert(finding.id.to_string(), digest.to_string());
+    }
+
+    (tool_versions, container_digests)
 }

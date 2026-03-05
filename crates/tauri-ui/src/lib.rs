@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use zip::CompressionMethod;
 use zip::write::FileOptions;
 
+pub mod ipc;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedSourceView {
     pub source: ResolvedSource,
@@ -44,6 +46,7 @@ pub enum CrateDecisionStyle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputType {
     ExecutivePdf,
     TechnicalPdf,
@@ -350,8 +353,8 @@ pub fn get_audit_manifest(output_dir: &Path) -> Result<AuditManifest> {
 
 pub fn download_output(output_dir: &Path, output_type: OutputType, dest: &Path) -> Result<()> {
     let src = match output_type {
-        OutputType::ExecutivePdf => output_dir.join("report-executive.pdf"),
-        OutputType::TechnicalPdf => output_dir.join("report-technical.pdf"),
+        OutputType::ExecutivePdf => choose_report_artifact(output_dir, "report-executive"),
+        OutputType::TechnicalPdf => choose_report_artifact(output_dir, "report-technical"),
         OutputType::EvidencePackZip => output_dir.join("evidence-pack.zip"),
         OutputType::FindingsSarif => output_dir.join("findings.sarif"),
         OutputType::FindingsJson => output_dir.join("findings.json"),
@@ -373,6 +376,15 @@ pub fn download_output(output_dir: &Path, output_type: OutputType, dest: &Path) 
     fs::copy(&src, dest)
         .with_context(|| format!("copy {} to {}", src.display(), dest.display()))?;
     Ok(())
+}
+
+fn choose_report_artifact(output_dir: &Path, stem: &str) -> PathBuf {
+    let pdf = output_dir.join(format!("{stem}.pdf"));
+    if pdf.exists() {
+        return pdf;
+    }
+
+    output_dir.join(format!("{stem}.md"))
 }
 
 pub fn get_reproduce_preview(evidence_root: &Path, finding_id: &str) -> Result<EvidencePreview> {
