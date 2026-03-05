@@ -10,7 +10,10 @@ pub fn render_executive_report(findings: &[Finding], manifest: &AuditManifest) -
     let mut out = String::new();
     out.push_str("# Executive Summary\n\n");
     out.push_str(&format!("- **Audit ID:** `{}`\n", manifest.audit_id));
-    out.push_str(&format!("- **Agent Version:** `{}`\n", manifest.agent_version));
+    out.push_str(&format!(
+        "- **Agent Version:** `{}`\n",
+        manifest.agent_version
+    ));
     out.push_str(&format!(
         "- **Source Commit:** `{}`\n",
         manifest.source.commit_hash

@@ -35,6 +35,14 @@
             "null"
           ]
         },
+        "semantic_index_timeout_secs": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "z3_timeout_secs": {
           "format": "uint64",
           "minimum": 0.0,

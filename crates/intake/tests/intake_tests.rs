@@ -195,6 +195,7 @@ fn config_parser_reports_multiple_validation_errors() {
             fuzz_duration_secs: Some(0),
             madsim_ticks: Some(0),
             max_llm_retries: Some(0),
+            semantic_index_timeout_secs: Some(0),
         }),
     };
 

@@ -94,7 +94,8 @@ impl SupplyChainAnalyzer {
                 continue;
             }
 
-            if let Some(call_chain) = find_reachable_chain(&edges, &entry_points, &advisory.affected_fn)
+            if let Some(call_chain) =
+                find_reachable_chain(&edges, &entry_points, &advisory.affected_fn)
             {
                 result.reachable_from_crypto_path = true;
                 result.call_chain = call_chain.clone();
@@ -105,7 +106,8 @@ impl SupplyChainAnalyzer {
                         "affected function reachable within <=3 frames from crypto entry point"
                             .to_string();
                 } else {
-                    result.adjusted_severity = max_severity(advisory.severity.clone(), Severity::High);
+                    result.adjusted_severity =
+                        max_severity(advisory.severity.clone(), Severity::High);
                     result.adjustment_reason =
                         "affected function reachable from crypto entry point".to_string();
                 }
@@ -118,22 +120,45 @@ impl SupplyChainAnalyzer {
     }
 }
 
-fn build_tree_sitter_call_graph(workspace: &CargoWorkspace) -> Result<HashMap<String, HashSet<String>>> {
+fn build_tree_sitter_call_graph(
+    workspace: &CargoWorkspace,
+) -> Result<HashMap<String, HashSet<String>>> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_rust::language())
         .map_err(|e| anyhow::anyhow!("failed to set language: {e}"))?;
 
     let excluded = HashSet::from([
-        "if", "for", "while", "loop", "match", "return", "Some", "None", "Ok", "Err",
-        "format", "println", "eprintln", "vec", "assert", "assert_eq", "assert_ne",
-        "panic", "todo", "unimplemented", "unreachable",
+        "if",
+        "for",
+        "while",
+        "loop",
+        "match",
+        "return",
+        "Some",
+        "None",
+        "Ok",
+        "Err",
+        "format",
+        "println",
+        "eprintln",
+        "vec",
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "panic",
+        "todo",
+        "unimplemented",
+        "unreachable",
     ]);
 
     let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
 
     for member in &workspace.members {
-        for entry in WalkDir::new(&member.path).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(&member.path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if !entry.file_type().is_file() {
                 continue;
             }

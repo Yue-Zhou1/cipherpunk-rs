@@ -42,6 +42,7 @@ pub struct RawBudgetConfig {
     pub fuzz_duration_secs: Option<u64>,
     pub madsim_ticks: Option<u64>,
     pub max_llm_retries: Option<u8>,
+    pub semantic_index_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +161,7 @@ impl ConfigParser {
             fuzz_duration_secs: Some(3600),
             madsim_ticks: Some(100_000),
             max_llm_retries: Some(3),
+            semantic_index_timeout_secs: Some(120),
         });
 
         validate_u64(
@@ -181,6 +183,11 @@ impl ConfigParser {
         validate_u8(
             "budget.max_llm_retries",
             budget.max_llm_retries,
+            &mut errors,
+        );
+        validate_u64(
+            "budget.semantic_index_timeout_secs",
+            budget.semantic_index_timeout_secs,
             &mut errors,
         );
 
@@ -205,6 +212,7 @@ impl ConfigParser {
                 fuzz_duration_secs: budget.fuzz_duration_secs.unwrap_or(3600),
                 madsim_ticks: budget.madsim_ticks.unwrap_or(100_000),
                 max_llm_retries: budget.max_llm_retries.unwrap_or(3),
+                semantic_index_timeout_secs: budget.semantic_index_timeout_secs.unwrap_or(120),
             },
             output_dir: PathBuf::from("audit-output"),
         })

@@ -52,9 +52,7 @@ pub fn render_technical_report(findings: &[Finding], manifest: &AuditManifest) -
         }
 
         // Attack scenario
-        if !finding.prerequisites.is_empty()
-            || !finding.exploit_path.is_empty()
-        {
+        if !finding.prerequisites.is_empty() || !finding.exploit_path.is_empty() {
             out.push_str("### Attack Scenario\n");
             if !finding.prerequisites.is_empty() {
                 out.push_str(&format!("- **Prerequisites:** {}\n", finding.prerequisites));
@@ -72,7 +70,10 @@ pub fn render_technical_report(findings: &[Finding], manifest: &AuditManifest) -
             .unwrap_or_else(|| format!("bash evidence-pack/{}/reproduce.sh", finding.id));
         out.push_str(&format!("- Reproduce: `{reproduce}`\n\n"));
         out.push_str(&format!("### Impact\n{}\n\n", finding.impact));
-        out.push_str(&format!("### Recommendation\n{}\n\n", finding.recommendation));
+        out.push_str(&format!(
+            "### Recommendation\n{}\n\n",
+            finding.recommendation
+        ));
     }
 
     out

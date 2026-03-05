@@ -70,6 +70,7 @@ fn budget() -> BudgetConfig {
         fuzz_duration_secs: 60,
         madsim_ticks: 1_000,
         max_llm_retries: 1,
+        semantic_index_timeout_secs: 120,
     }
 }
 

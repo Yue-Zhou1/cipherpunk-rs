@@ -40,7 +40,10 @@ fn sample_finding() -> Finding {
         evidence_gate_level: 0,
         llm_generated: false,
         recommendation: "rotate secrets".to_string(),
-        regression_test: None,
+        regression_test: Some(
+            "#[cfg(kani)]\n#[kani::proof]\nfn f_crypto_0099_regression() { kani::assert!(true); }\n"
+                .to_string(),
+        ),
         status: FindingStatus::Open,
         regression_check: false,
         verification_status: VerificationStatus::Verified,
@@ -73,6 +76,8 @@ fn generated_regression_file_compiles_as_valid_rust() {
         "generated tests should compile: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert_eq!(suite.kani_harnesses.len(), 1);
+    assert_eq!(suite.kani_harnesses[0].finding_id, "F-CRYPTO-0099");
 }
 
 #[test]
@@ -103,6 +108,7 @@ fn phase1_output_layout_matches_io_contract_structure() {
         "evidence-pack.zip",
         "audit-manifest.json",
         "regression-tests/crypto_misuse_tests.rs",
+        "regression-tests/kani_harnesses/F-CRYPTO-0099.rs",
     ] {
         assert!(
             out_dir.join(relative).exists(),
