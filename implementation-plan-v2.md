@@ -2337,11 +2337,11 @@ vectors:
 **Key I/O addition:** `spec_refs` in findings are populated from `OptionalInputs.spec_constraints` when available; otherwise from the static YAML refs.
 
 **Acceptance criteria:**
-- [ ] All economic findings have `verification_status: Unverified` and `severity: Observation`
-- [ ] Finding existence is determined by the code check result, not LLM output
-- [ ] LLM absent → `default_description()` used; findings still produced
-- [ ] Minimum 6 vectors in YAML checklist covering Sequencer, Prover, and Sybil categories
-- [ ] Technical report clearly labels economic findings as "Unverified — requires manual protocol review"
+- [x] All economic findings have `verification_status: Unverified` and `severity: Observation`
+- [x] Finding existence is determined by the code check result, not LLM output
+- [x] LLM absent → `default_description()` used; findings still produced
+- [x] Minimum 6 vectors in YAML checklist covering Sequencer, Prover, and Sybil categories
+- [x] Technical report clearly labels economic findings as "Unverified — requires manual protocol review"
 
 ---
 
@@ -2423,14 +2423,14 @@ Observation findings do not affect the score.
 > **Score limitation:** The additive formula loses discrimination at the low end — 4 Criticals and 1 Critical + 15 Highs both clamp to 0 ("Do not deploy"). The score is an **orientation signal**, not a precise risk rank. The executive summary must note this and direct auditors to the finding count table for full severity breakdown. Do not use the raw number for automated go/no-go decisions beyond the three-band gate.
 
 **Acceptance criteria:**
-- [ ] Executive summary generated with zero LLM calls when `llm: None`
-- [ ] `Verified` / `Unverified` labels present on every finding in technical report
-- [ ] LLM prose polish can be disabled via `--no-llm-prose` flag; report still complete
-- [ ] Economic/Observation findings clearly labeled "Requires manual protocol review"
-- [ ] Executive summary ≤ 2 pages as PDF
-- [ ] SARIF validates against 2.1.0 schema; `findings.json` validates against schema
-- [ ] Regression test file compiles with `cargo build` against a test workspace
-- [ ] `audit-manifest.json` records whether LLM prose polish was used
+- [x] Executive summary generated with zero LLM calls when `llm: None`
+- [x] `Verified` / `Unverified` labels present on every finding in technical report
+- [x] LLM prose polish can be disabled via `--no-llm-prose` flag; report still complete
+- [x] Economic/Observation findings clearly labeled "Requires manual protocol review"
+- [x] Executive summary ≤ 2 pages as PDF
+- [x] SARIF validates against 2.1.0 schema; `findings.json` validates against schema
+- [x] Regression test file compiles with `cargo build` against a test workspace
+- [x] `audit-manifest.json` records whether LLM prose polish was used
 
 ---
 
@@ -2463,10 +2463,10 @@ pub struct DiffAnalysis {
 ```
 
 **Acceptance criteria:**
-- [ ] PR changing 2 files in a 50-file workspace → only those 2 files re-analyzed
-- [ ] `Cargo.toml` change → full rerun triggered
-- [ ] Cache hit rate > 80% on a 2-file change PR
-- [ ] Output report clearly labels which findings are from cache vs. new analysis
+- [x] PR changing 2 files in a 50-file workspace → only those 2 files re-analyzed
+- [x] `Cargo.toml` change → full rerun triggered
+- [x] Cache hit rate > 80% on a 2-file change PR
+- [x] Output report clearly labels which findings are from cache vs. new analysis
 
 ---
 
@@ -2533,12 +2533,12 @@ export const downloadOutput   = (auditId: string, type: OutputType, dest: string
 ```
 
 **Acceptance criteria:**
-- [ ] Branch name in Step 1 shows visible warning: "Resolved to SHA abc123 — audit is pinned to this commit"
-- [ ] Workspace confirmation renders all `CrateDecision` types with correct styling
-- [ ] `IntakeWarning.LlmKeyMissing` shows which features are degraded
-- [ ] "Export audit.yaml" in Step 4 produces a valid YAML that can be fed back to the CLI
-- [ ] All 6 output types downloadable from Step 6 results panel
-- [ ] Evidence panel shows `reproduce.sh` contents inline with copy button
+- [x] Branch name in Step 1 shows visible warning: "Resolved to SHA abc123 — audit is pinned to this commit"
+- [x] Workspace confirmation renders all `CrateDecision` types with correct styling
+- [x] `IntakeWarning.LlmKeyMissing` shows which features are degraded
+- [x] "Export audit.yaml" in Step 4 produces a valid YAML that can be fed back to the CLI
+- [x] All 6 output types downloadable from Step 6 results panel
+- [x] Evidence panel shows `reproduce.sh` contents inline with copy button
 
 ---
 

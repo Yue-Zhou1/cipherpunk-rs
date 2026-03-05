@@ -288,7 +288,7 @@ fn assertion_line(spec: &AssertionSpec) -> String {
         AssertionSpec::NoOverflow { .. } => "kani::assert(result >= a);".to_string(),
         AssertionSpec::NoUnwrapPanic { .. } => "kani::assert(true);".to_string(),
         AssertionSpec::FieldElementInRange { var, max } => {
-            format!("kani::assert({var} <= {}u64);", max)
+            format!("kani::assert({var} <= {max}u64);")
         }
         AssertionSpec::CustomAssertion { code } => code.clone(),
     }

@@ -3,7 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use audit_agent_core::audit_config::{CustomAssertionTarget, StructuredConstraint};
+use audit_agent_core::audit_config::{
+    AuditConfig, BudgetConfig, CustomAssertionTarget, EngineConfig, LlmConfig, OptionalInputs,
+    ResolvedScope, ResolvedSource, SourceOrigin, StructuredConstraint,
+};
+use audit_agent_core::finding::Framework;
 use intake::config::{
     ConfigError, ConfigParser, RawAuditConfig, RawBudgetConfig, RawEngineConfig, RawScope,
     RawSource,
@@ -12,6 +16,7 @@ use intake::confirmation::{ConfirmationSummary, IntakeWarning, WorkspaceConfirma
 use intake::detection::FrameworkDetector;
 use intake::optional_inputs::OptionalInputParser;
 use intake::source::{SourceInput, SourceResolver, SourceWarning};
+use intake::summarize_optional_inputs;
 use intake::workspace::WorkspaceAnalyzer;
 use tempfile::TempDir;
 
@@ -337,6 +342,58 @@ async fn optional_input_parser_extracts_constraints_from_markdown() {
             ..
         }
     )));
+}
+
+#[test]
+fn summarize_optional_inputs_respects_no_llm_prose_flag() {
+    let mut config = AuditConfig {
+        audit_id: "audit-test".to_string(),
+        source: ResolvedSource {
+            local_path: PathBuf::from("/tmp/repo"),
+            origin: SourceOrigin::Local {
+                original_path: PathBuf::from("/tmp/repo"),
+            },
+            commit_hash: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            content_hash: "sha256:content".to_string(),
+        },
+        scope: ResolvedScope {
+            target_crates: vec!["member".to_string()],
+            excluded_crates: vec![],
+            build_matrix: vec![],
+            detected_frameworks: vec![Framework::SP1],
+        },
+        engines: EngineConfig {
+            crypto_zk: true,
+            distributed: false,
+        },
+        budget: BudgetConfig {
+            kani_timeout_secs: 300,
+            z3_timeout_secs: 600,
+            fuzz_duration_secs: 3600,
+            madsim_ticks: 100_000,
+            max_llm_retries: 3,
+            semantic_index_timeout_secs: 120,
+        },
+        optional_inputs: OptionalInputs {
+            spec_document: None,
+            previous_audit: None,
+            custom_invariants: vec![],
+            known_entry_points: vec![],
+        },
+        llm: LlmConfig {
+            api_key_present: true,
+            provider: Some("openai".to_string()),
+            no_llm_prose: false,
+        },
+        output_dir: PathBuf::from("audit-output"),
+    };
+
+    let summary = summarize_optional_inputs(&config);
+    assert!(summary.llm_prose_used);
+
+    config.llm.no_llm_prose = true;
+    let summary = summarize_optional_inputs(&config);
+    assert!(!summary.llm_prose_used);
 }
 
 #[test]

@@ -304,8 +304,7 @@ impl ScenarioRunner {
                                     invariant: InvariantId::LivenessExceptNodes(exempt.clone()),
                                     tick,
                                     description: format!(
-                                        "liveness violated outside exempt nodes: {:?}",
-                                        non_exempt_isolated
+                                        "liveness violated outside exempt nodes: {non_exempt_isolated:?}"
                                     ),
                                 });
                             }

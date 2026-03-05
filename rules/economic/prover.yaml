@@ -1,0 +1,25 @@
+vectors:
+  - id: ECON-004
+    name: "Missing prover stake slashing enforcement"
+    category: Prover
+    detection:
+      type: CallSiteAbsent
+      fn_patterns:
+        - "ProverStake::slash"
+        - "slash_prover_stake"
+        - "FraudProof::penalize"
+      description: "No call site found that slashes prover stake after invalid proof"
+    severity: Observation
+    spec_refs: []
+
+  - id: ECON-005
+    name: "No prover bond floor configuration"
+    category: Prover
+    detection:
+      type: ConfigBoundCheck
+      const_name: "MIN_PROVER_BOND"
+      required_bound:
+        exists: true
+      description: "No MIN_PROVER_BOND constant found; prover collateral floor is undefined"
+    severity: Observation
+    spec_refs: []

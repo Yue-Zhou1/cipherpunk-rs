@@ -1,4 +1,5 @@
 pub mod chaos;
+pub mod economic;
 pub mod feasibility;
 pub mod harness;
 pub mod invariants;

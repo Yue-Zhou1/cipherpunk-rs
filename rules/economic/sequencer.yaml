@@ -1,0 +1,40 @@
+vectors:
+  - id: ECON-001
+    name: "No transaction ordering enforcement call"
+    category: Sequencer
+    detection:
+      type: CallSiteAbsent
+      fn_patterns:
+        - "FairSequencer::sort"
+        - "order_by_priority_fee"
+        - "fair_sequencing::sort"
+        - "CommitBoost::submit"
+      description: "No call site found that enforces transaction ordering policy"
+    severity: Observation
+    spec_refs:
+      - "EIP-1559"
+
+  - id: ECON-002
+    name: "No inclusion policy enforcement call"
+    category: Sequencer
+    detection:
+      type: CallSiteAbsent
+      fn_patterns:
+        - "InclusionPolicy::check"
+        - "CensorshipGuard::allow"
+        - "TxFilter::is_allowed"
+      description: "No call site found that enforces transaction inclusion policy"
+    severity: Observation
+    spec_refs: []
+
+  - id: ECON-003
+    name: "No maximum batch delay constant"
+    category: Sequencer
+    detection:
+      type: ConfigBoundCheck
+      const_name: "MAX_BATCH_DELAY"
+      required_bound:
+        exists: true
+      description: "No MAX_BATCH_DELAY constant found; sequencer may delay batches indefinitely"
+    severity: Observation
+    spec_refs: []
