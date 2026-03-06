@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use audit_agent_core::finding::Finding;
@@ -41,7 +42,29 @@ impl Default for AnalysisCache {
 
 impl AnalysisCache {
     pub fn open(path: &Path) -> Result<Self> {
-        let db = sled::open(path).with_context(|| format!("open sled db {}", path.display()))?;
+        const LOCK_RETRY_ATTEMPTS: usize = 10;
+        const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
+
+        let mut retries = 0;
+        let db = loop {
+            match sled::open(path) {
+                Ok(db) => break db,
+                Err(err) => {
+                    let lock_contended = matches!(
+                        &err,
+                        sled::Error::Io(io_err)
+                            if io_err.kind() == std::io::ErrorKind::WouldBlock
+                                || io_err.to_string().contains("could not acquire lock")
+                    );
+                    if lock_contended && retries < LOCK_RETRY_ATTEMPTS {
+                        retries += 1;
+                        std::thread::sleep(LOCK_RETRY_DELAY);
+                        continue;
+                    }
+                    return Err(err).with_context(|| format!("open sled db {}", path.display()));
+                }
+            }
+        };
         Ok(Self {
             inner: RwLock::new(HashMap::new()),
             persistent_db: Some(db),

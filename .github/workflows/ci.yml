@@ -76,7 +76,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Generate sample SARIF and validate
+      - name: Validate SARIF output shape and generated files
         run: |
-          cargo test -p findings --test output_tests -- sarif_output_has_expected_shape --exact 2>&1 || true
-          npx @microsoft/sarif-multitool validate --force --sarif-output-version Current || echo "SARIF validation check configured (will validate when sample output is generated)"
+          cargo test -p findings --test output_tests -- sarif_output_has_expected_shape --exact
+          mapfile -t sarif_files < <(find . -type f -name '*.sarif')
+          if [ "${#sarif_files[@]}" -eq 0 ]; then
+            echo "No .sarif files found in workspace; skipping sarif-multitool file validation"
+            exit 0
+          fi
+          npx @microsoft/sarif-multitool validate --sarif-output-version Current "${sarif_files[@]}"

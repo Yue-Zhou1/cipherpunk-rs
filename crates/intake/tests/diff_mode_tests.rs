@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
+use std::thread;
+use std::time::Duration;
 
 use audit_agent_core::finding::{
     CodeLocation, Evidence, Finding, FindingCategory, FindingId, FindingStatus, Framework,
@@ -204,4 +206,25 @@ fn analysis_cache_persists_findings_across_instances() {
         assert_eq!(loaded.len(), 1, "cached findings should persist on disk");
         assert_eq!(loaded[0].id, finding.id);
     }
+}
+
+#[test]
+fn analysis_cache_open_waits_for_short_lock_handoff() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cache_path = dir.path().join("analysis-cache.sled");
+    let barrier = Arc::new(Barrier::new(2));
+    let holder_barrier = Arc::clone(&barrier);
+    let holder_path = cache_path.clone();
+
+    let holder = thread::spawn(move || {
+        let cache = AnalysisCache::open(&holder_path).expect("open persistent cache for holder");
+        holder_barrier.wait();
+        thread::sleep(Duration::from_millis(150));
+        drop(cache);
+    });
+
+    barrier.wait();
+    let reopened = AnalysisCache::open(&cache_path).expect("re-open persistent cache after handoff");
+    drop(reopened);
+    holder.join().expect("join holder thread");
 }
