@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use audit_agent_core::workspace::CargoWorkspace;
@@ -27,7 +27,9 @@ impl LanguageMapper for RustMapper {
 
     fn build(&self, workspace: &CargoWorkspace) -> Result<ProjectIrFragment> {
         let mut fragment = ProjectIrFragment::default();
-        let mut symbol_id_by_name = HashMap::<String, String>::new();
+        let mut symbol_ids_by_name = HashMap::<String, Vec<String>>::new();
+        let mut symbol_edges = HashSet::<(String, String, String)>::new();
+        let mut dataflow_edges = HashSet::<(String, String, String)>::new();
 
         for member in &workspace.members {
             let semantic = build_rust_semantic_index(&member.path)?;
@@ -57,9 +59,10 @@ impl LanguageMapper for RustMapper {
                         label: function.name.clone(),
                         file: Some(file.path.clone()),
                     });
-                    symbol_id_by_name
+                    symbol_ids_by_name
                         .entry(function.name.clone())
-                        .or_insert(symbol_id.clone());
+                        .or_default()
+                        .push(symbol_id.clone());
                 }
 
                 for feature in file.cfg_features {
@@ -76,21 +79,35 @@ impl LanguageMapper for RustMapper {
                     });
                 }
 
-                for function in &file.functions {
-                    let from_symbol = format!("symbol:{}::{}", file.path.display(), function.name);
-                    for call in &file.calls {
-                        if let Some(to_symbol) = symbol_id_by_name.get(call) {
-                            fragment.symbol_graph.edges.push(BasicEdge {
-                                from: from_symbol.clone(),
-                                to: to_symbol.clone(),
-                                relation: "calls".to_string(),
-                            });
-                            fragment.dataflow_graph.edges.push(DataflowEdge {
-                                from: format!("dataflow:{}", from_symbol),
-                                to: format!("dataflow:{}", to_symbol),
-                                relation: "call-arg-flow".to_string(),
-                                value_preview: Some("preview:runtime-value".to_string()),
-                            });
+                for call in &file.function_calls {
+                    let from_symbol = format!("symbol:{}::{}", file.path.display(), call.caller);
+                    if let Some(to_symbols) = symbol_ids_by_name.get(&call.callee) {
+                        for to_symbol in to_symbols {
+                            let symbol_key =
+                                (from_symbol.clone(), to_symbol.clone(), "calls".to_string());
+                            if symbol_edges.insert(symbol_key) {
+                                fragment.symbol_graph.edges.push(BasicEdge {
+                                    from: from_symbol.clone(),
+                                    to: to_symbol.clone(),
+                                    relation: "calls".to_string(),
+                                });
+                            }
+
+                            let dataflow_from = format!("dataflow:{}", from_symbol);
+                            let dataflow_to = format!("dataflow:{}", to_symbol);
+                            let dataflow_key = (
+                                dataflow_from.clone(),
+                                dataflow_to.clone(),
+                                "call-arg-flow".to_string(),
+                            );
+                            if dataflow_edges.insert(dataflow_key) {
+                                fragment.dataflow_graph.edges.push(DataflowEdge {
+                                    from: dataflow_from,
+                                    to: dataflow_to,
+                                    relation: "call-arg-flow".to_string(),
+                                    value_preview: Some("preview:runtime-value".to_string()),
+                                });
+                            }
                         }
                     }
                 }

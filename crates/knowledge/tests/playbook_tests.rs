@@ -1,5 +1,5 @@
-use knowledge::models::{AdjudicatedCase, ReproPattern, ToolSequence};
 use knowledge::KnowledgeBase;
+use knowledge::models::{AdjudicatedCase, ReproPattern, ToolSequence};
 
 #[test]
 fn playbooks_load_and_route_tools_for_rust_crypto() {

@@ -1,9 +1,11 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use rusqlite::Connection;
 
 const SCHEMA_VERSION: i64 = 1;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
+    ensure_fts5_enabled(conn)?;
+
     let current: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if current > SCHEMA_VERSION {
         bail!(
@@ -106,4 +108,15 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+fn ensure_fts5_enabled(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA compile_options")?;
+    let options = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    for option in options {
+        if option?.contains("ENABLE_FTS5") {
+            return Ok(());
+        }
+    }
+    bail!("sqlite is missing FTS5 support (ENABLE_FTS5); session-store requires FTS5")
 }

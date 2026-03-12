@@ -1,4 +1,5 @@
-use audit_agent_core::session::AuditSession;
+use audit_agent_core::finding::VerificationStatus;
+use audit_agent_core::session::{AuditRecord, AuditSession};
 use session_store::SessionStore;
 
 #[test]
@@ -19,10 +20,21 @@ fn full_text_search_returns_matching_records() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = SessionStore::open(dir.path().join("sessions.sqlite")).expect("open store");
     store
-        .insert_searchable_record("sess-1", "nonce reuse in signer")
-        .expect("insert searchable record");
+        .create_session(&AuditSession::sample("sess-1"))
+        .expect("create session");
+    store
+        .upsert_record(
+            "sess-1",
+            &AuditRecord::candidate(
+                "CAND-1",
+                "nonce reuse in signer",
+                VerificationStatus::unverified("test"),
+            ),
+        )
+        .expect("upsert record");
     let hits = store.search_records("nonce").expect("search records");
     assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].record_id, "CAND-1");
 }
 
 #[test]

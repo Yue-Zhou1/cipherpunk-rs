@@ -1,5 +1,7 @@
 use crate::models::{AdjudicatedCase, ReproPattern, ToolSequence};
 
+// Local in-memory store for early v3 tasks. Session-backed persistence can be
+// added later through session-store without changing the KnowledgeBase API.
 #[derive(Debug, Default, Clone)]
 pub struct KnowledgeStore {
     true_positives: Vec<AdjudicatedCase>,

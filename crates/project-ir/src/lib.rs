@@ -1,3 +1,9 @@
+//! Shared project IR for workstation graph lenses.
+//!
+//! Note: `Graph` is modeled as `Graph<Node, Edge>` instead of `Graph<Node>`.
+//! The explicit edge type keeps lens-specific edge payloads strongly typed
+//! (for example, `DataflowEdge` with redaction metadata).
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

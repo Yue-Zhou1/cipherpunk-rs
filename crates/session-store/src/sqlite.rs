@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use audit_agent_core::session::{AuditRecord, AuditSession};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::schema;
@@ -197,16 +197,6 @@ impl SessionStore {
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
-    }
-
-    pub fn insert_searchable_record(&self, session_id: &str, content: &str) -> Result<()> {
-        let record_id = format!("manual-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
-        let conn = self.conn.lock().expect("session-store mutex poisoned");
-        conn.execute(
-            "INSERT INTO record_search(session_id, record_id, content) VALUES (?1, ?2, ?3)",
-            params![session_id, record_id, content],
-        )?;
-        Ok(())
     }
 
     pub fn db_path(&self) -> &Path {
