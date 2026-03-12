@@ -46,6 +46,14 @@ pub enum VerificationStatus {
     Unverified { reason: String },
 }
 
+impl VerificationStatus {
+    pub fn unverified(reason: impl Into<String>) -> Self {
+        Self::Unverified {
+            reason: reason.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Evidence {
     pub command: Option<String>,

@@ -208,6 +208,8 @@ impl AuditOrchestrator {
             dir: self.output_dir.clone(),
             manifest,
             findings: deduplicated,
+            candidates: vec![],
+            review_notes: vec![],
         })
     }
 }

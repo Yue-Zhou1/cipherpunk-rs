@@ -7,12 +7,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::audit_config::{OptionalInputsSummary, ResolvedScope, ResolvedSource};
 use crate::finding::{Finding, Severity};
+use crate::session::AuditRecord;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AuditOutputs {
     pub dir: PathBuf,
     pub manifest: AuditManifest,
     pub findings: Vec<Finding>,
+    #[serde(default)]
+    pub candidates: Vec<AuditRecord>,
+    #[serde(default)]
+    pub review_notes: Vec<AuditRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
