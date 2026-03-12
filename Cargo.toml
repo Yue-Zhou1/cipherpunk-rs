@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/core", "crates/engine-crypto", "crates/engine-distributed", "crates/evidence", "crates/findings", "crates/intake", "crates/llm", "crates/orchestrator", "crates/report", "crates/sandbox", "crates/session-store", "crates/tauri-ui"]
+members = ["crates/cli", "crates/core", "crates/engine-crypto", "crates/engine-distributed", "crates/evidence", "crates/findings", "crates/intake", "crates/knowledge", "crates/llm", "crates/orchestrator", "crates/project-ir", "crates/report", "crates/sandbox", "crates/session-store", "crates/tauri-ui"]
 resolver = "2"
 
 [workspace.package]

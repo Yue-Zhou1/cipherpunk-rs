@@ -1,0 +1,12 @@
+id: p2p-consensus
+name: P2P and Consensus
+items:
+  - id: partition-safety
+    title: Partition Safety
+    description: Validate protocol safety under network partitions and delayed delivery.
+  - id: equivocation-detection
+    title: Equivocation Detection
+    description: Confirm duplicate and conflicting votes are detected and penalized.
+  - id: replay-hardening
+    title: Replay Hardening
+    description: Ensure sequence numbers, epochs, and signatures prevent replay attacks.

@@ -1,0 +1,12 @@
+id: crypto
+name: Cryptography
+items:
+  - id: nonce-uniqueness
+    title: Nonce Uniqueness
+    description: Ensure nonce generation and reuse controls are explicit and testable.
+  - id: key-lifecycle
+    title: Key Lifecycle
+    description: Verify key material derivation, rotation, and storage boundaries.
+  - id: signature-domain-separation
+    title: Signature Domain Separation
+    description: Confirm signed payloads include chain or protocol domain separation tags.

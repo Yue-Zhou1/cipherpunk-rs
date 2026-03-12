@@ -1,0 +1,16 @@
+id: circom-zk
+applies_to:
+  - circom
+  - zk
+domains:
+  - zk
+  - witness
+  - constraints
+preferred_tools:
+  - circom-graph
+  - z3
+  - witness-checker
+initial_queries:
+  - underconstrained signals and unconstrained witness fields
+  - mismatch between intended and effective constraint systems
+  - unsafe assumptions in public input binding

@@ -1,0 +1,16 @@
+id: distributed-consensus
+applies_to:
+  - p2p
+  - consensus
+  - distributed
+domains:
+  - p2p-consensus
+  - economic
+preferred_tools:
+  - madsim
+  - chaos-replay
+  - invariant-monitor
+initial_queries:
+  - safety and liveness under message delay and partition
+  - replay and equivocation handling
+  - economic incentive misalignment vectors

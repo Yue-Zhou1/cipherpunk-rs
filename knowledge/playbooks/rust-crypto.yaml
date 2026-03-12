@@ -1,0 +1,17 @@
+id: rust-crypto
+applies_to:
+  - rust
+  - cargo
+domains:
+  - crypto
+  - serialization
+  - supply-chain
+preferred_tools:
+  - kani
+  - cargo-fuzz
+  - miri
+  - z3
+initial_queries:
+  - nonce reuse across signer paths
+  - unchecked deserialization in cryptographic boundaries
+  - panic paths in verifier and parser code

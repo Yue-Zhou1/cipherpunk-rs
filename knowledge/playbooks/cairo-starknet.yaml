@@ -1,0 +1,16 @@
+id: cairo-starknet
+applies_to:
+  - cairo
+  - starknet
+domains:
+  - zk
+  - contract
+  - economic
+preferred_tools:
+  - cairo-graph
+  - static-analyzer
+  - invariant-checker
+initial_queries:
+  - access control around privileged entrypoints
+  - storage and state transition invariants
+  - fee and execution edge cases

@@ -1,0 +1,12 @@
+id: zk
+name: Zero Knowledge
+items:
+  - id: witness-shape
+    title: Witness Shape Validation
+    description: Check that witness vectors have constrained shape, bounds, and provenance.
+  - id: constraint-completeness
+    title: Constraint Completeness
+    description: Ensure every intended security property is represented by constraints.
+  - id: public-input-binding
+    title: Public Input Binding
+    description: Validate commitments and public values are bound to the claimed statement.

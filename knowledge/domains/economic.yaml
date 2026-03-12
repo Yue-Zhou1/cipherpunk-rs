@@ -1,0 +1,12 @@
+id: economic
+name: Economic Security
+items:
+  - id: incentive-alignment
+    title: Incentive Alignment
+    description: Check whether participants gain by violating protocol rules.
+  - id: griefing-cost
+    title: Griefing Cost Analysis
+    description: Evaluate attacker cost relative to victim loss and protocol disruption.
+  - id: slashing-coverage
+    title: Slashing Coverage
+    description: Ensure slashable actions are observable and enforced across states.
