@@ -3,4 +3,5 @@ pub mod kani;
 pub mod rules;
 pub mod semantic;
 pub mod supply_chain;
+pub mod tool_actions;
 pub mod zk;

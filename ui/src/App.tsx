@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import WizardShell from "./features/wizard/WizardShell";
+import WorkstationShell from "./features/workstation/WorkstationShell";
 import type { AppMode } from "./types";
 
 function App(): JSX.Element {
@@ -14,16 +15,7 @@ function App(): JSX.Element {
     );
   }
 
-  return (
-    <div className="desktop-app-shell">
-      <main className="content-frame">
-        <section className="step-card">
-          <h2>Workstation</h2>
-          <p>Session ID: {mode.sessionId}</p>
-        </section>
-      </main>
-    </div>
-  );
+  return <WorkstationShell sessionId={mode.sessionId} />;
 }
 
 export default App;

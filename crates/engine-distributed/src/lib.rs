@@ -3,6 +3,7 @@ pub mod economic;
 pub mod feasibility;
 pub mod harness;
 pub mod invariants;
+pub mod tool_actions;
 pub mod trace;
 pub mod util;
 pub mod verification;

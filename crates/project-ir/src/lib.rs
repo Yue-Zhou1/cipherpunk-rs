@@ -4,7 +4,7 @@
 //! The explicit edge type keeps lens-specific edge payloads strongly typed
 //! (for example, `DataflowEdge` with redaction metadata).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -33,6 +33,25 @@ pub enum GraphLensKind {
     Feature,
     Dataflow,
     Framework,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SecurityOverview {
+    pub assets: Vec<String>,
+    pub trust_boundaries: Vec<String>,
+    pub hotspots: Vec<String>,
+    pub review_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChecklistDomainPlan {
+    pub id: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ChecklistPlan {
+    pub domains: Vec<ChecklistDomainPlan>,
 }
 
 pub trait LanguageMapper {
@@ -78,6 +97,188 @@ impl ProjectIrBuilder {
         redaction::redact_dataflow(&mut ir.dataflow_graph.edges, self.allow_value_previews);
         Ok(ir)
     }
+}
+
+impl ProjectIr {
+    pub fn security_overview(&self) -> SecurityOverview {
+        let mut assets = self
+            .file_graph
+            .nodes
+            .iter()
+            .take(8)
+            .map(|node| node.path.display().to_string())
+            .collect::<Vec<_>>();
+        if assets.is_empty() {
+            assets.push("No indexed assets yet".to_string());
+        }
+
+        let mut trust_boundaries = Vec::<String>::new();
+        if !self.dataflow_graph.edges.is_empty() {
+            trust_boundaries
+                .push("Source inputs crossing into execution and persistence layers".to_string());
+        }
+        if self
+            .file_graph
+            .nodes
+            .iter()
+            .any(|node| node.path.to_string_lossy().contains("src-tauri"))
+        {
+            trust_boundaries.push("Desktop shell IPC boundary (frontend <-> backend)".to_string());
+        }
+        for view in &self.framework_views {
+            trust_boundaries.push(format!(
+                "{} analysis boundary with deterministic tool validation",
+                view.framework
+            ));
+        }
+        if trust_boundaries.is_empty() {
+            trust_boundaries
+                .push("Human verification boundary for AI-generated outputs".to_string());
+        }
+        trust_boundaries.sort();
+        trust_boundaries.dedup();
+
+        let mut hotspots = self
+            .dataflow_graph
+            .edges
+            .iter()
+            .take(10)
+            .map(|edge| format!("{}: {} -> {}", edge.relation, edge.from, edge.to))
+            .collect::<Vec<_>>();
+        if hotspots.is_empty() {
+            hotspots = self
+                .feature_graph
+                .nodes
+                .iter()
+                .take(10)
+                .map(|node| format!("feature node: {}", node.name))
+                .collect();
+        }
+        if hotspots.is_empty() {
+            hotspots.push("No hotspots generated yet".to_string());
+        }
+
+        let previews_redacted = self
+            .dataflow_graph
+            .edges
+            .iter()
+            .any(|edge| edge.value_preview.is_none());
+        let mut review_notes = vec![
+            "AI-generated overview material must remain unverified until analyst review"
+                .to_string(),
+        ];
+        if previews_redacted {
+            review_notes.push("Dataflow value previews are redacted by default".to_string());
+        } else {
+            review_notes
+                .push("Dataflow previews are visible by explicit policy approval".to_string());
+        }
+
+        SecurityOverview {
+            assets,
+            trust_boundaries,
+            hotspots,
+            review_notes,
+        }
+    }
+
+    pub fn checklist_plan(&self) -> ChecklistPlan {
+        let mut domains = Vec::<ChecklistDomainPlan>::new();
+        let mut seen = HashSet::<String>::new();
+
+        let has_rust = self
+            .file_graph
+            .nodes
+            .iter()
+            .any(|node| node.language == "rust");
+        let has_crypto_indicators = self
+            .file_graph
+            .nodes
+            .iter()
+            .filter(|node| node.language == "rust")
+            .any(|node| {
+                contains_crypto_indicator(&node.path.to_string_lossy().to_ascii_lowercase())
+            })
+            || self
+                .feature_graph
+                .nodes
+                .iter()
+                .any(|node| contains_crypto_indicator(&node.name.to_ascii_lowercase()))
+            || self
+                .dataflow_graph
+                .edges
+                .iter()
+                .any(|edge| contains_crypto_indicator(&edge.relation.to_ascii_lowercase()));
+        if has_rust && has_crypto_indicators && seen.insert("crypto".to_string()) {
+            domains.push(ChecklistDomainPlan {
+                id: "crypto".to_string(),
+                rationale:
+                    "Rust modules and call/dataflow edges indicate cryptographic review paths"
+                        .to_string(),
+            });
+        }
+
+        let has_zk = self
+            .file_graph
+            .nodes
+            .iter()
+            .any(|node| node.language == "circom" || node.language == "cairo");
+        if has_zk && seen.insert("zk".to_string()) {
+            domains.push(ChecklistDomainPlan {
+                id: "zk".to_string(),
+                rationale: "Detected circuit or prover-oriented source files".to_string(),
+            });
+        }
+
+        let has_network = self.file_graph.nodes.iter().any(|node| {
+            let path = node.path.to_string_lossy().to_ascii_lowercase();
+            path.contains("network") || path.contains("consensus") || path.contains("p2p")
+        });
+        if has_network && seen.insert("p2p-consensus".to_string()) {
+            domains.push(ChecklistDomainPlan {
+                id: "p2p-consensus".to_string(),
+                rationale: "Repository paths indicate distributed protocol concerns".to_string(),
+            });
+        }
+
+        if domains.is_empty() {
+            domains.push(ChecklistDomainPlan {
+                id: "core-audit".to_string(),
+                rationale: "Fallback baseline checklist for unresolved project shape".to_string(),
+            });
+        }
+
+        ChecklistPlan { domains }
+    }
+}
+
+fn contains_crypto_indicator(value: &str) -> bool {
+    const CRYPTO_INDICATORS: [&str; 20] = [
+        "/crypto",
+        "signature",
+        "signer",
+        "verify",
+        "cipher",
+        "hash",
+        "keccak",
+        "sha",
+        "hmac",
+        "kdf",
+        "nonce",
+        "merkle",
+        "curve",
+        "field",
+        "scalar",
+        "bls",
+        "ecdsa",
+        "ed25519",
+        "schnorr",
+        "secp",
+    ];
+
+    CRYPTO_INDICATORS
+        .iter()
+        .any(|indicator| value.contains(indicator))
 }
 
 fn workspace_from_path(root: &Path) -> Result<CargoWorkspace> {

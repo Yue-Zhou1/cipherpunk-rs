@@ -758,6 +758,573 @@ pre code {
   font-size: 12px;
 }
 
+.workstation-shell {
+  gap: 0;
+}
+
+.vscode-shell {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: "IBM Plex Sans", "Plus Jakarta Sans", "Segoe UI", sans-serif;
+}
+
+.vscode-titlebar {
+  height: 34px;
+  display: grid;
+  grid-template-columns: 1fr minmax(260px, 1.4fr) 1fr;
+  align-items: center;
+  padding: 0 12px;
+  background: #3c3c3c;
+  border-bottom: 1px solid #2a2a2a;
+  user-select: none;
+}
+
+.vscode-title-left,
+.vscode-title-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vscode-title-left p {
+  margin: 0;
+  font-size: 12px;
+  color: #c5c5c5;
+}
+
+.vscode-title-center {
+  justify-self: center;
+  font-size: 12px;
+  color: #bdbdbd;
+  letter-spacing: 0.01em;
+}
+
+.vscode-title-right {
+  justify-self: end;
+}
+
+.vscode-title-action {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid #5a5a5a;
+  border-radius: 4px;
+  background: #4a4a4a;
+  color: #d4d4d4;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.vscode-title-action:hover {
+  background: #595959;
+  border-color: #7a7a7a;
+}
+
+.vscode-dot-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vscode-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot-close {
+  background: #ff5f57;
+}
+
+.dot-minimize {
+  background: #febc2e;
+}
+
+.dot-expand {
+  background: #28c840;
+}
+
+.vscode-workbench {
+  flex: 1;
+  min-height: calc(100vh - 34px - 210px);
+  display: grid;
+  grid-template-columns: 48px 280px minmax(0, 1fr) 320px;
+}
+
+.vscode-activity-bar {
+  background: #333333;
+  border-right: 1px solid #252526;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.vscode-activity-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  align-items: center;
+}
+
+.vscode-activity-button {
+  width: 100%;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: #8b8b8b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 160ms ease-out, background-color 160ms ease-out;
+  border-left: 2px solid transparent;
+}
+
+.vscode-activity-button:hover {
+  color: #d4d4d4;
+  background: #2a2d2e;
+}
+
+.vscode-activity-button.active {
+  color: #ffffff;
+  border-left-color: #0078d4;
+}
+
+.vscode-editor-column {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 35px minmax(0, 1fr);
+  border-right: 1px solid #252526;
+}
+
+.vscode-editor-stack {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(210px, 0.42fr);
+}
+
+.vscode-editor-tabs {
+  display: flex;
+  align-items: center;
+  background: #2d2d2d;
+  border-bottom: 1px solid #252526;
+}
+
+.vscode-editor-tab {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  background: #2d2d2d;
+  color: #b9b9b9;
+  border-right: 1px solid #252526;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.vscode-editor-tab.active {
+  background: #1e1e1e;
+  color: #ffffff;
+}
+
+.vscode-shell .panel {
+  border: 0;
+  border-radius: 0;
+  background: #252526;
+  padding: 10px;
+}
+
+.vscode-right-column {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 0.9fr);
+  border-left: 1px solid #252526;
+}
+
+.workstation-explorer,
+.workstation-toolbench {
+  border-right: 1px solid #252526;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workstation-explorer,
+.workstation-editor,
+.workstation-toolbench,
+.workstation-overview,
+.workstation-checklist,
+.workstation-graph-lens {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workstation-editor {
+  background: #1e1e1e;
+}
+
+.workstation-overview,
+.workstation-checklist,
+.workstation-toolbench {
+  border-bottom: 1px solid #252526;
+}
+
+.workstation-graph-lens {
+  border-top: 1px solid #252526;
+  background: #1f1f1f;
+}
+
+.workstation-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workstation-panel-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b8b8b;
+}
+
+.vscode-shell h2 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #d4d4d4;
+}
+
+.vscode-shell .muted-text {
+  color: #9c9c9c;
+  font-size: 12px;
+}
+
+.workstation-input-label {
+  gap: 6px;
+}
+
+.workstation-input-label span {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #7f7f7f;
+}
+
+.workstation-input-label input {
+  height: 26px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #3c3c3c;
+  color: #9a9a9a;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.workstation-tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.graph-lens-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-lens-tab {
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #bcbcbc;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 160ms ease-out, color 160ms ease-out, border-color 160ms ease-out;
+}
+
+.graph-lens-tab.active,
+.graph-lens-tab:hover {
+  border-color: #0e639c;
+  color: #ffffff;
+  background: #094771;
+}
+
+.graph-lens-redaction {
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.graph-lens-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+
+.graph-lens-canvas {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  min-height: 240px;
+  overflow: hidden;
+}
+
+.graph-lens-block {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 8px;
+  min-height: 0;
+}
+
+.graph-lens-block h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #a5a5a5;
+  text-transform: uppercase;
+}
+
+.graph-lens-block ul {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.graph-lens-block li {
+  font-size: 12px;
+  color: #c9c9c9;
+}
+
+.workstation-tree-list ul {
+  list-style: none;
+  margin: 6px 0 0 12px;
+  padding: 0;
+}
+
+.workstation-tree-directory summary {
+  cursor: pointer;
+  color: #c5c5c5;
+  font-size: 12px;
+}
+
+.workstation-tree-file-row {
+  margin: 0;
+}
+
+.workstation-tree-file {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #cccccc;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: background-color 160ms ease-out, color 160ms ease-out;
+}
+
+.workstation-tree-file:hover,
+.workstation-tree-file.active {
+  background: #37373d;
+  color: #ffffff;
+}
+
+.workstation-monaco-wrap {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
+.workstation-monaco-wrap > div {
+  height: 100%;
+}
+
+.workstation-editor-fallback {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #1e1e1e;
+}
+
+.workstation-tool-list {
+  display: grid;
+  gap: 6px;
+}
+
+.toolbench-section {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 8px;
+}
+
+.toolbench-section h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #a5a5a5;
+}
+
+.toolbench-list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.toolbench-list li {
+  font-size: 12px;
+}
+
+.workstation-tool-action {
+  margin-right: 0;
+  padding: 7px 8px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #d4d4d4;
+  font-size: 12px;
+  text-align: left;
+}
+
+.workstation-tool-action:hover {
+  background: #3e3e42;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.overview-grid article {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 8px;
+}
+
+.overview-grid h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #a5a5a5;
+  text-transform: uppercase;
+}
+
+.overview-grid ul {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.overview-grid li {
+  font-size: 12px;
+}
+
+.checklist-plan-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.checklist-plan-list li {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 8px;
+}
+
+.checklist-domain-id {
+  margin: 0 0 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: #4fc1ff;
+}
+
+.workstation-console {
+  min-height: 210px;
+  border-top: 1px solid #252526;
+  background: #1e1e1e;
+}
+
+.workstation-console .code-toolbar {
+  margin: 0 0 8px;
+}
+
+.workstation-console-stream {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.console-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.console-level {
+  justify-self: start;
+  font-size: 10px;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 6px;
+}
+
+.console-level.info {
+  color: #4fc1ff;
+  border-color: rgba(79, 193, 255, 0.45);
+}
+
+.console-level.warning {
+  color: #cca700;
+  border-color: rgba(204, 167, 0, 0.45);
+}
+
+.console-level.error {
+  color: #f48771;
+  border-color: rgba(244, 135, 113, 0.45);
+}
+
+.workstation-console-stream code {
+  color: #cccccc;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .file-list {
   display: flex;
   gap: 6px;
@@ -842,6 +1409,14 @@ pre code {
   .top-bar {
     grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.8fr) auto;
   }
+
+  .vscode-workbench {
+    grid-template-columns: 48px 250px minmax(0, 1fr) 280px;
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1023px) {
@@ -871,6 +1446,43 @@ pre code {
   .stepper-list {
     justify-content: flex-start;
   }
+
+  .vscode-shell {
+    padding: 0;
+  }
+
+  .vscode-titlebar {
+    grid-template-columns: 1fr;
+    height: auto;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .vscode-title-center,
+  .vscode-title-right {
+    justify-self: start;
+  }
+
+  .vscode-workbench {
+    min-height: calc(100vh - 180px);
+    grid-template-columns: 48px 240px minmax(0, 1fr);
+  }
+
+  .vscode-right-column {
+    display: none;
+  }
+
+  .vscode-editor-column {
+    border-right: 0;
+  }
+
+  .graph-lens-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workstation-console {
+    min-height: 180px;
+  }
 }
 
 @media (max-width: 767px) {
@@ -895,5 +1507,18 @@ pre code {
 
   .action-row {
     justify-content: stretch;
+  }
+
+  .vscode-workbench {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .workstation-explorer {
+    display: none;
+  }
+
+  .vscode-title-left p,
+  .vscode-title-center {
+    font-size: 11px;
   }
 }

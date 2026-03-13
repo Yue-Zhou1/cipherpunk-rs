@@ -8,6 +8,7 @@ use audit_agent_core::engine::{AuditContext, AuditEngine, EvidenceWriter, Sandbo
 use audit_agent_core::finding::Finding;
 use audit_agent_core::output::{AuditManifest, AuditOutputs, FindingCounts};
 use audit_agent_core::session::AuditSession;
+use audit_agent_core::tooling::ToolActionStatus;
 use chrono::Utc;
 use findings::pipeline::{
     deduplicate_findings, mark_regression_checks as mark_regression_checks_by_key,
@@ -17,15 +18,18 @@ use intake::summarize_optional_inputs;
 use intake::workspace::WorkspaceAnalyzer;
 use llm::LlmProvider;
 use report::generator::{ReportGenerator, ReportGeneratorOptions};
-use session_store::SessionStore;
+use session_store::{SessionEvent, SessionStore};
 
 pub mod events;
 pub mod jobs;
 mod runtime;
+pub mod tool_actions;
 
+pub use audit_agent_core::tooling::{ToolActionRequest, ToolActionResult, ToolFamily};
 pub use events::{AuditEvent, AuditEventSink, JobLifecycleEvent};
 pub use jobs::{AuditJob, AuditJobKind, AuditJobStatus};
 pub use runtime::OrchestratorRuntime;
+pub use tool_actions::plan_tool_action;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditDag {
@@ -171,6 +175,62 @@ impl AuditOrchestrator {
             evidence_store: Arc::clone(&self.runtime.evidence_writer),
             llm: self.runtime.context_llm.clone(),
         }
+    }
+
+    pub async fn run_tool_action(&self, request: ToolActionRequest) -> Result<ToolActionResult> {
+        let plan = tool_actions::plan_tool_action(&request);
+        let workspace_root = request
+            .workspace_root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let artifact_root = self
+            .output_dir
+            .join("tool-runs")
+            .join(request.session_id.clone());
+        let _ = std::fs::create_dir_all(&artifact_root);
+        let sandbox_request =
+            tool_actions::sandbox_request(&plan, &request.budget, &workspace_root, &artifact_root);
+        let sandbox_result = self.runtime.sandbox.execute(sandbox_request).await?;
+        let status = if sandbox_result.exit_code == 0 {
+            ToolActionStatus::Completed
+        } else {
+            ToolActionStatus::Failed
+        };
+
+        let mut artifact_refs = plan.artifact_refs.clone();
+        artifact_refs.extend(
+            sandbox_result
+                .artifacts
+                .iter()
+                .map(|path| path.to_string_lossy().to_string()),
+        );
+
+        let result = ToolActionResult {
+            action_id: format!("action-{}", Utc::now().timestamp_micros()),
+            session_id: request.session_id.clone(),
+            tool_family: plan.tool_family,
+            target: request.target,
+            command: plan.command,
+            artifact_refs,
+            rationale: plan.rationale,
+            status,
+            stdout_preview: optional_preview(&sandbox_result.stdout),
+            stderr_preview: optional_preview(&sandbox_result.stderr),
+        };
+
+        if let Some(store) = &self.session_store {
+            let payload = serde_json::to_string(&result)?;
+            let event = SessionEvent {
+                event_id: format!("tool-action:{}", result.action_id),
+                event_type: "tool.action".to_string(),
+                payload,
+                created_at: Utc::now(),
+            };
+            store.append_event(&result.session_id, &event)?;
+        }
+
+        Ok(result)
     }
 
     pub async fn run(&self, config: &AuditConfig) -> Result<AuditOutputs> {
@@ -333,4 +393,20 @@ fn aggregate_manifest_metadata(
     }
 
     (tool_versions, container_digests)
+}
+
+fn optional_preview(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let limit = 1_024usize;
+    let mut chars = trimmed.chars();
+    let preview = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_none() {
+        return Some(preview);
+    }
+
+    Some(format!("{preview}..."))
 }

@@ -98,7 +98,7 @@ describe("App layout shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /step 4/i }));
     fireEvent.click(screen.getByRole("button", { name: /confirm and start audit/i }));
 
-    expect(await screen.findByText(/workstation/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/activity bar/i)).toBeInTheDocument();
   });
 
   it("requires valid configuration before progressing from step 2", () => {

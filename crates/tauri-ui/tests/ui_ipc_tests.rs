@@ -11,7 +11,9 @@ use audit_agent_core::finding::Framework;
 use audit_agent_core::workspace::{CrateKind, CrateMeta};
 use intake::config::ConfigParser;
 use intake::confirmation::{CrateDecision, IntakeWarning};
-use tauri_ui::ipc::{ConfirmWorkspaceRequest, SourceInputIpc, SourceKind, UiSessionState};
+use tauri_ui::ipc::{
+    ConfirmWorkspaceRequest, SourceInputIpc, SourceKind, ToolbenchSelectionRequest, UiSessionState,
+};
 use tauri_ui::{
     OutputType, branch_resolution_banner, crate_decision_style, download_output, export_audit_yaml,
     get_reproduce_preview, llm_missing_details, warning_message,
@@ -354,4 +356,115 @@ async fn confirm_workspace_creates_session_id_and_snapshot() {
         .expect("create session");
     assert!(response.session_id.starts_with("sess-"));
     assert!(response.snapshot_id.starts_with("snap-"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workstation_commands_return_tree_file_and_console_data() {
+    let dir = tempdir().expect("tempdir");
+    let (repo_root, commit_sha) = create_local_workspace_repo(dir.path());
+
+    let mut session = UiSessionState::new(dir.path().join(".audit-work"));
+    session
+        .resolve_source(SourceInputIpc {
+            kind: SourceKind::Local,
+            value: repo_root.display().to_string(),
+            commit_or_ref: Some(commit_sha),
+        })
+        .await
+        .expect("resolve local source");
+    session.detect_workspace().expect("detect workspace");
+    session
+        .confirm_workspace(ConfirmWorkspaceRequest {
+            confirmed: true,
+            ambiguous_crates: HashMap::new(),
+            no_llm_prose: false,
+        })
+        .expect("confirm workspace");
+
+    let created = session
+        .create_audit_session()
+        .await
+        .expect("create audit session");
+
+    let tree = session
+        .get_project_tree(&created.session_id)
+        .await
+        .expect("project tree");
+    assert!(!tree.nodes.is_empty(), "project tree should include files");
+
+    let file = session
+        .read_source_file(&created.session_id, "rollup-core/src/lib.rs")
+        .await
+        .expect("read source file");
+    assert!(
+        file.content.contains("verifier_ready"),
+        "expected repo content"
+    );
+
+    let console = session
+        .tail_session_console(&created.session_id, 20)
+        .expect("tail console");
+    assert!(
+        !console.entries.is_empty(),
+        "console should include bootstrap lifecycle events"
+    );
+
+    let file_graph = session
+        .load_file_graph(&created.session_id)
+        .await
+        .expect("load file graph");
+    assert_eq!(file_graph.lens, "file");
+
+    let feature_graph = session
+        .load_feature_graph(&created.session_id)
+        .await
+        .expect("load feature graph");
+    assert_eq!(feature_graph.lens, "feature");
+
+    let dataflow_graph = session
+        .load_dataflow_graph(&created.session_id, false)
+        .await
+        .expect("load redacted dataflow graph");
+    assert_eq!(dataflow_graph.lens, "dataflow");
+    assert!(dataflow_graph.redacted_values);
+
+    let overview = session
+        .load_security_overview(&created.session_id)
+        .await
+        .expect("load security overview");
+    assert!(
+        !overview.trust_boundaries.is_empty(),
+        "security overview should include trust boundaries"
+    );
+
+    let checklist = session
+        .load_checklist_plan(&created.session_id)
+        .await
+        .expect("load checklist plan");
+    assert!(
+        !checklist.domains.is_empty(),
+        "checklist plan should include at least one domain"
+    );
+
+    let toolbench = session
+        .load_toolbench_context(
+            &created.session_id,
+            ToolbenchSelectionRequest {
+                kind: "symbol".to_string(),
+                id: "prove".to_string(),
+            },
+        )
+        .await
+        .expect("load toolbench context");
+    assert_eq!(toolbench.selection.kind, "symbol");
+    assert_eq!(toolbench.selection.id, "prove");
+    assert!(
+        !toolbench.recommended_tools.is_empty(),
+        "toolbench should include recommendations"
+    );
+    assert_eq!(
+        toolbench.domains.len(),
+        checklist.domains.len(),
+        "toolbench domains should mirror checklist domains"
+    );
 }

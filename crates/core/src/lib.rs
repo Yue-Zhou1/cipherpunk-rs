@@ -6,6 +6,7 @@ pub mod llm;
 pub mod output;
 pub mod schema;
 pub mod session;
+pub mod tooling;
 pub mod workspace;
 
 pub use engine::{NoopEvidenceWriter, NoopSandboxRunner};

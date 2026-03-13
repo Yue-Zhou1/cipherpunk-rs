@@ -31,6 +31,7 @@ pub enum ToolImage {
     Z3,
     Miri,
     MadSim,
+    Chaos,
     Fuzz,
     Custom(String),
 }
@@ -362,6 +363,7 @@ fn from_core_image(image: SandboxImage) -> ToolImage {
         SandboxImage::Z3 => ToolImage::Z3,
         SandboxImage::Miri => ToolImage::Miri,
         SandboxImage::MadSim => ToolImage::MadSim,
+        SandboxImage::Chaos => ToolImage::Chaos,
         SandboxImage::Fuzz => ToolImage::Fuzz,
         SandboxImage::Custom(value) => ToolImage::Custom(value),
     }
@@ -373,6 +375,7 @@ pub struct ImageRegistry {
     z3: String,
     miri: String,
     madsim: String,
+    chaos: String,
     fuzz: String,
 }
 
@@ -383,6 +386,7 @@ impl Default for ImageRegistry {
             z3: "audit-agent/z3:4.13.0".to_string(),
             miri: "audit-agent/miri:nightly-2024-11-01".to_string(),
             madsim: "audit-agent/madsim:0.2.30".to_string(),
+            chaos: "audit-agent/chaos:0.1.0".to_string(),
             fuzz: "audit-agent/fuzz:0.12.0-0.21.0".to_string(),
         }
     }
@@ -395,6 +399,7 @@ impl ImageRegistry {
             ToolImage::Z3 => self.z3.clone(),
             ToolImage::Miri => self.miri.clone(),
             ToolImage::MadSim => self.madsim.clone(),
+            ToolImage::Chaos => self.chaos.clone(),
             ToolImage::Fuzz => self.fuzz.clone(),
             ToolImage::Custom(value) => value.clone(),
         }

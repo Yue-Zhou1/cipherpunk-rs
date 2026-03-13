@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,7 +12,12 @@ use intake::config::{ConfigParser, RawEngineConfig, RawScope, RawSource, Validat
 use intake::confirmation::{ConfirmationSummary, UserDecisions};
 use intake::project_snapshot_from_config;
 use intake::source::SourceInput;
+use knowledge::KnowledgeBase;
 use orchestrator::{AuditJob, AuditJobKind, AuditOrchestrator};
+use project_ir::{
+    ChecklistPlan as IrChecklistPlan, ProjectIr, ProjectIrBuilder,
+    SecurityOverview as IrSecurityOverview,
+};
 use serde::{Deserialize, Serialize};
 use session_store::SessionStore;
 
@@ -91,6 +97,157 @@ pub struct OpenAuditSessionResponse {
     pub initial_jobs: Vec<SessionJobView>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectTreeNodeKind {
+    Directory,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTreeNode {
+    pub name: String,
+    pub path: String,
+    pub kind: ProjectTreeNodeKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<ProjectTreeNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetProjectTreeResponse {
+    pub session_id: String,
+    pub root_name: String,
+    pub nodes: Vec<ProjectTreeNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadSourceFileResponse {
+    pub session_id: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionConsoleLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConsoleEntry {
+    pub timestamp: String,
+    pub source: String,
+    pub level: SessionConsoleLevel,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TailSessionConsoleResponse {
+    pub session_id: String,
+    pub entries: Vec<SessionConsoleEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGraphNodeResponse {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGraphEdgeResponse {
+    pub from: String,
+    pub to: String,
+    pub relation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGraphResponse {
+    pub session_id: String,
+    pub lens: String,
+    pub redacted_values: bool,
+    pub nodes: Vec<ProjectGraphNodeResponse>,
+    pub edges: Vec<ProjectGraphEdgeResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadSecurityOverviewResponse {
+    pub session_id: String,
+    pub assets: Vec<String>,
+    pub trust_boundaries: Vec<String>,
+    pub hotspots: Vec<String>,
+    pub review_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChecklistDomainPlanResponse {
+    pub id: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadChecklistPlanResponse {
+    pub session_id: String,
+    pub domains: Vec<ChecklistDomainPlanResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolbenchSelectionRequest {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolbenchSelectionResponse {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolbenchRecommendationResponse {
+    pub tool_id: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolbenchSimilarCaseResponse {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadToolbenchContextResponse {
+    pub session_id: String,
+    pub selection: ToolbenchSelectionResponse,
+    pub recommended_tools: Vec<ToolbenchRecommendationResponse>,
+    pub domains: Vec<ChecklistDomainPlanResponse>,
+    pub overview_notes: Vec<String>,
+    pub similar_cases: Vec<ToolbenchSimilarCaseResponse>,
+}
+
 pub struct UiSessionState {
     work_dir: PathBuf,
     resolved_source: Option<ResolvedSourceView>,
@@ -100,6 +257,7 @@ pub struct UiSessionState {
     active_session_id: Option<String>,
     sessions: HashMap<String, AuditSession>,
     session_jobs: HashMap<String, Vec<SessionJobView>>,
+    project_ir_cache: HashMap<String, ProjectIr>,
     session_store: Option<Arc<SessionStore>>,
 }
 
@@ -117,6 +275,7 @@ impl UiSessionState {
             active_session_id: None,
             sessions: HashMap::new(),
             session_jobs: HashMap::new(),
+            project_ir_cache: HashMap::new(),
             session_store,
         }
     }
@@ -379,6 +538,231 @@ impl UiSessionState {
             initial_jobs,
         }))
     }
+
+    pub async fn get_project_tree(&mut self, session_id: &str) -> Result<GetProjectTreeResponse> {
+        let session = self.ensure_session_loaded(session_id)?;
+        let root_dir = canonical_session_root(&session)?;
+        let root_name = root_dir
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| root_dir.display().to_string());
+
+        let mut remaining = MAX_PROJECT_TREE_NODES;
+        let nodes = collect_tree_nodes(&root_dir, &root_dir, 0, &mut remaining)?;
+
+        Ok(GetProjectTreeResponse {
+            session_id: session_id.to_string(),
+            root_name,
+            nodes,
+        })
+    }
+
+    pub async fn read_source_file(
+        &mut self,
+        session_id: &str,
+        path: &str,
+    ) -> Result<ReadSourceFileResponse> {
+        let session = self.ensure_session_loaded(session_id)?;
+        let root_dir = canonical_session_root(&session)?;
+        let relative_path = normalized_relative_path(path)?;
+        let candidate = root_dir.join(&relative_path);
+        let canonical_file = fs::canonicalize(&candidate)
+            .with_context(|| format!("read source file {}", candidate.display()))?;
+
+        if !canonical_file.starts_with(&root_dir) {
+            bail!("requested path is outside of the session source root");
+        }
+
+        let metadata = fs::metadata(&canonical_file)
+            .with_context(|| format!("read file metadata {}", canonical_file.display()))?;
+        if metadata.len() > MAX_SOURCE_FILE_BYTES {
+            bail!(
+                "requested source file exceeds {} bytes",
+                MAX_SOURCE_FILE_BYTES
+            );
+        }
+
+        let bytes = fs::read(&canonical_file)
+            .with_context(|| format!("read {}", canonical_file.display()))?;
+        let content = String::from_utf8(bytes).with_context(|| {
+            format!(
+                "source file is not valid utf-8 {}",
+                canonical_file.display()
+            )
+        })?;
+
+        Ok(ReadSourceFileResponse {
+            session_id: session_id.to_string(),
+            path: relative_path_to_string(&relative_path),
+            content,
+        })
+    }
+
+    pub fn tail_session_console(
+        &mut self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<TailSessionConsoleResponse> {
+        let session = self.ensure_session_loaded(session_id)?;
+        let requested = limit.max(1);
+        let mut entries = Vec::<SessionConsoleEntry>::new();
+
+        if let Some(store) = &self.session_store {
+            let events = store.list_events(&session.session_id)?;
+            let start = events.len().saturating_sub(requested);
+            for event in &events[start..] {
+                entries.push(console_entry_from_event(event));
+            }
+        }
+
+        if entries.is_empty() {
+            let jobs = self
+                .session_jobs
+                .get(&session.session_id)
+                .cloned()
+                .unwrap_or_default();
+            for (index, job) in jobs.iter().take(requested).enumerate() {
+                entries.push(SessionConsoleEntry {
+                    timestamp: format!("bootstrap+{}", index + 1),
+                    source: "job.bootstrap".to_string(),
+                    level: SessionConsoleLevel::Info,
+                    message: format!("{} [{}]", job.kind, job.status),
+                });
+            }
+        }
+
+        Ok(TailSessionConsoleResponse {
+            session_id: session_id.to_string(),
+            entries,
+        })
+    }
+
+    pub async fn load_file_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
+        let ir = self.load_or_build_project_ir(session_id, false).await?;
+        Ok(file_graph_response(session_id, &ir))
+    }
+
+    pub async fn load_feature_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
+        let ir = self.load_or_build_project_ir(session_id, false).await?;
+        Ok(feature_graph_response(session_id, &ir))
+    }
+
+    pub async fn load_dataflow_graph(
+        &mut self,
+        session_id: &str,
+        include_values: bool,
+    ) -> Result<ProjectGraphResponse> {
+        let ir = self
+            .load_or_build_project_ir(session_id, include_values)
+            .await?;
+        Ok(dataflow_graph_response(session_id, &ir, !include_values))
+    }
+
+    pub async fn load_security_overview(
+        &mut self,
+        session_id: &str,
+    ) -> Result<LoadSecurityOverviewResponse> {
+        let ir = self.load_or_build_project_ir(session_id, false).await?;
+        Ok(security_overview_response(
+            session_id,
+            ir.security_overview(),
+        ))
+    }
+
+    pub async fn load_checklist_plan(
+        &mut self,
+        session_id: &str,
+    ) -> Result<LoadChecklistPlanResponse> {
+        let ir = self.load_or_build_project_ir(session_id, false).await?;
+        Ok(checklist_plan_response(session_id, ir.checklist_plan()))
+    }
+
+    pub async fn load_toolbench_context(
+        &mut self,
+        session_id: &str,
+        selection: ToolbenchSelectionRequest,
+    ) -> Result<LoadToolbenchContextResponse> {
+        let ir = self.load_or_build_project_ir(session_id, false).await?;
+        let overview = ir.security_overview();
+        let checklist = ir.checklist_plan();
+        let context_terms = toolbench_context_terms(&selection, &checklist, &overview);
+
+        let (mut recommended_tools, similar_cases) = match KnowledgeBase::load_from_repo_root() {
+            Ok(knowledge_base) => {
+                let mut tools = Vec::<ToolbenchRecommendationResponse>::new();
+                for tool in knowledge_base
+                    .recommend_tools(&context_terms, &overview.review_notes)
+                    .into_iter()
+                {
+                    push_recommendation(&mut tools, canonical_tool_id(&tool.tool), tool.rationale);
+                }
+                let cases = knowledge_base
+                    .similar_cases(&context_terms, 3)
+                    .into_iter()
+                    .map(|case| ToolbenchSimilarCaseResponse {
+                        id: case.id,
+                        title: case.title,
+                        summary: case.summary,
+                    })
+                    .collect::<Vec<_>>();
+                (tools, cases)
+            }
+            Err(_) => (vec![], vec![]),
+        };
+
+        if recommended_tools.is_empty() {
+            recommended_tools = fallback_tool_recommendations(&checklist);
+        }
+
+        Ok(LoadToolbenchContextResponse {
+            session_id: session_id.to_string(),
+            selection: ToolbenchSelectionResponse {
+                kind: selection.kind,
+                id: selection.id,
+            },
+            recommended_tools,
+            domains: checklist_domain_responses(&checklist),
+            overview_notes: overview.review_notes,
+            similar_cases,
+        })
+    }
+
+    async fn load_or_build_project_ir(
+        &mut self,
+        session_id: &str,
+        include_values: bool,
+    ) -> Result<ProjectIr> {
+        let session = self.ensure_session_loaded(session_id)?;
+
+        if include_values {
+            return build_project_ir_for_session(&session, true).await;
+        }
+
+        if let Some(cached) = self.project_ir_cache.get(session_id) {
+            return Ok(cached.clone());
+        }
+
+        let built = build_project_ir_for_session(&session, false).await?;
+        self.project_ir_cache
+            .insert(session_id.to_string(), built.clone());
+        Ok(built)
+    }
+
+    fn ensure_session_loaded(&mut self, session_id: &str) -> Result<AuditSession> {
+        if let Some(existing) = self.sessions.get(session_id) {
+            return Ok(existing.clone());
+        }
+
+        if let Some(store) = &self.session_store {
+            if let Some(session) = store.load_session(session_id)? {
+                self.sessions
+                    .insert(session_id.to_string(), session.clone());
+                return Ok(session);
+            }
+        }
+
+        bail!("unknown audit session `{session_id}`")
+    }
 }
 
 impl SourceInputIpc {
@@ -448,6 +832,466 @@ fn session_jobs_from_events(events: &[session_store::SessionEvent]) -> Vec<Sessi
         }
     }
     jobs
+}
+
+const MAX_PROJECT_TREE_DEPTH: usize = 7;
+const MAX_PROJECT_TREE_NODES: usize = 1_500;
+const MAX_SOURCE_FILE_BYTES: u64 = 768 * 1024;
+
+fn canonical_session_root(session: &AuditSession) -> Result<PathBuf> {
+    let root = fs::canonicalize(&session.snapshot.source.local_path).with_context(|| {
+        format!(
+            "session source root is unavailable {}",
+            session.snapshot.source.local_path.display()
+        )
+    })?;
+
+    if root.is_dir() {
+        Ok(root)
+    } else {
+        root.parent()
+            .map(Path::to_path_buf)
+            .context("session source root is not a directory")
+    }
+}
+
+fn collect_tree_nodes(
+    root_dir: &Path,
+    dir: &Path,
+    depth: usize,
+    remaining: &mut usize,
+) -> Result<Vec<ProjectTreeNode>> {
+    if depth >= MAX_PROJECT_TREE_DEPTH || *remaining == 0 {
+        return Ok(vec![]);
+    }
+
+    let mut dirs = Vec::<(String, PathBuf)>::new();
+    let mut files = Vec::<(String, PathBuf)>::new();
+
+    let entries =
+        fs::read_dir(dir).with_context(|| format!("read project directory {}", dir.display()))?;
+    for entry in entries {
+        if *remaining == 0 {
+            break;
+        }
+
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_tree_entry(&name) {
+            continue;
+        }
+
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            dirs.push((name, path));
+        } else if file_type.is_file() {
+            files.push((name, path));
+        }
+    }
+
+    dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut nodes = Vec::<ProjectTreeNode>::new();
+
+    for (name, path) in dirs {
+        if *remaining == 0 {
+            break;
+        }
+        *remaining -= 1;
+
+        let relative = path.strip_prefix(root_dir).unwrap_or(path.as_path());
+        let children = collect_tree_nodes(root_dir, &path, depth + 1, remaining)?;
+
+        nodes.push(ProjectTreeNode {
+            name,
+            path: relative_path_to_string(relative),
+            kind: ProjectTreeNodeKind::Directory,
+            children,
+        });
+    }
+
+    for (name, path) in files {
+        if *remaining == 0 {
+            break;
+        }
+        *remaining -= 1;
+
+        let relative = path.strip_prefix(root_dir).unwrap_or(path.as_path());
+        nodes.push(ProjectTreeNode {
+            name,
+            path: relative_path_to_string(relative),
+            kind: ProjectTreeNodeKind::File,
+            children: vec![],
+        });
+    }
+
+    Ok(nodes)
+}
+
+fn should_skip_tree_entry(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | "target" | "node_modules" | ".audit-work" | ".audit-sessions"
+    )
+}
+
+fn normalized_relative_path(input: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(input.trim());
+    if path.as_os_str().is_empty() {
+        bail!("path must not be empty");
+    }
+
+    if path.is_absolute() {
+        bail!("absolute paths are not allowed");
+    }
+
+    for component in path.components() {
+        use std::path::Component;
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                bail!("path traversal is not allowed")
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+
+    Ok(path)
+}
+
+fn relative_path_to_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn console_entry_from_event(event: &session_store::SessionEvent) -> SessionConsoleEntry {
+    let mut message = event.event_type.clone();
+    let mut level = SessionConsoleLevel::Info;
+
+    if event.event_type == "job.lifecycle" {
+        if let Ok(job) = serde_json::from_str::<AuditJob>(&event.payload) {
+            message = format!(
+                "{} [{}] {}",
+                job.job_id,
+                format!("{:?}", job.status).to_ascii_lowercase(),
+                job_kind(&job.kind)
+            );
+            if job.status == orchestrator::AuditJobStatus::Failed {
+                level = SessionConsoleLevel::Error;
+            }
+        }
+    }
+
+    SessionConsoleEntry {
+        timestamp: event.created_at.format("%H:%M:%S").to_string(),
+        source: event.event_type.clone(),
+        level,
+        message,
+    }
+}
+
+async fn build_project_ir_for_session(
+    session: &AuditSession,
+    include_values: bool,
+) -> Result<ProjectIr> {
+    ProjectIrBuilder::for_path(&session.snapshot.source.local_path)
+        .with_value_previews(include_values)
+        .build()
+        .await
+        .with_context(|| {
+            format!(
+                "build project ir for session {} ({})",
+                session.session_id,
+                session.snapshot.source.local_path.display()
+            )
+        })
+}
+
+fn file_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse {
+    ProjectGraphResponse {
+        session_id: session_id.to_string(),
+        lens: "file".to_string(),
+        redacted_values: true,
+        nodes: ir
+            .file_graph
+            .nodes
+            .iter()
+            .map(|node| ProjectGraphNodeResponse {
+                id: node.id.clone(),
+                label: node.path.display().to_string(),
+                kind: format!("file:{}", node.language),
+                file_path: Some(relative_path_to_string(&node.path)),
+            })
+            .collect(),
+        edges: ir
+            .file_graph
+            .edges
+            .iter()
+            .map(|edge| ProjectGraphEdgeResponse {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                relation: edge.relation.clone(),
+                value_preview: None,
+            })
+            .collect(),
+    }
+}
+
+fn feature_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse {
+    ProjectGraphResponse {
+        session_id: session_id.to_string(),
+        lens: "feature".to_string(),
+        redacted_values: true,
+        nodes: ir
+            .feature_graph
+            .nodes
+            .iter()
+            .map(|node| ProjectGraphNodeResponse {
+                id: node.id.clone(),
+                label: node.name.clone(),
+                kind: "feature".to_string(),
+                file_path: Some(node.source.clone()),
+            })
+            .collect(),
+        edges: ir
+            .feature_graph
+            .edges
+            .iter()
+            .map(|edge| ProjectGraphEdgeResponse {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                relation: edge.relation.clone(),
+                value_preview: None,
+            })
+            .collect(),
+    }
+}
+
+fn dataflow_graph_response(
+    session_id: &str,
+    ir: &ProjectIr,
+    redacted_values: bool,
+) -> ProjectGraphResponse {
+    ProjectGraphResponse {
+        session_id: session_id.to_string(),
+        lens: "dataflow".to_string(),
+        redacted_values,
+        nodes: ir
+            .dataflow_graph
+            .nodes
+            .iter()
+            .map(|node| ProjectGraphNodeResponse {
+                id: node.id.clone(),
+                label: node.label.clone(),
+                kind: "dataflow".to_string(),
+                file_path: node.file.as_ref().map(|path| relative_path_to_string(path)),
+            })
+            .collect(),
+        edges: ir
+            .dataflow_graph
+            .edges
+            .iter()
+            .map(|edge| ProjectGraphEdgeResponse {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                relation: edge.relation.clone(),
+                value_preview: edge.value_preview.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn security_overview_response(
+    session_id: &str,
+    overview: IrSecurityOverview,
+) -> LoadSecurityOverviewResponse {
+    LoadSecurityOverviewResponse {
+        session_id: session_id.to_string(),
+        assets: overview.assets,
+        trust_boundaries: overview.trust_boundaries,
+        hotspots: overview.hotspots,
+        review_notes: overview.review_notes,
+    }
+}
+
+fn checklist_plan_response(session_id: &str, plan: IrChecklistPlan) -> LoadChecklistPlanResponse {
+    LoadChecklistPlanResponse {
+        session_id: session_id.to_string(),
+        domains: checklist_domain_responses(&plan),
+    }
+}
+
+fn checklist_domain_responses(plan: &IrChecklistPlan) -> Vec<ChecklistDomainPlanResponse> {
+    plan.domains
+        .iter()
+        .map(|domain| ChecklistDomainPlanResponse {
+            id: domain.id.clone(),
+            rationale: domain.rationale.clone(),
+        })
+        .collect()
+}
+
+fn toolbench_context_terms(
+    selection: &ToolbenchSelectionRequest,
+    checklist: &IrChecklistPlan,
+    overview: &IrSecurityOverview,
+) -> Vec<String> {
+    let mut terms = Vec::<String>::new();
+    let mut seen = HashSet::<String>::new();
+
+    let mut push_term = |value: &str| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let normalized = trimmed.to_ascii_lowercase();
+        if seen.insert(normalized.clone()) {
+            terms.push(normalized);
+        }
+    };
+
+    push_term(&selection.kind);
+    push_term(&selection.id);
+    push_term(&format!("{}:{}", selection.kind, selection.id));
+
+    for domain in &checklist.domains {
+        push_term(&domain.id);
+        for token in split_context_tokens(&domain.rationale) {
+            push_term(&token);
+        }
+
+        match domain.id.as_str() {
+            "crypto" => {
+                push_term("rust");
+                push_term("cargo");
+            }
+            "zk" => {
+                push_term("circom");
+                push_term("cairo");
+                push_term("starknet");
+            }
+            "p2p-consensus" => {
+                push_term("p2p");
+                push_term("consensus");
+                push_term("distributed");
+            }
+            _ => {}
+        }
+    }
+
+    for note in &overview.review_notes {
+        for token in split_context_tokens(note) {
+            push_term(&token);
+        }
+    }
+
+    terms
+}
+
+fn split_context_tokens(value: &str) -> Vec<String> {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
+        .map(|token| token.trim())
+        .filter(|token| token.len() >= 3)
+        .map(|token| token.to_ascii_lowercase())
+        .collect()
+}
+
+fn canonical_tool_id(tool: &str) -> String {
+    match tool.trim().to_ascii_lowercase().as_str() {
+        "kani" => "Kani".to_string(),
+        "z3" => "Z3".to_string(),
+        "cargo-fuzz" | "cargo_fuzz" | "cargofuzz" => "Cargo Fuzz".to_string(),
+        "madsim" => "MadSim".to_string(),
+        "chaos" | "chaos-replay" | "chaos_replay" => "Chaos".to_string(),
+        "circom-z3" | "circom_z3" | "circom z3" | "circom-graph" => "Circom Z3".to_string(),
+        "cairo-external" | "cairo_external" | "cairo-graph" => "Cairo External".to_string(),
+        "lean-external" | "lean_external" => "Lean External".to_string(),
+        other if other.is_empty() => "Kani".to_string(),
+        _ => tool.trim().to_string(),
+    }
+}
+
+fn push_recommendation(
+    recommendations: &mut Vec<ToolbenchRecommendationResponse>,
+    tool_id: String,
+    rationale: String,
+) {
+    if let Some(existing) = recommendations
+        .iter_mut()
+        .find(|entry| entry.tool_id == tool_id)
+    {
+        if !existing.rationale.contains(&rationale) {
+            existing.rationale = format!("{} {}", existing.rationale, rationale);
+        }
+        return;
+    }
+
+    recommendations.push(ToolbenchRecommendationResponse { tool_id, rationale });
+}
+
+fn fallback_tool_recommendations(plan: &IrChecklistPlan) -> Vec<ToolbenchRecommendationResponse> {
+    let mut recommendations = Vec::<ToolbenchRecommendationResponse>::new();
+
+    for domain in &plan.domains {
+        match domain.id.as_str() {
+            "crypto" => {
+                push_recommendation(
+                    &mut recommendations,
+                    "Kani".to_string(),
+                    format!("Recommended by {} checklist.", domain.id),
+                );
+                push_recommendation(
+                    &mut recommendations,
+                    "Z3".to_string(),
+                    format!("Constraint checks aligned with {} rationale.", domain.id),
+                );
+                push_recommendation(
+                    &mut recommendations,
+                    "Cargo Fuzz".to_string(),
+                    format!("Input mutation coverage requested by {} scope.", domain.id),
+                );
+            }
+            "zk" => {
+                push_recommendation(
+                    &mut recommendations,
+                    "Circom Z3".to_string(),
+                    format!("ZK checklist selected: {}", domain.rationale),
+                );
+                push_recommendation(
+                    &mut recommendations,
+                    "Z3".to_string(),
+                    "SMT proving flow supports zk invariants.".to_string(),
+                );
+            }
+            "p2p-consensus" => {
+                push_recommendation(
+                    &mut recommendations,
+                    "MadSim".to_string(),
+                    format!("Scenario simulation suggested by {} checklist.", domain.id),
+                );
+                push_recommendation(
+                    &mut recommendations,
+                    "Chaos".to_string(),
+                    format!(
+                        "Fault-injection testing suggested by {} checklist.",
+                        domain.id
+                    ),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if recommendations.is_empty() {
+        push_recommendation(
+            &mut recommendations,
+            "Kani".to_string(),
+            "Fallback deterministic baseline for unresolved selection.".to_string(),
+        );
+    }
+
+    recommendations
 }
 
 fn test_audit_config(work_dir: &Path) -> AuditConfig {

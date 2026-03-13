@@ -11,6 +11,12 @@ use loader::{load_domains, load_playbooks};
 use models::{AdjudicatedCase, DomainChecklist, ReproPattern, ToolPlaybook, ToolSequence};
 use store::KnowledgeStore;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolRecommendation {
+    pub tool: String,
+    pub rationale: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct KnowledgeBase {
     playbooks: Vec<ToolPlaybook>,
@@ -65,6 +71,58 @@ impl KnowledgeBase {
         routed.into_iter().collect()
     }
 
+    pub fn recommend_tools(
+        &self,
+        context: &[String],
+        overview_notes: &[String],
+    ) -> Vec<ToolRecommendation> {
+        let normalized_context = context
+            .iter()
+            .map(|value| normalize(value))
+            .collect::<BTreeSet<_>>();
+        let normalized_overview = overview_notes
+            .iter()
+            .map(|value| normalize(value))
+            .collect::<Vec<_>>();
+
+        self.route_tools(context)
+            .into_iter()
+            .map(|tool| {
+                let mut rationale =
+                    self.playbooks
+                        .iter()
+                        .filter(|playbook| {
+                            playbook.preferred_tools.iter().any(|entry| entry == &tool)
+                                && (playbook
+                                    .applies_to
+                                    .iter()
+                                    .any(|entry| normalized_context.contains(&normalize(entry)))
+                                    || playbook.domains.iter().any(|entry| {
+                                        normalized_context.contains(&normalize(entry))
+                                    }))
+                        })
+                        .map(|playbook| format!("Matched playbook {}", playbook.id))
+                        .collect::<Vec<_>>();
+
+                if rationale.is_empty() {
+                    rationale.push("Matched fallback tool routing".to_string());
+                }
+
+                if normalized_overview
+                    .iter()
+                    .any(|note| note.contains("redacted"))
+                {
+                    rationale.push("Overview notes indicate redaction-sensitive flows".to_string());
+                }
+
+                ToolRecommendation {
+                    tool,
+                    rationale: rationale.join("; "),
+                }
+            })
+            .collect()
+    }
+
     pub fn domain(&self, domain_id: &str) -> Option<&DomainChecklist> {
         self.domains.get(domain_id)
     }
@@ -99,6 +157,32 @@ impl KnowledgeBase {
 
     pub fn repro_patterns(&self) -> &[ReproPattern] {
         self.store.repro_patterns()
+    }
+
+    pub fn similar_cases(&self, context: &[String], limit: usize) -> Vec<AdjudicatedCase> {
+        let normalized_context = context
+            .iter()
+            .map(|value| normalize(value))
+            .collect::<BTreeSet<_>>();
+
+        let mut matched = self
+            .store
+            .true_positives()
+            .iter()
+            .filter(|case| {
+                case.tags
+                    .iter()
+                    .map(|tag| normalize(tag))
+                    .any(|tag| normalized_context.contains(&tag))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if matched.is_empty() {
+            matched.extend(self.store.false_positives().iter().cloned());
+        }
+
+        matched.into_iter().take(limit.max(1)).collect()
     }
 }
 

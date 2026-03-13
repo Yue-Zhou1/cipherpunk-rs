@@ -23,6 +23,7 @@ pub enum SandboxImage {
     Z3,
     Miri,
     MadSim,
+    Chaos,
     Fuzz,
     Custom(String),
 }

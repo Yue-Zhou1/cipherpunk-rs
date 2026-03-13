@@ -47,6 +47,106 @@ export type OpenAuditSessionResponse = {
   initialJobs: SessionJob[];
 };
 
+export type ProjectTreeNode = {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  children: ProjectTreeNode[];
+};
+
+export type GetProjectTreeResponse = {
+  sessionId: string;
+  rootName: string;
+  nodes: ProjectTreeNode[];
+};
+
+export type ReadSourceFileResponse = {
+  sessionId: string;
+  path: string;
+  content: string;
+};
+
+export type SessionConsoleLevel = "info" | "warning" | "error";
+
+export type SessionConsoleEntry = {
+  timestamp: string;
+  source: string;
+  level: SessionConsoleLevel;
+  message: string;
+};
+
+export type TailSessionConsoleResponse = {
+  sessionId: string;
+  entries: SessionConsoleEntry[];
+};
+
+export type GraphLensKind = "file" | "feature" | "dataflow";
+
+export type ProjectGraphNode = {
+  id: string;
+  label: string;
+  kind: string;
+  filePath?: string;
+};
+
+export type ProjectGraphEdge = {
+  from: string;
+  to: string;
+  relation: string;
+  valuePreview?: string;
+};
+
+export type ProjectGraphResponse = {
+  sessionId: string;
+  lens: GraphLensKind;
+  redactedValues: boolean;
+  nodes: ProjectGraphNode[];
+  edges: ProjectGraphEdge[];
+};
+
+export type SecurityOverviewResponse = {
+  sessionId: string;
+  assets: string[];
+  trustBoundaries: string[];
+  hotspots: string[];
+  reviewNotes: string[];
+};
+
+export type ChecklistDomainPlan = {
+  id: string;
+  rationale: string;
+};
+
+export type ChecklistPlanResponse = {
+  sessionId: string;
+  domains: ChecklistDomainPlan[];
+};
+
+export type ToolbenchSelection = {
+  kind: "symbol" | "file" | "session";
+  id: string;
+};
+
+export type ToolbenchRecommendation = {
+  toolId: string;
+  rationale: string;
+};
+
+export type ToolbenchSimilarCase = {
+  id: string;
+  title: string;
+  summary: string;
+};
+
+export type ToolbenchContextResponse = {
+  sessionId: string;
+  selection: ToolbenchSelection;
+  recommendedTools: ToolbenchRecommendation[];
+  domains: ChecklistDomainPlan[];
+  overviewNotes: string[];
+  similarCases: ToolbenchSimilarCase[];
+};
+
 export type DownloadOutputResponse = {
   dest: string;
 };
@@ -214,6 +314,356 @@ export async function openAuditSession(
   sessionId: string
 ): Promise<OpenAuditSessionResponse | null> {
   return tauriInvoke("open_audit_session", { session_id: sessionId }, async () => null);
+}
+
+const FALLBACK_PROJECT_TREE: ProjectTreeNode[] = [
+  {
+    name: "crates",
+    path: "crates",
+    kind: "directory",
+    children: [
+      {
+        name: "core",
+        path: "crates/core",
+        kind: "directory",
+        children: [
+          {
+            name: "src",
+            path: "crates/core/src",
+            kind: "directory",
+            children: [
+              {
+                name: "session.rs",
+                path: "crates/core/src/session.rs",
+                kind: "file",
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    name: "README.md",
+    path: "README.md",
+    kind: "file",
+    children: [],
+  },
+];
+
+const FALLBACK_FILE_CONTENTS: Record<string, string> = {
+  "README.md": "# Audit Agent\n\nWorkstation fallback content.\n",
+  "crates/core/src/session.rs":
+    "pub struct AuditSession {\n    pub session_id: String,\n    pub selected_domains: Vec<String>,\n}\n",
+};
+
+const FALLBACK_CONSOLE_ENTRIES: SessionConsoleEntry[] = [
+  {
+    timestamp: "14:23:01",
+    source: "bootstrap",
+    level: "info",
+    message: "Session created and workstation initialized.",
+  },
+  {
+    timestamp: "14:23:05",
+    source: "project_ir",
+    level: "info",
+    message: "Queued build_project_ir job.",
+  },
+  {
+    timestamp: "14:23:08",
+    source: "copilot",
+    level: "warning",
+    message: "LLM key missing. Running deterministic-only mode.",
+  },
+];
+
+const FALLBACK_FILE_GRAPH: ProjectGraphResponse = {
+  sessionId: "sess-fallback",
+  lens: "file",
+  redactedValues: true,
+  nodes: [
+    { id: "f1", label: "crates/core/src/session.rs", kind: "file", filePath: "crates/core/src/session.rs" },
+    { id: "f2", label: "crates/tauri-ui/src/ipc.rs", kind: "file", filePath: "crates/tauri-ui/src/ipc.rs" },
+    { id: "f3", label: "ui/src/features/workstation/WorkstationShell.tsx", kind: "file", filePath: "ui/src/features/workstation/WorkstationShell.tsx" },
+  ],
+  edges: [
+    { from: "f2", to: "f1", relation: "reads-session" },
+    { from: "f3", to: "f2", relation: "ipc-calls" },
+  ],
+};
+
+const FALLBACK_FEATURE_GRAPH: ProjectGraphResponse = {
+  sessionId: "sess-fallback",
+  lens: "feature",
+  redactedValues: true,
+  nodes: [
+    { id: "feat1", label: "wizard-session-creation", kind: "feature" },
+    { id: "feat2", label: "workstation-shell", kind: "feature" },
+    { id: "feat3", label: "graph-lens", kind: "feature" },
+  ],
+  edges: [
+    { from: "feat1", to: "feat2", relation: "handoff" },
+    { from: "feat2", to: "feat3", relation: "enables" },
+  ],
+};
+
+const FALLBACK_DATAFLOW_GRAPH_REDACTED: ProjectGraphResponse = {
+  sessionId: "sess-fallback",
+  lens: "dataflow",
+  redactedValues: true,
+  nodes: [
+    { id: "d1", label: "source-input", kind: "dataflow" },
+    { id: "d2", label: "workspace-summary", kind: "dataflow" },
+    { id: "d3", label: "session-store", kind: "dataflow" },
+  ],
+  edges: [
+    { from: "d1", to: "d2", relation: "normalize" },
+    { from: "d2", to: "d3", relation: "persist" },
+  ],
+};
+
+const FALLBACK_DATAFLOW_GRAPH_VALUES: ProjectGraphResponse = {
+  ...FALLBACK_DATAFLOW_GRAPH_REDACTED,
+  redactedValues: false,
+  edges: [
+    { from: "d1", to: "d2", relation: "normalize", valuePreview: "git:url + pinned-sha" },
+    { from: "d2", to: "d3", relation: "persist", valuePreview: "session_id=sess-..." },
+  ],
+};
+
+const FALLBACK_SECURITY_OVERVIEW: Omit<SecurityOverviewResponse, "sessionId"> = {
+  assets: ["Session store", "Project IR graph pipeline", "Audit records and evidence links"],
+  trustBoundaries: [
+    "Local source ingestion to deterministic analysis jobs",
+    "AI copilot suggestions to human verification boundary",
+  ],
+  hotspots: [
+    "Dataflow edges touching persistence and export paths",
+    "Workspace scope decisions for ambiguous crates",
+  ],
+  reviewNotes: [
+    "Overview is AI-assisted and must remain unverified until analyst review.",
+    "Dataflow values are redacted by default.",
+  ],
+};
+
+const FALLBACK_CHECKLIST_PLAN: ChecklistDomainPlan[] = [
+  { id: "crypto", rationale: "Rust code paths and signing-related modules detected." },
+  { id: "zk", rationale: "IR includes zero-knowledge adjacent workspace markers." },
+  { id: "p2p-consensus", rationale: "Session orchestration and event flow imply protocol-style checks." },
+];
+
+const FALLBACK_SIMILAR_CASES: Array<ToolbenchSimilarCase & { tags: string[] }> = [
+  {
+    id: "case-crypto-001",
+    title: "Missing domain separation in signer path",
+    summary: "Prior audit linked weak context binding to cross-domain signature replay risk.",
+    tags: ["crypto", "sign", "symbol"],
+  },
+  {
+    id: "case-zk-002",
+    title: "Constraint under-specification in witness checks",
+    summary: "A prover path accepted malformed witnesses due to missing boolean/range constraints.",
+    tags: ["zk", "circom", "proof"],
+  },
+  {
+    id: "case-p2p-003",
+    title: "Partition tolerance regression in consensus workflow",
+    summary: "Chaos testing exposed state divergence after delayed quorum rejoin.",
+    tags: ["p2p-consensus", "consensus", "network"],
+  },
+];
+
+export async function getProjectTree(sessionId: string): Promise<GetProjectTreeResponse> {
+  return tauriInvoke("get_project_tree", { session_id: sessionId }, async () => ({
+    sessionId,
+    rootName: "project",
+    nodes: FALLBACK_PROJECT_TREE,
+  }));
+}
+
+export async function readSourceFile(
+  sessionId: string,
+  path: string
+): Promise<ReadSourceFileResponse> {
+  return tauriInvoke("read_source_file", { session_id: sessionId, path }, async () => ({
+    sessionId,
+    path,
+    content:
+      FALLBACK_FILE_CONTENTS[path] ??
+      `// File not found in fallback dataset.\n// path: ${path}\n`,
+  }));
+}
+
+export async function tailSessionConsole(
+  sessionId: string,
+  limit = 80
+): Promise<TailSessionConsoleResponse> {
+  return tauriInvoke("tail_session_console", { session_id: sessionId, limit }, async () => ({
+    sessionId,
+    entries: FALLBACK_CONSOLE_ENTRIES.slice(-Math.max(1, limit)),
+  }));
+}
+
+export async function loadFileGraph(sessionId: string): Promise<ProjectGraphResponse> {
+  return tauriInvoke("load_file_graph", { session_id: sessionId }, async () => ({
+    ...FALLBACK_FILE_GRAPH,
+    sessionId,
+  }));
+}
+
+export async function loadFeatureGraph(sessionId: string): Promise<ProjectGraphResponse> {
+  return tauriInvoke("load_feature_graph", { session_id: sessionId }, async () => ({
+    ...FALLBACK_FEATURE_GRAPH,
+    sessionId,
+  }));
+}
+
+export async function loadDataflowGraph(
+  sessionId: string,
+  includeValues = false
+): Promise<ProjectGraphResponse> {
+  return tauriInvoke(
+    "load_dataflow_graph",
+    { session_id: sessionId, include_values: includeValues },
+    async () => ({
+      ...(includeValues ? FALLBACK_DATAFLOW_GRAPH_VALUES : FALLBACK_DATAFLOW_GRAPH_REDACTED),
+      sessionId,
+    })
+  );
+}
+
+export async function loadSecurityOverview(
+  sessionId: string
+): Promise<SecurityOverviewResponse> {
+  return tauriInvoke("load_security_overview", { session_id: sessionId }, async () => ({
+    sessionId,
+    ...FALLBACK_SECURITY_OVERVIEW,
+  }));
+}
+
+export async function loadChecklistPlan(
+  sessionId: string
+): Promise<ChecklistPlanResponse> {
+  return tauriInvoke("load_checklist_plan", { session_id: sessionId }, async () => ({
+    sessionId,
+    domains: FALLBACK_CHECKLIST_PLAN,
+  }));
+}
+
+function deriveToolRecommendations(
+  selection: ToolbenchSelection,
+  domains: ChecklistDomainPlan[],
+  overviewNotes: string[]
+): ToolbenchRecommendation[] {
+  const recommendations = new Map<string, Set<string>>();
+  const add = (toolId: string, rationale: string): void => {
+    const reasons = recommendations.get(toolId) ?? new Set<string>();
+    reasons.add(rationale);
+    recommendations.set(toolId, reasons);
+  };
+
+  for (const domain of domains) {
+    if (domain.id === "crypto") {
+      add("Kani", `Recommended by ${domain.id} checklist.`);
+      add("Z3", `Constraint checks aligned with ${domain.id} rationale.`);
+      add("Cargo Fuzz", `Input mutation coverage requested by ${domain.id} scope.`);
+    } else if (domain.id === "zk") {
+      add("Circom Z3", `ZK checklist selected: ${domain.rationale}`);
+      add("Z3", `SMT proving flow supports ${domain.id} invariants.`);
+    } else if (domain.id === "p2p-consensus") {
+      add("MadSim", `Scenario simulation suggested by ${domain.id} checklist.`);
+      add("Chaos", `Fault-injection testing suggested by ${domain.id} checklist.`);
+    }
+  }
+
+  if (selection.kind === "symbol") {
+    const id = selection.id.toLowerCase();
+    if (id.includes("verify") || id.includes("prove") || id.includes("sig")) {
+      add("Kani", "Symbol-level verification target detected.");
+      add("Z3", "Symbol-level constraint reasoning target detected.");
+    }
+  }
+
+  if (
+    overviewNotes.some((note) => note.toLowerCase().includes("redacted")) &&
+    recommendations.has("Z3")
+  ) {
+    add("Z3", "Overview flagged redaction-sensitive dataflow.");
+  }
+
+  if (recommendations.size === 0) {
+    add("Kani", "Fallback deterministic baseline for unresolved selection.");
+  }
+
+  return Array.from(recommendations.entries()).map(([toolId, rationaleSet]) => ({
+    toolId,
+    rationale: Array.from(rationaleSet).join(" "),
+  }));
+}
+
+function deriveSimilarCases(
+  selection: ToolbenchSelection,
+  domains: ChecklistDomainPlan[]
+): ToolbenchSimilarCase[] {
+  const queryTerms = new Set<string>([
+    selection.kind.toLowerCase(),
+    selection.id.toLowerCase(),
+    ...domains.map((domain) => domain.id.toLowerCase()),
+  ]);
+
+  const matched = FALLBACK_SIMILAR_CASES.filter((item) =>
+    item.tags.some((tag) => queryTerms.has(tag.toLowerCase()))
+  );
+
+  return (matched.length > 0 ? matched : FALLBACK_SIMILAR_CASES)
+    .slice(0, 3)
+    .map(({ id, title, summary }) => ({ id, title, summary }));
+}
+
+export async function loadToolbenchContext(
+  sessionId: string,
+  selection: ToolbenchSelection
+): Promise<ToolbenchContextResponse> {
+  return tauriInvoke(
+    "load_toolbench_context",
+    { session_id: sessionId, selection },
+    async () => {
+      try {
+        const [checklistPlan, overview] = await Promise.all([
+          loadChecklistPlan(sessionId),
+          loadSecurityOverview(sessionId),
+        ]);
+        return {
+          sessionId,
+          selection,
+          recommendedTools: deriveToolRecommendations(
+            selection,
+            checklistPlan.domains,
+            overview.reviewNotes
+          ),
+          domains: checklistPlan.domains,
+          overviewNotes: overview.reviewNotes,
+          similarCases: deriveSimilarCases(selection, checklistPlan.domains),
+        };
+      } catch {
+        return {
+          sessionId,
+          selection,
+          recommendedTools: deriveToolRecommendations(
+            selection,
+            FALLBACK_CHECKLIST_PLAN,
+            FALLBACK_SECURITY_OVERVIEW.reviewNotes
+          ),
+          domains: FALLBACK_CHECKLIST_PLAN,
+          overviewNotes: FALLBACK_SECURITY_OVERVIEW.reviewNotes,
+          similarCases: deriveSimilarCases(selection, FALLBACK_CHECKLIST_PLAN),
+        };
+      }
+    }
+  );
 }
 
 export async function exportAuditYaml(path: string): Promise<void> {

@@ -8,7 +8,10 @@ use tauri_ui::ConfigParseResponse;
 use tauri_ui::OutputType;
 use tauri_ui::ipc::{
     AuditSessionSummary, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
-    CreateAuditSessionResponse, DownloadOutputResponse, OpenAuditSessionResponse, SourceInputIpc,
+    CreateAuditSessionResponse, DownloadOutputResponse, GetProjectTreeResponse,
+    LoadChecklistPlanResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
+    OpenAuditSessionResponse, ProjectGraphResponse, ReadSourceFileResponse, SourceInputIpc,
+    TailSessionConsoleResponse, ToolbenchSelectionRequest,
 };
 use tauri_ui::{branch_resolution_banner, warning_message};
 
@@ -210,6 +213,117 @@ pub async fn open_audit_session(
     let mut session = state.session.lock().await;
     session
         .open_audit_session(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn get_project_tree(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<GetProjectTreeResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .get_project_tree(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn read_source_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<ReadSourceFileResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .read_source_file(&session_id, &path)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn tail_session_console(
+    state: State<'_, AppState>,
+    session_id: String,
+    limit: Option<usize>,
+) -> Result<TailSessionConsoleResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .tail_session_console(&session_id, limit.unwrap_or(80))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_file_graph(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<ProjectGraphResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_file_graph(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_feature_graph(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<ProjectGraphResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_feature_graph(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_dataflow_graph(
+    state: State<'_, AppState>,
+    session_id: String,
+    include_values: Option<bool>,
+) -> Result<ProjectGraphResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_dataflow_graph(&session_id, include_values.unwrap_or(false))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_security_overview(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<LoadSecurityOverviewResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_security_overview(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_checklist_plan(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<LoadChecklistPlanResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_checklist_plan(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_toolbench_context(
+    state: State<'_, AppState>,
+    session_id: String,
+    selection: ToolbenchSelectionRequest,
+) -> Result<LoadToolbenchContextResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_toolbench_context(&session_id, selection)
         .await
         .map_err(|err| err.to_string())
 }
