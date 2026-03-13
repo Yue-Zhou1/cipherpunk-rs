@@ -15,7 +15,7 @@ use audit_agent_core::finding::{
 };
 use audit_agent_core::output::{AuditManifest, FindingCounts};
 use audit_agent_core::workspace::CargoWorkspace;
-use audit_agent_core::{EvidenceStore, SandboxExecutor};
+use audit_agent_core::{NoopEvidenceWriter, NoopSandboxRunner};
 use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -230,8 +230,8 @@ fn audit_context_is_constructible_with_all_fields() {
     let context = AuditContext {
         config,
         workspace: Arc::new(CargoWorkspace::default()),
-        sandbox: Arc::new(SandboxExecutor::default()),
-        evidence_store: Arc::new(EvidenceStore::default()),
+        sandbox: Arc::new(NoopSandboxRunner),
+        evidence_store: Arc::new(NoopEvidenceWriter),
         llm: None,
     };
 

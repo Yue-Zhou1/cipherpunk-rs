@@ -52,10 +52,11 @@ describe("App layout shell", () => {
     expect(screen.queryByLabelText(/repository url/i)).not.toBeInTheDocument();
   });
 
-  it("updates ambiguous crate decision from workspace actions", () => {
+  it("updates ambiguous crate decision from workspace actions", async () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: /step 4/i }));
+    await screen.findByText(/llm key missing/i);
 
     const row = screen.getByText("bridge-adapter").closest("tr");
     expect(row).not.toBeNull();
@@ -91,14 +92,13 @@ describe("App layout shell", () => {
     expect(nextButton).toBeEnabled();
   });
 
-  it("starts execution from workspace confirmation", async () => {
+  it("creates an audit session and enters workstation mode after confirmation", async () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: /step 4/i }));
     fireEvent.click(screen.getByRole("button", { name: /confirm and start audit/i }));
 
-    expect(await screen.findByText(/audit running - circomlib/i)).toBeInTheDocument();
-    expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
+    expect(await screen.findByText(/workstation/i)).toBeInTheDocument();
   });
 
   it("requires valid configuration before progressing from step 2", () => {

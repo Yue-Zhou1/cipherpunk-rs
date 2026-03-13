@@ -2,6 +2,10 @@ export type StepId = 1 | 2 | 3 | 4 | 5 | 6;
 
 export type SourceMode = "git" | "local" | "archive";
 
+export type AppMode =
+  | { kind: "wizard" }
+  | { kind: "workstation"; sessionId: string };
+
 export type CrateStatus = "in_scope" | "excluded" | "ambiguous";
 
 export type ResolvedCrateStatus = "in_scope" | "excluded";

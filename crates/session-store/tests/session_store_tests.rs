@@ -1,6 +1,7 @@
 use audit_agent_core::finding::VerificationStatus;
 use audit_agent_core::session::{AuditRecord, AuditSession};
-use session_store::SessionStore;
+use chrono::Utc;
+use session_store::{SessionEvent, SessionStore};
 
 #[test]
 fn create_and_reload_session_round_trips() {
@@ -55,4 +56,44 @@ fn persisted_sessions_can_be_loaded_after_reopening_store() {
         .expect("load session result")
         .expect("session exists after reopen");
     assert_eq!(loaded.session_id, "sess-2");
+}
+
+#[test]
+fn list_sessions_and_events_return_persisted_data() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = SessionStore::open(dir.path().join("sessions.sqlite")).expect("open store");
+    let first = AuditSession::sample("sess-a");
+    let second = AuditSession::sample("sess-b");
+    store.create_session(&first).expect("create first session");
+    store
+        .create_session(&second)
+        .expect("create second session");
+
+    store
+        .append_event(
+            "sess-a",
+            &SessionEvent {
+                event_id: "evt-1".to_string(),
+                event_type: "job.lifecycle".to_string(),
+                payload: r#"{"job_id":"job-1"}"#.to_string(),
+                created_at: Utc::now(),
+            },
+        )
+        .expect("append event");
+
+    let sessions = store.list_sessions().expect("list sessions");
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.session_id == "sess-a")
+    );
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.session_id == "sess-b")
+    );
+
+    let events = store.list_events("sess-a").expect("list events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_id, "evt-1");
 }

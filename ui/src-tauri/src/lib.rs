@@ -36,6 +36,9 @@ pub fn run() {
             commands::parse_config,
             commands::detect_workspace,
             commands::confirm_workspace,
+            commands::create_audit_session,
+            commands::list_audit_sessions,
+            commands::open_audit_session,
             commands::export_audit_yaml,
             commands::get_audit_manifest,
             commands::download_output

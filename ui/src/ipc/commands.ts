@@ -21,6 +21,32 @@ export type ConfirmWorkspaceResponse = {
   auditId: string;
 };
 
+export type SessionJob = {
+  jobId: string;
+  kind: string;
+  status: string;
+};
+
+export type CreateAuditSessionResponse = {
+  sessionId: string;
+  snapshotId: string;
+  initialJobs: SessionJob[];
+};
+
+export type AuditSessionSummary = {
+  sessionId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OpenAuditSessionResponse = {
+  sessionId: string;
+  snapshotId: string;
+  selectedDomains: string[];
+  initialJobs: SessionJob[];
+};
+
 export type DownloadOutputResponse = {
   dest: string;
 };
@@ -165,6 +191,29 @@ export async function confirmWorkspace(
   decisions: ConfirmWorkspaceRequest
 ): Promise<ConfirmWorkspaceResponse> {
   return tauriInvoke("confirm_workspace", { decisions }, async () => ({ auditId: "audit-20260305-a1b2c3d4" }));
+}
+
+export async function createAuditSession(): Promise<CreateAuditSessionResponse> {
+  return tauriInvoke("create_audit_session", {}, async () => ({
+    sessionId: "sess-20260305-a1b2",
+    snapshotId: "snap-20260305-a1b2",
+    initialJobs: [
+      { jobId: "job-1", kind: "build_project_ir", status: "queued" },
+      { jobId: "job-2", kind: "generate_ai_overview", status: "queued" },
+      { jobId: "job-3", kind: "plan_checklists", status: "queued" },
+      { jobId: "job-4", kind: "export_reports", status: "queued" },
+    ],
+  }));
+}
+
+export async function listAuditSessions(): Promise<AuditSessionSummary[]> {
+  return tauriInvoke("list_audit_sessions", {}, async () => []);
+}
+
+export async function openAuditSession(
+  sessionId: string
+): Promise<OpenAuditSessionResponse | null> {
+  return tauriInvoke("open_audit_session", { session_id: sessionId }, async () => null);
 }
 
 export async function exportAuditYaml(path: string): Promise<void> {

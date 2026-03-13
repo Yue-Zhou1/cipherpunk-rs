@@ -262,6 +262,14 @@ pub async fn llm_call(
     Ok(response)
 }
 
+pub fn json_only_prompt(contract_name: &str, task: &str) -> String {
+    format!(
+        "Return only valid JSON for contract `{contract_name}`.\n\
+         Do not include markdown, prose, or code fences.\n\
+         Task:\n{task}"
+    )
+}
+
 fn http_client() -> Result<Client> {
     Client::builder()
         .connect_timeout(Duration::from_secs(10))

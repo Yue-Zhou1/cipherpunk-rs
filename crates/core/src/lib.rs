@@ -8,10 +8,5 @@ pub mod schema;
 pub mod session;
 pub mod workspace;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct SandboxExecutor;
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EvidenceStore;
-
+pub use engine::{NoopEvidenceWriter, NoopSandboxRunner};
 pub use llm::LlmProvider;

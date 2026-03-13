@@ -55,7 +55,7 @@ impl LanguageMapper for RustMapper {
                         relation: "contains".to_string(),
                     });
                     fragment.dataflow_graph.nodes.push(DataflowNode {
-                        id: format!("dataflow:{}", symbol_id),
+                        id: format!("dataflow:{symbol_id}"),
                         label: function.name.clone(),
                         file: Some(file.path.clone()),
                     });
@@ -66,7 +66,7 @@ impl LanguageMapper for RustMapper {
                 }
 
                 for feature in file.cfg_features {
-                    let feature_id = format!("feature:{}", feature);
+                    let feature_id = format!("feature:{feature}");
                     fragment.feature_graph.nodes.push(FeatureNode {
                         id: feature_id.clone(),
                         name: feature.clone(),
@@ -93,8 +93,8 @@ impl LanguageMapper for RustMapper {
                                 });
                             }
 
-                            let dataflow_from = format!("dataflow:{}", from_symbol);
-                            let dataflow_to = format!("dataflow:{}", to_symbol);
+                            let dataflow_from = format!("dataflow:{from_symbol}");
+                            let dataflow_to = format!("dataflow:{to_symbol}");
                             let dataflow_key = (
                                 dataflow_from.clone(),
                                 dataflow_to.clone(),

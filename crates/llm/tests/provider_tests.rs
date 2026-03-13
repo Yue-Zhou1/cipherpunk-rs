@@ -98,12 +98,9 @@ async fn openai_provider_makes_chat_completion_request() {
         .create_async()
         .await;
 
-    let openai = llm::OpenAiProvider::new(
-        "key".to_string(),
-        "gpt-4o-mini".to_string(),
-        server.url(),
-    )
-    .expect("openai provider");
+    let openai =
+        llm::OpenAiProvider::new("key".to_string(), "gpt-4o-mini".to_string(), server.url())
+            .expect("openai provider");
     let response = openai
         .complete(
             "hello",

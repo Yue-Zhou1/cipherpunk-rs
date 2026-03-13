@@ -224,7 +224,8 @@ fn analysis_cache_open_waits_for_short_lock_handoff() {
     });
 
     barrier.wait();
-    let reopened = AnalysisCache::open(&cache_path).expect("re-open persistent cache after handoff");
+    let reopened =
+        AnalysisCache::open(&cache_path).expect("re-open persistent cache after handoff");
     drop(reopened);
     holder.join().expect("join holder thread");
 }

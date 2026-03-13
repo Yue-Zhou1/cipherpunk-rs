@@ -739,6 +739,7 @@ name = "evidence"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "audit-agent-core",
  "serde",
  "serde_json",
@@ -1685,6 +1686,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "audit-agent-core",
  "mockito",
  "regex",
  "reqwest",
@@ -2107,7 +2109,9 @@ dependencies = [
  "intake",
  "llm",
  "report",
+ "serde",
  "serde_json",
+ "session-store",
  "tempfile",
  "tokio",
 ]
@@ -2813,6 +2817,9 @@ dependencies = [
 name = "sandbox"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "audit-agent-core",
  "bollard",
  "futures-util",
  "thiserror 2.0.18",
@@ -3290,9 +3297,11 @@ dependencies = [
  "audit-agent-core",
  "chrono",
  "intake",
+ "orchestrator",
  "serde",
  "serde_json",
  "serde_yaml",
+ "session-store",
  "tempfile",
  "tokio",
  "zip 2.4.2",

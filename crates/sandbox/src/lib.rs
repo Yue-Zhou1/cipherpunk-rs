@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
+use audit_agent_core::engine::{
+    SandboxImage, SandboxNetworkPolicy, SandboxRequest, SandboxResourceUsage, SandboxResult,
+    SandboxRunner,
+};
 use bollard::Docker;
 use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, KillContainerOptions, LogsOptions,
@@ -304,6 +309,61 @@ impl SandboxExecutor {
                 }),
             )
             .await;
+    }
+}
+
+#[async_trait]
+impl SandboxRunner for SandboxExecutor {
+    async fn execute(&self, request: SandboxRequest) -> anyhow::Result<SandboxResult> {
+        let mapped_request = ExecutionRequest {
+            image: from_core_image(request.image),
+            command: request.command,
+            mounts: request
+                .mounts
+                .into_iter()
+                .map(|mount| Mount {
+                    host_path: mount.host_path,
+                    container_path: mount.container_path,
+                    read_only: mount.read_only,
+                })
+                .collect(),
+            env: request.env,
+            budget: ResourceBudget {
+                cpu_cores: request.budget.cpu_cores,
+                memory_mb: request.budget.memory_mb,
+                disk_gb: request.budget.disk_gb,
+                timeout_secs: request.budget.timeout_secs,
+            },
+            network: match request.network {
+                SandboxNetworkPolicy::Disabled => NetworkPolicy::Disabled,
+                SandboxNetworkPolicy::Allowlist(hosts) => NetworkPolicy::Allowlist(hosts),
+            },
+        };
+
+        let result = SandboxExecutor::execute(self, mapped_request).await?;
+        Ok(SandboxResult {
+            exit_code: result.exit_code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            artifacts: result.artifacts,
+            container_digest: result.container_digest,
+            duration_ms: result.duration_ms,
+            resource_usage: SandboxResourceUsage {
+                memory_bytes: result.resource_usage.memory_bytes,
+                cpu_nanos: result.resource_usage.cpu_nanos,
+            },
+        })
+    }
+}
+
+fn from_core_image(image: SandboxImage) -> ToolImage {
+    match image {
+        SandboxImage::Kani => ToolImage::Kani,
+        SandboxImage::Z3 => ToolImage::Z3,
+        SandboxImage::Miri => ToolImage::Miri,
+        SandboxImage::MadSim => ToolImage::MadSim,
+        SandboxImage::Fuzz => ToolImage::Fuzz,
+        SandboxImage::Custom(value) => ToolImage::Custom(value),
     }
 }
 

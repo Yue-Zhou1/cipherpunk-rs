@@ -14,6 +14,7 @@ use audit_agent_core::audit_config::{
     AuditConfig, BuildVariant, EngineConfig, LlmConfig, OptionalInputs, OptionalInputsSummary,
     ResolvedScope,
 };
+use audit_agent_core::session::ProjectSnapshot;
 
 use crate::config::ConfigParser;
 use crate::confirmation::{
@@ -214,6 +215,20 @@ pub fn summarize_optional_inputs(config: &AuditConfig) -> OptionalInputsSummary 
         invariants_count: config.optional_inputs.custom_invariants.len(),
         entry_points_count: config.optional_inputs.known_entry_points.len(),
         llm_prose_used: config.llm.api_key_present && !config.llm.no_llm_prose,
+    }
+}
+
+pub fn project_snapshot_from_config(
+    config: &AuditConfig,
+    snapshot_id: impl Into<String>,
+) -> ProjectSnapshot {
+    ProjectSnapshot {
+        snapshot_id: snapshot_id.into(),
+        source: config.source.clone(),
+        target_crates: config.scope.target_crates.clone(),
+        excluded_crates: config.scope.excluded_crates.clone(),
+        build_matrix: config.scope.build_matrix.clone(),
+        detected_frameworks: config.scope.detected_frameworks.clone(),
     }
 }
 

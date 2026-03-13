@@ -7,7 +7,8 @@ use tauri::State;
 use tauri_ui::ConfigParseResponse;
 use tauri_ui::OutputType;
 use tauri_ui::ipc::{
-    ConfirmWorkspaceRequest, ConfirmWorkspaceResponse, DownloadOutputResponse, SourceInputIpc,
+    AuditSessionSummary, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
+    CreateAuditSessionResponse, DownloadOutputResponse, OpenAuditSessionResponse, SourceInputIpc,
 };
 use tauri_ui::{branch_resolution_banner, warning_message};
 
@@ -144,7 +145,9 @@ pub async fn detect_workspace(
     let per_variant_mins = if summary.build_matrix.is_empty() {
         summary.estimated_duration_mins
     } else {
-        summary.estimated_duration_mins.div_ceil(summary.build_matrix.len() as u64)
+        summary
+            .estimated_duration_mins
+            .div_ceil(summary.build_matrix.len() as u64)
     };
     let build_matrix = summary
         .build_matrix
@@ -177,6 +180,37 @@ pub async fn confirm_workspace(
     let mut session = state.session.lock().await;
     session
         .confirm_workspace(decisions)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn create_audit_session(
+    state: State<'_, AppState>,
+) -> Result<CreateAuditSessionResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .create_audit_session()
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn list_audit_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<AuditSessionSummary>, String> {
+    let session = state.session.lock().await;
+    session.list_audit_sessions().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn open_audit_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Option<OpenAuditSessionResponse>, String> {
+    let mut session = state.session.lock().await;
+    session
+        .open_audit_session(&session_id)
+        .await
         .map_err(|err| err.to_string())
 }
 

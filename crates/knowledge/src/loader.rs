@@ -20,7 +20,7 @@ where
     let mut files = fs::read_dir(dir)
         .with_context(|| format!("read {} directory {}", label, dir.display()))?
         .collect::<Result<Vec<_>, _>>()
-        .with_context(|| format!("collect {} directory entries", label))?;
+        .with_context(|| format!("collect {label} directory entries"))?;
     files.sort_by_key(|entry| entry.path());
 
     let mut parsed = Vec::<T>::new();

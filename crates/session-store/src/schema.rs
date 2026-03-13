@@ -8,11 +8,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
 
     let current: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if current > SCHEMA_VERSION {
-        bail!(
-            "database schema version {} is newer than supported {}",
-            current,
-            SCHEMA_VERSION
-        );
+        bail!("database schema version {current} is newer than supported {SCHEMA_VERSION}");
     }
 
     if current == SCHEMA_VERSION {
@@ -20,11 +16,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     }
 
     if current != 0 {
-        bail!(
-            "unsupported schema migration path from {} to {}",
-            current,
-            SCHEMA_VERSION
-        );
+        bail!("unsupported schema migration path from {current} to {SCHEMA_VERSION}");
     }
 
     conn.execute_batch(

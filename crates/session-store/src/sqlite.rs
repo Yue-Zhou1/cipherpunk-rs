@@ -124,6 +124,20 @@ impl SessionStore {
             .transpose()
     }
 
+    pub fn list_sessions(&self) -> Result<Vec<AuditSession>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let mut stmt =
+            conn.prepare("SELECT session_json FROM audit_sessions ORDER BY updated_at DESC")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            let json = row?;
+            sessions.push(serde_json::from_str(&json).context("deserialize session")?);
+        }
+        Ok(sessions)
+    }
+
     pub fn upsert_record(&self, session_id: &str, record: &AuditRecord) -> Result<()> {
         let record_json = serde_json::to_string(record).context("serialize audit record")?;
         let conn = self.conn.lock().expect("session-store mutex poisoned");
@@ -174,6 +188,26 @@ impl SessionStore {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn list_events(&self, session_id: &str) -> Result<Vec<SessionEvent>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT event_json
+            FROM session_events
+            WHERE session_id = ?1
+            ORDER BY created_at ASC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            let json = row?;
+            events.push(serde_json::from_str(&json).context("deserialize session event")?);
+        }
+        Ok(events)
     }
 
     pub fn search_records(&self, query: &str) -> Result<Vec<RecordSearchHit>> {

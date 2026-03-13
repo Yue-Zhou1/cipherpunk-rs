@@ -11,11 +11,11 @@ use audit_agent_core::finding::Framework;
 use audit_agent_core::workspace::{CrateKind, CrateMeta};
 use intake::config::ConfigParser;
 use intake::confirmation::{CrateDecision, IntakeWarning};
+use tauri_ui::ipc::{ConfirmWorkspaceRequest, SourceInputIpc, SourceKind, UiSessionState};
 use tauri_ui::{
     OutputType, branch_resolution_banner, crate_decision_style, download_output, export_audit_yaml,
     get_reproduce_preview, llm_missing_details, warning_message,
 };
-use tauri_ui::ipc::{ConfirmWorkspaceRequest, SourceInputIpc, SourceKind, UiSessionState};
 use tempfile::tempdir;
 
 fn sample_config() -> AuditConfig {
@@ -279,9 +279,11 @@ fn session_confirm_workspace_requires_source_resolution_first() {
             no_llm_prose: false,
         })
         .expect_err("confirm_workspace should enforce source resolution order");
-    assert!(error
-        .to_string()
-        .contains("resolve_source must be called before confirm_workspace"));
+    assert!(
+        error
+            .to_string()
+            .contains("resolve_source must be called before confirm_workspace")
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -302,13 +304,10 @@ async fn session_flow_exports_yaml_and_downloads_output_after_confirmation() {
 
     let summary = session.detect_workspace().expect("detect workspace");
     assert!(
-        summary
-            .crates
-            .iter()
-            .any(|decision| matches!(
-                decision,
-                CrateDecision::InScope { meta } if meta.name == "rollup-core"
-            )),
+        summary.crates.iter().any(|decision| matches!(
+            decision,
+            CrateDecision::InScope { meta } if meta.name == "rollup-core"
+        )),
         "workspace detection should include rollup-core as in-scope"
     );
 
@@ -344,4 +343,15 @@ async fn session_flow_exports_yaml_and_downloads_output_after_confirmation() {
         fs::read_to_string(response.dest).expect("read downloaded output"),
         "[]"
     );
+}
+
+#[tokio::test]
+async fn confirm_workspace_creates_session_id_and_snapshot() {
+    let mut session = UiSessionState::new(PathBuf::from(".audit-work"));
+    let response = session
+        .create_audit_session_for_tests()
+        .await
+        .expect("create session");
+    assert!(response.session_id.starts_with("sess-"));
+    assert!(response.snapshot_id.starts_with("snap-"));
 }

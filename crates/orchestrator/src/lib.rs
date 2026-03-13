@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use audit_agent_core::audit_config::{AuditConfig, ParsedPreviousAudit};
-use audit_agent_core::engine::{AuditContext, AuditEngine};
+use audit_agent_core::engine::{AuditContext, AuditEngine, EvidenceWriter, SandboxRunner};
 use audit_agent_core::finding::Finding;
 use audit_agent_core::output::{AuditManifest, AuditOutputs, FindingCounts};
-use audit_agent_core::{EvidenceStore, SandboxExecutor};
+use audit_agent_core::session::AuditSession;
 use chrono::Utc;
 use findings::pipeline::{
     deduplicate_findings, mark_regression_checks as mark_regression_checks_by_key,
@@ -17,23 +17,19 @@ use intake::summarize_optional_inputs;
 use intake::workspace::WorkspaceAnalyzer;
 use llm::LlmProvider;
 use report::generator::{ReportGenerator, ReportGeneratorOptions};
+use session_store::SessionStore;
+
+pub mod events;
+pub mod jobs;
+mod runtime;
+
+pub use events::{AuditEvent, AuditEventSink, JobLifecycleEvent};
+pub use jobs::{AuditJob, AuditJobKind, AuditJobStatus};
+pub use runtime::OrchestratorRuntime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditDag {
     pub nodes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuditEvent {
-    AuditCompleted {
-        audit_id: String,
-        output_dir: PathBuf,
-        finding_count: usize,
-    },
-}
-
-pub trait AuditEventSink: Send + Sync {
-    fn emit(&self, event: AuditEvent);
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -57,10 +53,10 @@ impl FindingsDb {
 
 pub struct AuditOrchestrator {
     pub engines: Vec<Box<dyn AuditEngine>>,
-    pub sandbox: Arc<SandboxExecutor>,
-    pub evidence_store: Arc<EvidenceStore>,
+    pub runtime: OrchestratorRuntime,
     pub findings_db: FindingsDb,
     pub cache: Arc<AnalysisCache>,
+    pub session_store: Option<Arc<SessionStore>>,
     pub output_dir: PathBuf,
     pub evidence_pack_zip: PathBuf,
     pub llm: Option<Arc<dyn LlmProvider>>,
@@ -71,10 +67,10 @@ impl AuditOrchestrator {
     pub fn new(output_dir: PathBuf, evidence_pack_zip: PathBuf) -> Self {
         Self {
             engines: vec![],
-            sandbox: Arc::new(SandboxExecutor),
-            evidence_store: Arc::new(EvidenceStore),
+            runtime: OrchestratorRuntime::default(),
             findings_db: FindingsDb,
             cache: Arc::new(AnalysisCache::default()),
+            session_store: None,
             output_dir,
             evidence_pack_zip,
             llm: None,
@@ -82,8 +78,42 @@ impl AuditOrchestrator {
         }
     }
 
+    pub fn for_tests() -> Self {
+        let mut orchestrator = Self::new(
+            std::env::temp_dir().join("audit-agent-orchestrator-tests"),
+            std::env::temp_dir().join("audit-agent-orchestrator-tests-evidence.zip"),
+        );
+        orchestrator.runtime = OrchestratorRuntime::for_tests();
+        orchestrator
+    }
+
     pub fn with_engines(mut self, engines: Vec<Box<dyn AuditEngine>>) -> Self {
         self.engines = engines;
+        self
+    }
+
+    pub fn with_runtime(mut self, runtime: OrchestratorRuntime) -> Self {
+        self.runtime = runtime;
+        self
+    }
+
+    pub fn with_sandbox(mut self, sandbox: Arc<dyn SandboxRunner>) -> Self {
+        self.runtime.sandbox = sandbox;
+        self
+    }
+
+    pub fn with_evidence_writer(mut self, evidence_writer: Arc<dyn EvidenceWriter>) -> Self {
+        self.runtime.evidence_writer = evidence_writer;
+        self
+    }
+
+    pub fn with_context_llm(mut self, llm: Arc<dyn audit_agent_core::LlmProvider>) -> Self {
+        self.runtime.context_llm = Some(llm);
+        self
+    }
+
+    pub fn with_session_store(mut self, store: Arc<SessionStore>) -> Self {
+        self.session_store = Some(store);
         self
     }
 
@@ -95,6 +125,52 @@ impl AuditOrchestrator {
     pub fn with_event_sink(mut self, event_sink: Arc<dyn AuditEventSink>) -> Self {
         self.event_sink = Some(event_sink);
         self
+    }
+
+    pub async fn bootstrap_jobs(&self, session: &AuditSession) -> Result<Vec<AuditJob>> {
+        let mut jobs = Vec::<AuditJob>::new();
+        jobs.push(AuditJob::queued(
+            &session.session_id,
+            AuditJobKind::BuildProjectIr,
+            jobs.len(),
+        ));
+        jobs.push(AuditJob::queued(
+            &session.session_id,
+            AuditJobKind::GenerateAiOverview,
+            jobs.len(),
+        ));
+        jobs.push(AuditJob::queued(
+            &session.session_id,
+            AuditJobKind::PlanChecklists,
+            jobs.len(),
+        ));
+        for domain_id in &session.selected_domains {
+            jobs.push(AuditJob::queued(
+                &session.session_id,
+                AuditJobKind::RunDomainChecklist {
+                    domain_id: domain_id.clone(),
+                },
+                jobs.len(),
+            ));
+        }
+        jobs.push(AuditJob::queued(
+            &session.session_id,
+            AuditJobKind::ExportReports,
+            jobs.len(),
+        ));
+
+        self.persist_bootstrap_events(session, &jobs)?;
+        Ok(jobs)
+    }
+
+    pub fn test_context(&self) -> AuditContext {
+        AuditContext {
+            config: Arc::new(runtime::build_test_config()),
+            workspace: Arc::new(runtime::build_test_workspace()),
+            sandbox: Arc::clone(&self.runtime.sandbox),
+            evidence_store: Arc::clone(&self.runtime.evidence_writer),
+            llm: self.runtime.context_llm.clone(),
+        }
     }
 
     pub async fn run(&self, config: &AuditConfig) -> Result<AuditOutputs> {
@@ -118,9 +194,9 @@ impl AuditOrchestrator {
         let ctx = AuditContext {
             config: Arc::new(config.clone()),
             workspace,
-            sandbox: Arc::clone(&self.sandbox),
-            evidence_store: Arc::clone(&self.evidence_store),
-            llm: None,
+            sandbox: Arc::clone(&self.runtime.sandbox),
+            evidence_store: Arc::clone(&self.runtime.evidence_writer),
+            llm: self.runtime.context_llm.clone(),
         };
 
         let mut findings = Vec::<Finding>::new();
@@ -211,6 +287,19 @@ impl AuditOrchestrator {
             candidates: vec![],
             review_notes: vec![],
         })
+    }
+
+    fn persist_bootstrap_events(&self, session: &AuditSession, jobs: &[AuditJob]) -> Result<()> {
+        let Some(store) = &self.session_store else {
+            return Ok(());
+        };
+
+        for job in jobs {
+            let lifecycle = JobLifecycleEvent::queued(job)?;
+            store.append_event(&session.session_id, &lifecycle.to_session_event())?;
+        }
+
+        Ok(())
     }
 }
 

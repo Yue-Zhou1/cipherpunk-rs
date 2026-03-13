@@ -2,6 +2,8 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
+use audit_agent_core::engine::{EvidenceArtifact, EvidenceWriter};
 use audit_agent_core::finding::FindingId;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -192,6 +194,37 @@ impl EvidenceStore {
 
     fn finding_dir(&self, finding_id: &FindingId) -> PathBuf {
         self.base_dir.join(finding_id.to_string())
+    }
+}
+
+#[async_trait]
+impl EvidenceWriter for EvidenceStore {
+    async fn save(&self, artifact: EvidenceArtifact) -> Result<()> {
+        let EvidenceArtifact {
+            session_id,
+            relative_path,
+            bytes,
+            ..
+        } = artifact;
+        ensure_safe_relative_path(&relative_path)?;
+
+        let base_dir = if let Some(session_id) = session_id {
+            self.base_dir.join(session_id)
+        } else {
+            self.base_dir.clone()
+        };
+        let abs_path = base_dir.join(&relative_path);
+
+        if let Some(parent) = abs_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create artifact directory {}", parent.display()))?;
+        }
+
+        fs::write(&abs_path, &bytes)
+            .await
+            .with_context(|| format!("write artifact {}", abs_path.display()))?;
+        Ok(())
     }
 }
 
