@@ -14,6 +14,9 @@ function ActivityConsole({ entries }: ActivityConsoleProps): JSX.Element {
         <h2>Activity Console</h2>
         <span className="muted-text">{entries.length} events</span>
       </div>
+      <p className="muted-text">
+        Tracks tool runs and review actions (`confirm`, `reject`, `suppress`, `annotate`).
+      </p>
 
       {entries.length === 0 ? (
         <p className="muted-text">No activity yet.</p>

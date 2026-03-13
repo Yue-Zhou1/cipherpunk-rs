@@ -8,6 +8,7 @@ and economic attack surfaces — backed by formal verification evidence (Z3, Kan
 - **Desktop app** (React + Tauri v2) — guided 6-step wizard with live DAG view.
 - **Rule-driven engines** — deterministic detection from curated YAML rule packs; LLM assists search focus and prose, never decides what to report.
 - **Multi-format output** — Markdown + PDF reports, JSON + SARIF findings, evidence pack with `reproduce.sh`, regression test harnesses.
+- **Remote worker protocol** — optional remote execution backend for expensive sandbox jobs with signed artifact manifests.
 
 ## Workspace Structure
 
@@ -184,6 +185,16 @@ cd ui && npm test
 # frontend production build check
 cd ui && npm run build
 ```
+
+## Remote Worker Rollout
+
+`v3` includes a remote execution protocol (`crates/worker-protocol`) and a basic
+worker runner binary (`crates/worker-runner`). Local Docker remains the default
+backend; remote execution can be enabled per sandbox runtime as rollout hardening
+advances.
+
+Manual rollout checks are documented in
+[docs/plans/2026-03-12-v3-rollout-checklist.md](docs/plans/2026-03-12-v3-rollout-checklist.md).
 
 ## Troubleshooting
 

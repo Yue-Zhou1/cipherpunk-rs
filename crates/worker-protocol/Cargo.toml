@@ -1,0 +1,8 @@
+[package]
+name = "worker-protocol"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

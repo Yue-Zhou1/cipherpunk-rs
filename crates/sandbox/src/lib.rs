@@ -20,9 +20,19 @@ use futures_util::stream::TryStreamExt;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod redaction;
+pub mod remote;
+
 pub struct SandboxExecutor {
     docker: Docker,
     image_registry: ImageRegistry,
+    backend: ExecutionBackend,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionBackend {
+    LocalDocker,
+    RemoteWorker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,8 +104,8 @@ pub enum SandboxError {
     Timeout,
     #[error("sandbox process OOM-killed")]
     OomKilled,
-    #[error("network allowlist mode is not yet implemented")]
-    AllowlistNotImplemented,
+    #[error("network host is not allowed: {0}")]
+    NetworkHostNotAllowed(String),
 }
 
 impl SandboxExecutor {
@@ -104,6 +114,7 @@ impl SandboxExecutor {
         Ok(Self {
             docker,
             image_registry: ImageRegistry::default(),
+            backend: ExecutionBackend::LocalDocker,
         })
     }
 
@@ -112,7 +123,13 @@ impl SandboxExecutor {
         Ok(Self {
             docker,
             image_registry,
+            backend: ExecutionBackend::LocalDocker,
         })
+    }
+
+    pub fn with_backend(mut self, backend: ExecutionBackend) -> Self {
+        self.backend = backend;
+        self
     }
 
     pub fn resolved_image(&self, image: &ToolImage) -> String {
@@ -123,14 +140,32 @@ impl SandboxExecutor {
         &self,
         request: ExecutionRequest,
     ) -> Result<ExecutionResult, SandboxError> {
-        let image = self.image_registry.resolve(&request.image);
-        self.ensure_image(&image).await?;
-
-        if matches!(request.network, NetworkPolicy::Allowlist(_)) {
-            return Err(SandboxError::AllowlistNotImplemented);
+        if self.backend == ExecutionBackend::RemoteWorker {
+            match remote::RemoteExecutor::default()
+                .execute(request.clone())
+                .await
+            {
+                Ok(remote_result) => return Ok(remote_result.into()),
+                Err(err) => {
+                    eprintln!("{{\"event\":\"sandbox.remote_fallback\",\"error\":\"{err}\"}}");
+                }
+            }
         }
 
+        if let NetworkPolicy::Allowlist(ref hosts) = request.network {
+            enforce_allowlist_for_command(&request.command, hosts)?;
+        }
+
+        let image = self.image_registry.resolve(&request.image);
+        self.ensure_image(&image).await?;
+        eprintln!("{{\"event\":\"sandbox.start\",\"backend\":\"local_docker\",\"image\":\"{image}\"}}");
+
         let container_name = format!("audit-sandbox-{}", Uuid::new_v4().simple());
+        let network_mode = match request.network {
+            NetworkPolicy::Disabled => "none".to_string(),
+            NetworkPolicy::Allowlist(_) => "bridge".to_string(),
+        };
+
         let host_config = HostConfig {
             mounts: Some(
                 request
@@ -147,7 +182,7 @@ impl SandboxExecutor {
             ),
             memory: Some((request.budget.memory_mb * 1024 * 1024) as i64),
             nano_cpus: Some((request.budget.cpu_cores * 1_000_000_000.0) as i64),
-            network_mode: Some("none".to_string()),
+            network_mode: Some(network_mode),
             ..Default::default()
         };
 
@@ -214,6 +249,9 @@ impl SandboxExecutor {
                         )
                         .await;
                     self.cleanup_container(&container_name).await;
+                    eprintln!(
+                        "{{\"event\":\"sandbox.timeout\",\"container\":\"{container_name}\"}}"
+                    );
                     return Err(SandboxError::Timeout);
                 }
             };
@@ -261,6 +299,7 @@ impl SandboxExecutor {
             .unwrap_or(false);
         if oom_killed || (exit_code == 137 && error_mentions_oom) {
             self.cleanup_container(&container_name).await;
+            eprintln!("{{\"event\":\"sandbox.oom_killed\",\"container\":\"{container_name}\"}}");
             return Err(SandboxError::OomKilled);
         }
 
@@ -279,6 +318,10 @@ impl SandboxExecutor {
         };
 
         self.cleanup_container(&container_name).await;
+        eprintln!(
+            "{{\"event\":\"sandbox.completed\",\"container\":\"{}\",\"exit_code\":{},\"duration_ms\":{}}}",
+            container_name, result.exit_code, result.duration_ms
+        );
         Ok(result)
     }
 
@@ -355,6 +398,49 @@ impl SandboxRunner for SandboxExecutor {
             },
         })
     }
+}
+
+fn enforce_allowlist_for_command(command: &[String], hosts: &[String]) -> Result<(), SandboxError> {
+    if hosts.is_empty() {
+        return Ok(());
+    }
+
+    let allowed = hosts
+        .iter()
+        .map(|host| host.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    for token in command {
+        let normalized = token.trim().to_ascii_lowercase();
+        if let Some(host) = extract_host_token(&normalized) {
+            if !allowed.iter().any(|allowed_host| allowed_host == host) {
+                return Err(SandboxError::NetworkHostNotAllowed(host.to_string()));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_host_token(token: &str) -> Option<&str> {
+    let value = token
+        .strip_prefix("https://")
+        .or_else(|| token.strip_prefix("http://"))
+        .unwrap_or(token);
+
+    if value.contains('/') || value.contains(':') {
+        let host = value.split(['/', ':']).next().unwrap_or_default().trim();
+        if host.is_empty() || !host.contains('.') {
+            return None;
+        }
+        return Some(host);
+    }
+
+    if value.contains('.') {
+        return Some(value);
+    }
+
+    None
 }
 
 fn from_core_image(image: SandboxImage) -> ToolImage {

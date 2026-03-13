@@ -7,11 +7,13 @@ use tauri::State;
 use tauri_ui::ConfigParseResponse;
 use tauri_ui::OutputType;
 use tauri_ui::ipc::{
+    ApplyReviewDecisionRequest, ApplyReviewDecisionResponse,
     AuditSessionSummary, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
     CreateAuditSessionResponse, DownloadOutputResponse, GetProjectTreeResponse,
-    LoadChecklistPlanResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
-    OpenAuditSessionResponse, ProjectGraphResponse, ReadSourceFileResponse, SourceInputIpc,
-    TailSessionConsoleResponse, ToolbenchSelectionRequest,
+    LoadChecklistPlanResponse, LoadReviewQueueResponse, LoadSecurityOverviewResponse,
+    LoadToolbenchContextResponse, OpenAuditSessionResponse, ProjectGraphResponse,
+    ReadSourceFileResponse, SourceInputIpc, TailSessionConsoleResponse,
+    ToolbenchSelectionRequest,
 };
 use tauri_ui::{branch_resolution_banner, warning_message};
 
@@ -324,6 +326,31 @@ pub async fn load_toolbench_context(
     let mut session = state.session.lock().await;
     session
         .load_toolbench_context(&session_id, selection)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_review_queue(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<LoadReviewQueueResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_review_queue(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn apply_review_decision(
+    state: State<'_, AppState>,
+    session_id: String,
+    request: ApplyReviewDecisionRequest,
+) -> Result<ApplyReviewDecisionResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .apply_review_decision(&session_id, request)
         .await
         .map_err(|err| err.to_string())
 }

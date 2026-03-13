@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use audit_agent_core::audit_config::ParsedPreviousAudit;
 use audit_agent_core::finding::{Finding, VerificationStatus};
+use audit_agent_core::session::{AuditRecord, AuditRecordKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FindingKey {
@@ -116,4 +117,45 @@ fn parse_location_hint(hint: Option<&str>) -> Option<(PathBuf, u32)> {
         .trim();
     let line_start = line_token.parse::<u32>().ok()?;
     Some((PathBuf::from(file), line_start))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewAction {
+    Confirm,
+    Reject,
+    Suppress,
+    Annotate,
+}
+
+pub fn apply_review_action(record: &mut AuditRecord, action: ReviewAction, note: Option<&str>) {
+    if let Some(note) = note.map(str::trim).filter(|value| !value.is_empty()) {
+        record.summary = format!("{} Note: {}", record.summary, note);
+    }
+
+    match action {
+        ReviewAction::Confirm => {
+            record.kind = AuditRecordKind::Finding;
+            record.verification_status = VerificationStatus::Verified;
+            push_record_label(record, "confirmed");
+        }
+        ReviewAction::Reject => {
+            record.kind = AuditRecordKind::Candidate;
+            record.verification_status =
+                VerificationStatus::unverified("Marked false positive by analyst");
+            push_record_label(record, "false-positive");
+        }
+        ReviewAction::Suppress => {
+            push_record_label(record, "suppressed");
+        }
+        ReviewAction::Annotate => {
+            push_record_label(record, "annotated");
+        }
+    }
+}
+
+fn push_record_label(record: &mut AuditRecord, label: &str) {
+    if record.labels.iter().any(|entry| entry == label) {
+        return;
+    }
+    record.labels.push(label.to_string());
 }

@@ -147,6 +147,35 @@ export type ToolbenchContextResponse = {
   similarCases: ToolbenchSimilarCase[];
 };
 
+export type ReviewQueueItem = {
+  recordId: string;
+  kind: "candidate" | "finding" | "review_note";
+  title: string;
+  summary: string;
+  severity?: "critical" | "high" | "medium" | "low" | "observation";
+  verificationStatus: "verified" | "unverified";
+  labels: string[];
+  evidenceRefs: string[];
+};
+
+export type LoadReviewQueueResponse = {
+  sessionId: string;
+  items: ReviewQueueItem[];
+};
+
+export type ReviewDecisionAction = "confirm" | "reject" | "suppress" | "annotate";
+
+export type ApplyReviewDecisionRequest = {
+  recordId: string;
+  action: ReviewDecisionAction;
+  note?: string;
+};
+
+export type ApplyReviewDecisionResponse = {
+  sessionId: string;
+  item: ReviewQueueItem;
+};
+
 export type DownloadOutputResponse = {
   dest: string;
 };
@@ -476,6 +505,80 @@ const FALLBACK_SIMILAR_CASES: Array<ToolbenchSimilarCase & { tags: string[] }> =
   },
 ];
 
+const FALLBACK_REVIEW_QUEUE_ITEMS: ReviewQueueItem[] = [
+  {
+    recordId: "cand-crypto-001",
+    kind: "candidate",
+    title: "Potential signer replay path",
+    summary: "Heuristic hotspot suggests missing domain separation in signer context binding.",
+    severity: "high",
+    verificationStatus: "unverified",
+    labels: ["generated", "crypto"],
+    evidenceRefs: ["evidence://pending"],
+  },
+];
+
+const reviewQueueStateBySession = new Map<string, ReviewQueueItem[]>();
+
+function cloneReviewQueueItems(items: ReviewQueueItem[]): ReviewQueueItem[] {
+  return items.map((item) => ({
+    ...item,
+    labels: [...item.labels],
+    evidenceRefs: [...item.evidenceRefs],
+  }));
+}
+
+function ensureFallbackReviewQueue(sessionId: string): ReviewQueueItem[] {
+  const existing = reviewQueueStateBySession.get(sessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const seeded = cloneReviewQueueItems(FALLBACK_REVIEW_QUEUE_ITEMS);
+  reviewQueueStateBySession.set(sessionId, seeded);
+  return seeded;
+}
+
+function applyFallbackReviewDecision(
+  item: ReviewQueueItem,
+  request: ApplyReviewDecisionRequest
+): ReviewQueueItem {
+  const next: ReviewQueueItem = {
+    ...item,
+    labels: [...item.labels],
+    evidenceRefs: [...item.evidenceRefs],
+  };
+
+  if (request.note && request.note.trim().length > 0) {
+    next.summary = `${next.summary} Note: ${request.note.trim()}`;
+  }
+
+  if (request.action === "confirm") {
+    next.kind = "finding";
+    next.verificationStatus = "verified";
+    next.severity ??= "medium";
+    if (!next.labels.includes("confirmed")) {
+      next.labels.push("confirmed");
+    }
+  } else if (request.action === "reject") {
+    next.kind = "candidate";
+    next.verificationStatus = "unverified";
+    if (!next.labels.includes("false-positive")) {
+      next.labels.push("false-positive");
+    }
+  } else if (request.action === "suppress") {
+    if (!next.labels.includes("suppressed")) {
+      next.labels.push("suppressed");
+    }
+  } else if (request.action === "annotate") {
+    if (!next.labels.includes("annotated")) {
+      next.labels.push("annotated");
+    }
+  }
+
+  return next;
+}
+
 export async function getProjectTree(sessionId: string): Promise<GetProjectTreeResponse> {
   return tauriInvoke("get_project_tree", { session_id: sessionId }, async () => ({
     sessionId,
@@ -662,6 +765,36 @@ export async function loadToolbenchContext(
           similarCases: deriveSimilarCases(selection, FALLBACK_CHECKLIST_PLAN),
         };
       }
+    }
+  );
+}
+
+export async function loadReviewQueue(
+  sessionId: string
+): Promise<LoadReviewQueueResponse> {
+  return tauriInvoke("load_review_queue", { session_id: sessionId }, async () => ({
+    sessionId,
+    items: cloneReviewQueueItems(ensureFallbackReviewQueue(sessionId)),
+  }));
+}
+
+export async function applyReviewDecision(
+  sessionId: string,
+  request: ApplyReviewDecisionRequest
+): Promise<ApplyReviewDecisionResponse> {
+  return tauriInvoke(
+    "apply_review_decision",
+    { session_id: sessionId, request },
+    async () => {
+      const queue = ensureFallbackReviewQueue(sessionId);
+      const index = queue.findIndex((item) => item.recordId === request.recordId);
+      if (index < 0) {
+        throw new Error("unknown review record");
+      }
+      const updated = applyFallbackReviewDecision(queue[index], request);
+      queue[index] = updated;
+      reviewQueueStateBySession.set(sessionId, queue);
+      return { sessionId, item: { ...updated } };
     }
   );
 }

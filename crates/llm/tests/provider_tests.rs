@@ -3,6 +3,12 @@ use async_trait::async_trait;
 use llm::{CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, provider_from_env};
 use mockito::Matcher;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 struct EchoProvider;
 
@@ -23,6 +29,7 @@ impl LlmProvider for EchoProvider {
 
 #[test]
 fn llm_api_key_absent_uses_template_fallback_silently() {
+    let _guard = env_lock().lock().expect("env lock");
     let previous = std::env::var("LLM_API_KEY").ok();
     // SAFETY: test is single-threaded with respect to this env var.
     unsafe { std::env::remove_var("LLM_API_KEY") };
@@ -185,6 +192,7 @@ async fn ollama_provider_makes_generate_request() {
 
 #[test]
 fn provider_selection_respects_requested_backend() {
+    let _guard = env_lock().lock().expect("env lock");
     let restore = snapshot_env(&[
         "LLM_PROVIDER",
         "LLM_API_KEY",
@@ -223,6 +231,7 @@ fn provider_selection_respects_requested_backend() {
 
 #[test]
 fn provider_selection_falls_back_to_template_when_requested_provider_unavailable() {
+    let _guard = env_lock().lock().expect("env lock");
     let restore = snapshot_env(&[
         "LLM_PROVIDER",
         "LLM_API_KEY",

@@ -12,7 +12,8 @@ use audit_agent_core::workspace::{CrateKind, CrateMeta};
 use intake::config::ConfigParser;
 use intake::confirmation::{CrateDecision, IntakeWarning};
 use tauri_ui::ipc::{
-    ConfirmWorkspaceRequest, SourceInputIpc, SourceKind, ToolbenchSelectionRequest, UiSessionState,
+    ApplyReviewDecisionRequest, ConfirmWorkspaceRequest, ReviewDecisionAction, SourceInputIpc,
+    SourceKind, ToolbenchSelectionRequest, UiSessionState,
 };
 use tauri_ui::{
     OutputType, branch_resolution_banner, crate_decision_style, download_output, export_audit_yaml,
@@ -467,4 +468,26 @@ async fn workstation_commands_return_tree_file_and_console_data() {
         checklist.domains.len(),
         "toolbench domains should mirror checklist domains"
     );
+
+    let queue = session
+        .load_review_queue(&created.session_id)
+        .await
+        .expect("load review queue");
+    assert!(
+        !queue.items.is_empty(),
+        "review queue should contain at least one candidate"
+    );
+
+    let updated = session
+        .apply_review_decision(
+            &created.session_id,
+            ApplyReviewDecisionRequest {
+                record_id: queue.items[0].record_id.clone(),
+                action: ReviewDecisionAction::Confirm,
+                note: Some("validated with deterministic harness".to_string()),
+            },
+        )
+        .await
+        .expect("apply review decision");
+    assert_eq!(updated.item.verification_status, "verified");
 }

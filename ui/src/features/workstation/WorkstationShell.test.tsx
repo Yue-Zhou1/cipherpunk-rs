@@ -41,6 +41,10 @@ vi.mock("./ToolbenchPanel", () => ({
   ),
 }));
 
+vi.mock("./ReviewQueue", () => ({
+  default: () => <div>Review Queue</div>,
+}));
+
 describe("WorkstationShell", () => {
   it("renders explorer, editor, toolbench, and console panels", () => {
     render(<WorkstationShell sessionId="sess-1" />);

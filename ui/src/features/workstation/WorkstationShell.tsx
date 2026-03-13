@@ -5,6 +5,7 @@ import ChecklistPanel from "./ChecklistPanel";
 import CodeEditorPane from "./CodeEditorPane";
 import GraphLens from "./GraphLens";
 import ProjectExplorer from "./ProjectExplorer";
+import ReviewQueue from "./ReviewQueue";
 import SecurityOverviewPanel from "./SecurityOverviewPanel";
 import ToolbenchPanel from "./ToolbenchPanel";
 import useSessionState from "./useSessionState";
@@ -121,6 +122,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                 : { kind: "session", id: sessionId }
             }
           />
+          <ReviewQueue sessionId={sessionId} />
         </aside>
       </main>
 

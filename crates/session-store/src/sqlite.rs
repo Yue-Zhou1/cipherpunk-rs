@@ -168,6 +168,67 @@ impl SessionStore {
         Ok(())
     }
 
+    pub fn load_record(&self, session_id: &str, record_id: &str) -> Result<Option<AuditRecord>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let json: Option<String> = conn
+            .query_row(
+                r#"
+                SELECT record_json
+                FROM audit_records
+                WHERE session_id = ?1 AND record_id = ?2
+                "#,
+                params![session_id, record_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|value| serde_json::from_str(&value).context("deserialize audit record"))
+            .transpose()
+    }
+
+    pub fn list_records(&self, session_id: &str, kind: Option<&str>) -> Result<Vec<AuditRecord>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        match kind {
+            Some(kind_value) => {
+                let mut stmt = conn.prepare(
+                    r#"
+                    SELECT record_json
+                    FROM audit_records
+                    WHERE session_id = ?1 AND kind = ?2
+                    ORDER BY updated_at DESC
+                    "#,
+                )?;
+                let rows = stmt.query_map(params![session_id, kind_value], |row| {
+                    row.get::<_, String>(0)
+                })?;
+
+                let mut records = Vec::<AuditRecord>::new();
+                for row in rows {
+                    let json = row?;
+                    records.push(serde_json::from_str(&json).context("deserialize audit record")?);
+                }
+                Ok(records)
+            }
+            None => {
+                let mut stmt = conn.prepare(
+                    r#"
+                    SELECT record_json
+                    FROM audit_records
+                    WHERE session_id = ?1
+                    ORDER BY updated_at DESC
+                    "#,
+                )?;
+                let rows = stmt.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+
+                let mut records = Vec::<AuditRecord>::new();
+                for row in rows {
+                    let json = row?;
+                    records.push(serde_json::from_str(&json).context("deserialize audit record")?);
+                }
+                Ok(records)
+            }
+        }
+    }
+
     pub fn append_event(&self, session_id: &str, event: &SessionEvent) -> Result<()> {
         let event_json = serde_json::to_string(event).context("serialize session event")?;
         let conn = self.conn.lock().expect("session-store mutex poisoned");

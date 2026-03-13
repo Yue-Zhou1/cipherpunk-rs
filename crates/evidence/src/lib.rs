@@ -85,6 +85,7 @@ impl EvidenceStore {
                 pack.manifest.finding_id
             );
         }
+        validate_manifest_reproducibility(&pack.manifest)?;
 
         let finding_dir = self.finding_dir(finding_id);
         if finding_dir.exists() {
@@ -302,6 +303,19 @@ fn make_executable(path: &Path) -> Result<()> {
         let mut perms = std::fs::metadata(path)?.permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms)?;
+    }
+    Ok(())
+}
+
+fn validate_manifest_reproducibility(manifest: &EvidenceManifest) -> Result<()> {
+    if manifest.container_digest.trim().is_empty() {
+        bail!("container_digest must be present for reproducibility");
+    }
+    if manifest.reproduction_command.trim().is_empty() {
+        bail!("reproduction_command must be present for reproducibility");
+    }
+    if manifest.expected_output_description.trim().is_empty() {
+        bail!("expected_output_description must be present for reproducibility");
     }
     Ok(())
 }

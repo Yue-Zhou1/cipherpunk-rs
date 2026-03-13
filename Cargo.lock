@@ -2111,6 +2111,7 @@ dependencies = [
  "intake",
  "llm",
  "report",
+ "sandbox",
  "serde",
  "serde_json",
  "session-store",
@@ -2661,6 +2662,7 @@ dependencies = [
  "llm",
  "lopdf 0.34.0",
  "printpdf",
+ "sandbox",
  "serde_json",
  "tempfile",
  "tokio",
@@ -2826,7 +2828,9 @@ dependencies = [
  "futures-util",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
+ "worker-protocol",
 ]
 
 [[package]]
@@ -4280,6 +4284,23 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "worker-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "worker-runner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "tokio",
+ "worker-protocol",
 ]
 
 [[package]]

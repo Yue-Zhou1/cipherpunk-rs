@@ -48,6 +48,8 @@ pub fn run() {
             commands::load_security_overview,
             commands::load_checklist_plan,
             commands::load_toolbench_context,
+            commands::load_review_queue,
+            commands::apply_review_decision,
             commands::export_audit_yaml,
             commands::get_audit_manifest,
             commands::download_output

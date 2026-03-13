@@ -943,7 +943,7 @@ pre code {
 .vscode-right-column {
   min-width: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 0.9fr);
+  grid-template-rows: minmax(0, 0.95fr) minmax(0, 0.65fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
   border-left: 1px solid #252526;
 }
 
@@ -973,7 +973,8 @@ pre code {
 
 .workstation-overview,
 .workstation-checklist,
-.workstation-toolbench {
+.workstation-toolbench,
+.workstation-review-queue {
   border-bottom: 1px solid #252526;
 }
 
@@ -1210,6 +1211,28 @@ pre code {
 
 .workstation-tool-action:hover {
   background: #3e3e42;
+}
+
+.review-queue-item {
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.review-queue-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.review-queue-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .overview-grid {

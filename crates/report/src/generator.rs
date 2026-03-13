@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,15 +7,18 @@ use anyhow::Result;
 use audit_agent_core::audit_config::ParsedPreviousAudit;
 use audit_agent_core::finding::Finding;
 use audit_agent_core::output::AuditManifest;
+use audit_agent_core::session::AuditRecord;
 use findings::json_export::to_findings_json;
 use findings::pipeline::{deduplicate_findings, mark_regression_checks};
 use findings::sarif::to_sarif;
 use llm::{CompletionOpts, LlmProvider, LlmRole, llm_call};
 use printpdf::{BuiltinFont, Mm, PdfDocument};
 
+pub use crate::coverage::{V3ChecklistCoverage, V3ToolInventory};
+use crate::coverage::{derive_checklist_coverage, derive_tool_inventory};
 use crate::executive::render_executive_report;
 use crate::regression::{generate_regression_tests, write_phase1_output_layout};
-use crate::technical::render_technical_report;
+use crate::typst::{render_executive_typst, render_technical_typst};
 
 pub struct ReportGenerator {
     findings: Vec<Finding>,
@@ -28,6 +31,142 @@ pub struct ReportGeneratorOptions {
     pub no_llm_prose: bool,
     pub evidence_pack_zip: PathBuf,
     pub previous_audit: Option<ParsedPreviousAudit>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct V3ReportBundle {
+    pub manifest: AuditManifest,
+    pub findings: Vec<Finding>,
+    pub candidates: Vec<AuditRecord>,
+    pub tool_inventory: Vec<V3ToolInventory>,
+    pub checklist_coverage: Vec<V3ChecklistCoverage>,
+    pub recommended_fixes: Vec<String>,
+    pub regression_plan: Vec<String>,
+}
+
+pub fn render_v3_report(bundle: V3ReportBundle) -> String {
+    let mut out = String::new();
+    out.push_str("# Technical Audit Report\n\n");
+    out.push_str("## Project Metadata and Scope\n\n");
+    out.push_str(&format!("- Audit ID: `{}`\n", bundle.manifest.audit_id));
+    out.push_str(&format!(
+        "- Source Commit: `{}`\n",
+        bundle.manifest.source.commit_hash
+    ));
+    out.push_str(&format!(
+        "- Target Crates: {}\n",
+        if bundle.manifest.scope.target_crates.is_empty() {
+            "n/a".to_string()
+        } else {
+            bundle.manifest.scope.target_crates.join(", ")
+        }
+    ));
+    out.push('\n');
+
+    out.push_str("## Tool Inventory\n\n");
+    if bundle.tool_inventory.is_empty() {
+        out.push_str("- No tool inventory captured.\n\n");
+    } else {
+        for item in &bundle.tool_inventory {
+            out.push_str(&format!(
+                "- {} `{}` (container `{}`)\n",
+                item.tool, item.version, item.container_digest
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Checklist Coverage\n\n");
+    if bundle.checklist_coverage.is_empty() {
+        out.push_str("- No checklist coverage metadata available.\n\n");
+    } else {
+        for coverage in &bundle.checklist_coverage {
+            out.push_str(&format!(
+                "- {}: {} ({})\n",
+                coverage.domain, coverage.status, coverage.notes
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Verified Findings\n\n");
+    if bundle.findings.is_empty() {
+        out.push_str("No verified findings.\n\n");
+    } else {
+        for finding in &bundle.findings {
+            out.push_str(&format!("### [{}] {}\n\n", finding.id, finding.title));
+            out.push_str(&format!("- Severity: `{:?}`\n", finding.severity));
+            out.push_str(&format!("- Impact: {}\n", finding.impact));
+            if let Some(command) = finding.evidence.command.as_deref() {
+                out.push_str(&format!("- Reproduce: `{command}`\n"));
+            } else {
+                out.push_str(&format!(
+                    "- Reproduce: `bash evidence-pack/{}/reproduce.sh`\n",
+                    finding.id
+                ));
+            }
+            out.push_str(&format!(
+                "- Evidence Digest: `{}`\n\n",
+                finding.evidence.container_digest
+            ));
+            out.push_str(&format!(
+                "#### Recommendation\n{}\n\n",
+                finding.recommendation
+            ));
+        }
+    }
+
+    out.push_str("## Unverified Candidates\n\n");
+    if bundle.candidates.is_empty() {
+        out.push_str("No unverified candidates.\n\n");
+    } else {
+        for candidate in &bundle.candidates {
+            out.push_str(&format!(
+                "- **{}**: {}\n",
+                candidate.title, candidate.summary
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Recommended Fixes\n\n");
+    if bundle.recommended_fixes.is_empty() {
+        out.push_str("- No fix recommendations were generated.\n\n");
+    } else {
+        for fix in &bundle.recommended_fixes {
+            out.push_str(&format!("- {fix}\n"));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Regression-Test Section\n\n");
+    if bundle.regression_plan.is_empty() {
+        out.push_str("- No regression plan captured.\n");
+    } else {
+        for step in &bundle.regression_plan {
+            out.push_str(&format!("- {step}\n"));
+        }
+    }
+
+    out
+}
+
+fn build_v3_report_bundle(manifest: &AuditManifest, findings: &[Finding]) -> V3ReportBundle {
+    V3ReportBundle {
+        manifest: manifest.clone(),
+        findings: findings.to_vec(),
+        candidates: vec![],
+        tool_inventory: derive_tool_inventory(findings),
+        checklist_coverage: derive_checklist_coverage(manifest),
+        recommended_fixes: findings
+            .iter()
+            .map(|finding| finding.recommendation.clone())
+            .collect(),
+        regression_plan: findings
+            .iter()
+            .filter_map(|finding| finding.regression_test.clone())
+            .collect(),
+    }
 }
 
 impl ReportGenerator {
@@ -54,8 +193,9 @@ impl ReportGenerator {
         let mut manifest = self.manifest.clone();
         manifest.optional_inputs_used.llm_prose_used = llm_prose_used;
 
+        let v3_bundle = build_v3_report_bundle(&manifest, &render_findings);
         let report_executive_markdown = render_executive_report(&render_findings, &manifest);
-        let report_technical_markdown = render_technical_report(&render_findings, &manifest);
+        let report_technical_markdown = render_v3_report(v3_bundle.clone());
         let findings_json = to_findings_json(&render_findings)?;
         let findings_sarif = serde_json::to_string_pretty(&to_sarif(&render_findings, &manifest))?;
         let regression_suite = generate_regression_tests(&render_findings);
@@ -70,6 +210,15 @@ impl ReportGenerator {
             &self.options.evidence_pack_zip,
             &audit_manifest_json,
             &regression_suite,
+        )?;
+
+        fs::write(
+            output_dir.join("report-executive.typ"),
+            render_executive_typst(&v3_bundle),
+        )?;
+        fs::write(
+            output_dir.join("report-technical.typ"),
+            render_technical_typst(&v3_bundle),
         )?;
 
         write_plain_text_pdf(
@@ -137,55 +286,8 @@ async fn polish_text(llm: &dyn LlmProvider, text: &str) -> (String, bool) {
 
 fn sanitize_prompt_input(text: &str) -> String {
     const MAX_CHARS: usize = 4_000;
-    let mut cleaned = String::with_capacity(text.len().min(MAX_CHARS));
-    for ch in text.chars() {
-        if ch == '\n' || ch == '\t' || !ch.is_control() {
-            cleaned.push(ch);
-        }
-        if cleaned.len() >= MAX_CHARS {
-            break;
-        }
-    }
-
-    let mut out = String::new();
-    for line in cleaned.lines() {
-        let trimmed = line.trim_start();
-        let lower = trimmed.to_ascii_lowercase();
-        if lower.starts_with("system:")
-            || lower.starts_with("assistant:")
-            || lower.starts_with("user:")
-        {
-            out.push_str("[role-label-redacted]\n");
-        } else {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.ends_with('\n') {
-        out.pop();
-    }
-
-    let mut sanitized = out
-        .replace("```", "'''")
-        .replace("<|", "< ")
-        .replace("|>", " >")
-        .replace("<<", "< ")
-        .replace(">>", " >");
-
-    for marker in [
-        "SYSTEM:",
-        "System:",
-        "system:",
-        "ASSISTANT:",
-        "Assistant:",
-        "assistant:",
-        "USER:",
-        "User:",
-        "user:",
-    ] {
-        sanitized = sanitized.replace(marker, "[role-label-redacted]:");
-    }
-    sanitized
+    let redacted = sandbox::redaction::redact_ai_prompt(text);
+    redacted.chars().take(MAX_CHARS).collect()
 }
 
 fn write_plain_text_pdf(path: &Path, markdown: &str, max_pages: Option<usize>) -> Result<()> {

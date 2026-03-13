@@ -5,14 +5,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use audit_agent_core::audit_config::{AuditConfig, BudgetConfig, ResolvedSource, SourceOrigin};
+use audit_agent_core::finding::{Severity, VerificationStatus};
 use audit_agent_core::output::AuditManifest;
-use audit_agent_core::session::{AuditSession, SessionUiState};
+use audit_agent_core::session::{AuditRecord, AuditRecordKind, AuditSession, SessionUiState};
 use chrono::Utc;
 use intake::config::{ConfigParser, RawEngineConfig, RawScope, RawSource, ValidatedConfig};
 use intake::confirmation::{ConfirmationSummary, UserDecisions};
 use intake::project_snapshot_from_config;
 use intake::source::SourceInput;
 use knowledge::KnowledgeBase;
+use knowledge::models::AdjudicatedCase;
 use orchestrator::{AuditJob, AuditJobKind, AuditOrchestrator};
 use project_ir::{
     ChecklistPlan as IrChecklistPlan, ProjectIr, ProjectIrBuilder,
@@ -248,6 +250,52 @@ pub struct LoadToolbenchContextResponse {
     pub similar_cases: Vec<ToolbenchSimilarCaseResponse>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDecisionAction {
+    Confirm,
+    Reject,
+    Suppress,
+    Annotate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyReviewDecisionRequest {
+    pub record_id: String,
+    pub action: ReviewDecisionAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewQueueItemResponse {
+    pub record_id: String,
+    pub kind: String,
+    pub title: String,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    pub verification_status: String,
+    pub labels: Vec<String>,
+    pub evidence_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadReviewQueueResponse {
+    pub session_id: String,
+    pub items: Vec<ReviewQueueItemResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyReviewDecisionResponse {
+    pub session_id: String,
+    pub item: ReviewQueueItemResponse,
+}
+
 pub struct UiSessionState {
     work_dir: PathBuf,
     resolved_source: Option<ResolvedSourceView>,
@@ -258,6 +306,7 @@ pub struct UiSessionState {
     sessions: HashMap<String, AuditSession>,
     session_jobs: HashMap<String, Vec<SessionJobView>>,
     project_ir_cache: HashMap<String, ProjectIr>,
+    review_records_cache: HashMap<String, Vec<AuditRecord>>,
     session_store: Option<Arc<SessionStore>>,
 }
 
@@ -276,6 +325,7 @@ impl UiSessionState {
             sessions: HashMap::new(),
             session_jobs: HashMap::new(),
             project_ir_cache: HashMap::new(),
+            review_records_cache: HashMap::new(),
             session_store,
         }
     }
@@ -576,10 +626,7 @@ impl UiSessionState {
         let metadata = fs::metadata(&canonical_file)
             .with_context(|| format!("read file metadata {}", canonical_file.display()))?;
         if metadata.len() > MAX_SOURCE_FILE_BYTES {
-            bail!(
-                "requested source file exceeds {} bytes",
-                MAX_SOURCE_FILE_BYTES
-            );
+            bail!("requested source file exceeds {MAX_SOURCE_FILE_BYTES} bytes");
         }
 
         let bytes = fs::read(&canonical_file)
@@ -727,6 +774,45 @@ impl UiSessionState {
         })
     }
 
+    pub async fn load_review_queue(&mut self, session_id: &str) -> Result<LoadReviewQueueResponse> {
+        let _session = self.ensure_session_loaded(session_id)?;
+        let mut records = self.load_candidate_records(session_id)?;
+
+        if records.is_empty() {
+            let seeded = self.seed_default_candidate(session_id).await?;
+            records.push(seeded);
+        }
+
+        Ok(LoadReviewQueueResponse {
+            session_id: session_id.to_string(),
+            items: records
+                .into_iter()
+                .map(|record| review_queue_item_response(&record))
+                .collect(),
+        })
+    }
+
+    pub async fn apply_review_decision(
+        &mut self,
+        session_id: &str,
+        request: ApplyReviewDecisionRequest,
+    ) -> Result<ApplyReviewDecisionResponse> {
+        let _session = self.ensure_session_loaded(session_id)?;
+        let mut record = self
+            .load_record(session_id, &request.record_id)?
+            .with_context(|| format!("unknown review record `{}`", request.record_id))?;
+
+        apply_review_action_to_record(&mut record, &request);
+        self.persist_review_record(session_id, &record)?;
+        self.append_review_event(session_id, &record, &request)?;
+        self.ingest_review_feedback(&record, &request);
+
+        Ok(ApplyReviewDecisionResponse {
+            session_id: session_id.to_string(),
+            item: review_queue_item_response(&record),
+        })
+    }
+
     async fn load_or_build_project_ir(
         &mut self,
         session_id: &str,
@@ -746,6 +832,132 @@ impl UiSessionState {
         self.project_ir_cache
             .insert(session_id.to_string(), built.clone());
         Ok(built)
+    }
+
+    fn load_candidate_records(&self, session_id: &str) -> Result<Vec<AuditRecord>> {
+        if let Some(store) = &self.session_store {
+            return store.list_records(session_id, Some("candidate"));
+        }
+        Ok(self
+            .review_records_cache
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|record| matches!(record.kind, AuditRecordKind::Candidate))
+            .collect())
+    }
+
+    fn load_record(&self, session_id: &str, record_id: &str) -> Result<Option<AuditRecord>> {
+        if let Some(store) = &self.session_store {
+            return store.load_record(session_id, record_id);
+        }
+        Ok(self
+            .review_records_cache
+            .get(session_id)
+            .and_then(|records| {
+                records
+                    .iter()
+                    .find(|record| record.record_id == record_id)
+                    .cloned()
+            }))
+    }
+
+    fn persist_review_record(&mut self, session_id: &str, record: &AuditRecord) -> Result<()> {
+        if let Some(store) = &self.session_store {
+            store.upsert_record(session_id, record)?;
+        } else {
+            let records = self
+                .review_records_cache
+                .entry(session_id.to_string())
+                .or_default();
+            if let Some(position) = records
+                .iter()
+                .position(|existing| existing.record_id == record.record_id)
+            {
+                records[position] = record.clone();
+            } else {
+                records.push(record.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn append_review_event(
+        &mut self,
+        session_id: &str,
+        record: &AuditRecord,
+        request: &ApplyReviewDecisionRequest,
+    ) -> Result<()> {
+        if let Some(store) = &self.session_store {
+            let payload = serde_json::json!({
+                "recordId": record.record_id,
+                "action": review_action_name(&request.action),
+                "note": request.note.clone().unwrap_or_default(),
+                "labels": record.labels,
+                "verificationStatus": verification_status_name(&record.verification_status),
+            });
+            let event = session_store::SessionEvent {
+                event_id: format!(
+                    "review-action:{}:{}",
+                    session_id,
+                    Utc::now().timestamp_micros()
+                ),
+                event_type: "review.action".to_string(),
+                payload: payload.to_string(),
+                created_at: Utc::now(),
+            };
+            store.append_event(session_id, &event)?;
+        } else {
+            self.review_records_cache
+                .entry(session_id.to_string())
+                .or_default();
+        }
+        Ok(())
+    }
+
+    fn ingest_review_feedback(&self, record: &AuditRecord, request: &ApplyReviewDecisionRequest) {
+        let Ok(mut kb) = KnowledgeBase::load_from_repo_root() else {
+            return;
+        };
+
+        let case = AdjudicatedCase {
+            id: record.record_id.clone(),
+            title: record.title.clone(),
+            summary: record.summary.clone(),
+            tags: record.labels.clone(),
+        };
+
+        match request.action {
+            ReviewDecisionAction::Confirm => kb.ingest_true_positive(case),
+            ReviewDecisionAction::Reject => kb.ingest_false_positive(case),
+            ReviewDecisionAction::Suppress | ReviewDecisionAction::Annotate => {}
+        }
+    }
+
+    async fn seed_default_candidate(&mut self, session_id: &str) -> Result<AuditRecord> {
+        let ir = self.load_or_build_project_ir(session_id, false).await?;
+        let title = ir
+            .security_overview()
+            .hotspots
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| {
+                "Potential security hotspot requiring analyst validation".to_string()
+            });
+
+        let mut record = AuditRecord::candidate(
+            format!("cand-{}", Utc::now().timestamp_micros()),
+            title,
+            VerificationStatus::unverified("AI-assisted triage requires analyst confirmation"),
+        );
+        record.summary =
+            "Generated from project hotspot analysis; validate before promoting to finding."
+                .to_string();
+        record.labels.push("generated".to_string());
+        record.evidence_refs.push("evidence://pending".to_string());
+        self.persist_review_record(session_id, &record)?;
+        Ok(record)
     }
 
     fn ensure_session_loaded(&mut self, session_id: &str) -> Result<AuditSession> {
@@ -1207,7 +1419,7 @@ fn canonical_tool_id(tool: &str) -> String {
         "circom-z3" | "circom_z3" | "circom z3" | "circom-graph" => "Circom Z3".to_string(),
         "cairo-external" | "cairo_external" | "cairo-graph" => "Cairo External".to_string(),
         "lean-external" | "lean_external" => "Lean External".to_string(),
-        other if other.is_empty() => "Kani".to_string(),
+        "" => "Kani".to_string(),
         _ => tool.trim().to_string(),
     }
 }
@@ -1292,6 +1504,94 @@ fn fallback_tool_recommendations(plan: &IrChecklistPlan) -> Vec<ToolbenchRecomme
     }
 
     recommendations
+}
+
+fn review_queue_item_response(record: &AuditRecord) -> ReviewQueueItemResponse {
+    ReviewQueueItemResponse {
+        record_id: record.record_id.clone(),
+        kind: match record.kind {
+            AuditRecordKind::ReviewNote => "review_note".to_string(),
+            AuditRecordKind::Candidate => "candidate".to_string(),
+            AuditRecordKind::Finding => "finding".to_string(),
+        },
+        title: record.title.clone(),
+        summary: record.summary.clone(),
+        severity: record
+            .severity
+            .as_ref()
+            .map(severity_name)
+            .map(str::to_string),
+        verification_status: verification_status_name(&record.verification_status).to_string(),
+        labels: record.labels.clone(),
+        evidence_refs: record.evidence_refs.clone(),
+    }
+}
+
+fn apply_review_action_to_record(record: &mut AuditRecord, request: &ApplyReviewDecisionRequest) {
+    if let Some(note) = request
+        .note
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        record.summary = format!("{} Note: {}", record.summary, note);
+    }
+
+    match request.action {
+        ReviewDecisionAction::Confirm => {
+            record.kind = AuditRecordKind::Finding;
+            record.verification_status = VerificationStatus::Verified;
+            record.severity.get_or_insert(Severity::Medium);
+            push_label(&mut record.labels, "confirmed");
+            push_label(&mut record.labels, "verified");
+        }
+        ReviewDecisionAction::Reject => {
+            record.kind = AuditRecordKind::Candidate;
+            record.verification_status =
+                VerificationStatus::unverified("Marked false positive by analyst");
+            push_label(&mut record.labels, "rejected");
+            push_label(&mut record.labels, "false-positive");
+        }
+        ReviewDecisionAction::Suppress => {
+            push_label(&mut record.labels, "suppressed");
+        }
+        ReviewDecisionAction::Annotate => {
+            push_label(&mut record.labels, "annotated");
+        }
+    }
+}
+
+fn push_label(labels: &mut Vec<String>, value: &str) {
+    if labels.iter().any(|existing| existing == value) {
+        return;
+    }
+    labels.push(value.to_string());
+}
+
+fn review_action_name(action: &ReviewDecisionAction) -> &'static str {
+    match action {
+        ReviewDecisionAction::Confirm => "confirm",
+        ReviewDecisionAction::Reject => "reject",
+        ReviewDecisionAction::Suppress => "suppress",
+        ReviewDecisionAction::Annotate => "annotate",
+    }
+}
+
+fn verification_status_name(status: &VerificationStatus) -> &'static str {
+    match status {
+        VerificationStatus::Verified => "verified",
+        VerificationStatus::Unverified { .. } => "unverified",
+    }
+}
+
+fn severity_name(severity: &Severity) -> &'static str {
+    match severity {
+        Severity::Critical => "critical",
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+        Severity::Observation => "observation",
+    }
 }
 
 fn test_audit_config(work_dir: &Path) -> AuditConfig {
