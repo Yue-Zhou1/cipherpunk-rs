@@ -1,6 +1,7 @@
 use audit_agent_core::finding::VerificationStatus;
 use audit_agent_core::session::{AuditRecord, AuditSession};
 use chrono::Utc;
+use rusqlite::Connection;
 use session_store::{SessionEvent, SessionStore};
 
 #[test]
@@ -96,4 +97,17 @@ fn list_sessions_and_events_return_persisted_data() {
     let events = store.list_events("sess-a").expect("list events");
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_id, "evt-1");
+}
+
+#[test]
+fn open_enables_wal_journal_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("sessions.sqlite");
+
+    let _store = SessionStore::open(&db_path).expect("open store");
+    let conn = Connection::open(&db_path).expect("open sqlite for pragma check");
+    let mode: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .expect("query journal mode");
+    assert_eq!(mode.to_ascii_lowercase(), "wal");
 }

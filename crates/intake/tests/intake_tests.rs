@@ -262,7 +262,7 @@ fn workspace_analyzer_detects_bench_and_fuzz_targets() {
 }
 
 #[test]
-fn framework_detector_finds_halo2_sp1_and_asm_feature() {
+fn framework_detector_finds_halo2_sp1_cairo_and_asm_feature() {
     let root = tempfile::tempdir().expect("root");
     fs::write(
         root.path().join("Cargo.toml"),
@@ -287,6 +287,7 @@ fn framework_detector_finds_halo2_sp1_and_asm_feature() {
         "#,
     )
     .expect("source");
+    fs::write(zk.join("src/circuit.cairo"), "fn main() -> felt252 { 1 }").expect("cairo source");
 
     let ws = WorkspaceAnalyzer::analyze(root.path()).expect("analyze");
     let detection = FrameworkDetector::detect(&ws);
@@ -301,6 +302,12 @@ fn framework_detector_finds_halo2_sp1_and_asm_feature() {
             .frameworks
             .iter()
             .any(|f| f.framework == audit_agent_core::finding::Framework::SP1)
+    );
+    assert!(
+        detection
+            .frameworks
+            .iter()
+            .any(|f| f.framework == audit_agent_core::finding::Framework::Cairo)
     );
     assert!(
         detection

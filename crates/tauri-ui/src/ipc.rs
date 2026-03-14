@@ -734,7 +734,7 @@ impl UiSessionState {
         let checklist = ir.checklist_plan();
         let context_terms = toolbench_context_terms(&selection, &checklist, &overview);
 
-        let (mut recommended_tools, similar_cases) = match KnowledgeBase::load_from_repo_root() {
+        let (mut recommended_tools, similar_cases) = match self.load_knowledge_base() {
             Ok(knowledge_base) => {
                 let mut tools = Vec::<ToolbenchRecommendationResponse>::new();
                 for tool in knowledge_base
@@ -802,7 +802,7 @@ impl UiSessionState {
             .load_record(session_id, &request.record_id)?
             .with_context(|| format!("unknown review record `{}`", request.record_id))?;
 
-        apply_review_action_to_record(&mut record, &request);
+        apply_review_action_to_record(&mut record, &request)?;
         self.persist_review_record(session_id, &record)?;
         self.append_review_event(session_id, &record, &request)?;
         self.ingest_review_feedback(&record, &request);
@@ -917,7 +917,8 @@ impl UiSessionState {
     }
 
     fn ingest_review_feedback(&self, record: &AuditRecord, request: &ApplyReviewDecisionRequest) {
-        let Ok(mut kb) = KnowledgeBase::load_from_repo_root() else {
+        let store_path = self.knowledge_feedback_store_path();
+        let Ok(mut kb) = KnowledgeBase::load_from_repo_root_with_store(&store_path) else {
             return;
         };
 
@@ -932,6 +933,10 @@ impl UiSessionState {
             ReviewDecisionAction::Confirm => kb.ingest_true_positive(case),
             ReviewDecisionAction::Reject => kb.ingest_false_positive(case),
             ReviewDecisionAction::Suppress | ReviewDecisionAction::Annotate => {}
+        }
+
+        if let Err(err) = kb.persist_feedback_store(&store_path) {
+            eprintln!("{{\"event\":\"knowledge.feedback.persist_failed\",\"error\":\"{err}\"}}");
         }
     }
 
@@ -974,6 +979,14 @@ impl UiSessionState {
         }
 
         bail!("unknown audit session `{session_id}`")
+    }
+
+    fn knowledge_feedback_store_path(&self) -> PathBuf {
+        self.work_dir.join("knowledge-feedback.yaml")
+    }
+
+    fn load_knowledge_base(&self) -> Result<KnowledgeBase> {
+        KnowledgeBase::load_from_repo_root_with_store(self.knowledge_feedback_store_path())
     }
 }
 
@@ -1527,7 +1540,10 @@ fn review_queue_item_response(record: &AuditRecord) -> ReviewQueueItemResponse {
     }
 }
 
-fn apply_review_action_to_record(record: &mut AuditRecord, request: &ApplyReviewDecisionRequest) {
+fn apply_review_action_to_record(
+    record: &mut AuditRecord,
+    request: &ApplyReviewDecisionRequest,
+) -> Result<()> {
     if let Some(note) = request
         .note
         .as_ref()
@@ -1539,6 +1555,9 @@ fn apply_review_action_to_record(record: &mut AuditRecord, request: &ApplyReview
 
     match request.action {
         ReviewDecisionAction::Confirm => {
+            if record.evidence_refs.is_empty() {
+                bail!("confirm action requires at least one evidence reference");
+            }
             record.kind = AuditRecordKind::Finding;
             record.verification_status = VerificationStatus::Verified;
             record.severity.get_or_insert(Severity::Medium);
@@ -1559,6 +1578,8 @@ fn apply_review_action_to_record(record: &mut AuditRecord, request: &ApplyReview
             push_label(&mut record.labels, "annotated");
         }
     }
+
+    Ok(())
 }
 
 fn push_label(labels: &mut Vec<String>, value: &str) {
@@ -1696,5 +1717,54 @@ fn default_validated_config(source: &ResolvedSource) -> ValidatedConfig {
             semantic_index_timeout_secs: 120,
         },
         output_dir: PathBuf::from("audit-output"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confirm_action_requires_evidence_refs() {
+        let mut record = AuditRecord::candidate(
+            "cand-1",
+            "candidate finding",
+            VerificationStatus::unverified("pending"),
+        );
+        let request = ApplyReviewDecisionRequest {
+            record_id: "cand-1".to_string(),
+            action: ReviewDecisionAction::Confirm,
+            note: None,
+        };
+
+        let err = apply_review_action_to_record(&mut record, &request)
+            .expect_err("confirm without evidence should fail");
+        assert!(err.to_string().contains("evidence"));
+        assert!(matches!(
+            record.verification_status,
+            VerificationStatus::Unverified { .. }
+        ));
+    }
+
+    #[test]
+    fn confirm_action_sets_verified_when_evidence_exists() {
+        let mut record = AuditRecord::candidate(
+            "cand-2",
+            "candidate finding",
+            VerificationStatus::unverified("pending"),
+        );
+        record.evidence_refs.push("evidence://tool-run".to_string());
+        let request = ApplyReviewDecisionRequest {
+            record_id: "cand-2".to_string(),
+            action: ReviewDecisionAction::Confirm,
+            note: None,
+        };
+
+        apply_review_action_to_record(&mut record, &request)
+            .expect("confirm with evidence should succeed");
+        assert!(matches!(
+            record.verification_status,
+            VerificationStatus::Verified
+        ));
     }
 }

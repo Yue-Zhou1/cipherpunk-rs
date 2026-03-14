@@ -48,3 +48,76 @@ fn adjudicated_case_store_supports_ingest_and_retrieval() {
     assert_eq!(kb.tool_sequences().len(), 1);
     assert_eq!(kb.repro_patterns().len(), 1);
 }
+
+#[test]
+fn adjudicated_case_store_persists_across_reload() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let store_path = temp.path().join("adjudicated-feedback.yaml");
+
+    let mut kb = KnowledgeBase::load_from_repo_root_with_store(&store_path)
+        .expect("load knowledge base with feedback store");
+    kb.ingest_true_positive(AdjudicatedCase {
+        id: "TP-persist".to_string(),
+        title: "persisted case".to_string(),
+        summary: "should survive reload".to_string(),
+        tags: vec!["crypto".to_string()],
+    });
+    kb.persist_feedback_store(&store_path)
+        .expect("persist feedback store");
+
+    let reloaded = KnowledgeBase::load_from_repo_root_with_store(&store_path)
+        .expect("reload knowledge base with feedback store");
+    assert!(
+        reloaded
+            .true_positives()
+            .iter()
+            .any(|case| case.id == "TP-persist")
+    );
+}
+
+#[test]
+fn feedback_store_overwrite_is_clean_and_readable() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let store_path = temp.path().join("adjudicated-feedback.yaml");
+
+    let mut kb = KnowledgeBase::load_from_repo_root_with_store(&store_path)
+        .expect("load knowledge base with feedback store");
+    kb.ingest_true_positive(AdjudicatedCase {
+        id: "TP-first".to_string(),
+        title: "first".to_string(),
+        summary: "first write".to_string(),
+        tags: vec!["crypto".to_string()],
+    });
+    kb.persist_feedback_store(&store_path)
+        .expect("persist first store");
+
+    let mut kb = KnowledgeBase::load_from_repo_root_with_store(&store_path)
+        .expect("reload knowledge base with feedback store");
+    kb.ingest_true_positive(AdjudicatedCase {
+        id: "TP-second".to_string(),
+        title: "second".to_string(),
+        summary: "second write".to_string(),
+        tags: vec!["zk".to_string()],
+    });
+    kb.persist_feedback_store(&store_path)
+        .expect("persist second store");
+
+    let reloaded =
+        KnowledgeBase::load_from_repo_root_with_store(&store_path).expect("reload second store");
+    assert!(
+        reloaded
+            .true_positives()
+            .iter()
+            .any(|case| case.id == "TP-second")
+    );
+    assert!(
+        !temp
+            .path()
+            .read_dir()
+            .expect("list temp dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .any(|name| name.contains(".tmp-")),
+        "temporary feedback-store files should not be left behind"
+    );
+}

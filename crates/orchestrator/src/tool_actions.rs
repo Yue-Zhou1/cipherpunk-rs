@@ -51,6 +51,11 @@ pub fn sandbox_request(
     workspace_root: &Path,
     artifact_root: &Path,
 ) -> SandboxRequest {
+    let workspace_read_only = !matches!(
+        plan.tool_family,
+        ToolFamily::CargoFuzz | ToolFamily::MadSim | ToolFamily::Kani
+    );
+
     SandboxRequest {
         image: plan.image.clone(),
         command: plan.command.clone(),
@@ -58,7 +63,7 @@ pub fn sandbox_request(
             SandboxMount {
                 host_path: workspace_root.to_path_buf(),
                 container_path: "/workspace".into(),
-                read_only: false,
+                read_only: workspace_read_only,
             },
             SandboxMount {
                 host_path: artifact_root.to_path_buf(),
@@ -105,5 +110,57 @@ fn external_plan(
             "{session_id}/tool-runs/{adapter_cmd}/{target_slug}/output.json"
         )],
         rationale: rationale.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use audit_agent_core::tooling::ToolFamily;
+
+    use super::*;
+
+    fn sample_plan(tool_family: ToolFamily) -> ToolExecutionPlan {
+        ToolExecutionPlan {
+            tool_family,
+            image: SandboxImage::Kani,
+            command: vec!["kani".to_string(), "--version".to_string()],
+            artifact_refs: vec![],
+            rationale: "test plan".to_string(),
+        }
+    }
+
+    #[test]
+    fn workspace_mount_is_read_only_for_non_cargo_tools() {
+        let request = sandbox_request(
+            &sample_plan(ToolFamily::Z3),
+            &ToolBudget::default(),
+            &PathBuf::from("/tmp/workspace"),
+            &PathBuf::from("/tmp/artifacts"),
+        );
+        assert_eq!(request.mounts.len(), 2);
+        assert!(request.mounts[0].read_only, "workspace should be read-only");
+        assert!(
+            !request.mounts[1].read_only,
+            "artifact mount should remain writable"
+        );
+    }
+
+    #[test]
+    fn workspace_mount_is_writable_for_cargo_based_tools() {
+        for family in [ToolFamily::CargoFuzz, ToolFamily::MadSim, ToolFamily::Kani] {
+            let request = sandbox_request(
+                &sample_plan(family),
+                &ToolBudget::default(),
+                &PathBuf::from("/tmp/workspace"),
+                &PathBuf::from("/tmp/artifacts"),
+            );
+            assert_eq!(request.mounts.len(), 2);
+            assert!(
+                !request.mounts[0].read_only,
+                "cargo-backed tool family should have writable workspace"
+            );
+        }
     }
 }
