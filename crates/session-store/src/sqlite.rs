@@ -35,6 +35,13 @@ impl SessionStore {
 
         let conn = Connection::open(&db_path)
             .with_context(|| format!("open sqlite db {}", db_path.display()))?;
+        conn.execute_batch(
+            r#"
+            PRAGMA journal_mode = WAL;
+            PRAGMA busy_timeout = 3000;
+            "#,
+        )
+        .context("configure sqlite WAL mode")?;
         schema::initialize(&conn)?;
 
         let root_parent = db_path

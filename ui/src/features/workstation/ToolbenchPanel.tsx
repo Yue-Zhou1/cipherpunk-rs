@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   loadToolbenchContext,
@@ -11,10 +11,16 @@ type ToolbenchPanelProps = {
   selection?: ToolbenchSelection;
 };
 
+const DEFAULT_SELECTION: ToolbenchSelection = { kind: "session", id: "session" };
+
 function ToolbenchPanel({
   sessionId,
-  selection = { kind: "session", id: "session" },
+  selection,
 }: ToolbenchPanelProps): JSX.Element {
+  const resolvedSelection = useMemo<ToolbenchSelection>(
+    () => selection ?? DEFAULT_SELECTION,
+    [selection?.kind, selection?.id]
+  );
   const [context, setContext] = useState<ToolbenchContextResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +30,7 @@ function ToolbenchPanel({
     setIsLoading(true);
     setError(null);
 
-    void loadToolbenchContext(sessionId, selection)
+    void loadToolbenchContext(sessionId, resolvedSelection)
       .then((response) => {
         if (!cancelled) {
           setContext(response);
@@ -45,7 +51,7 @@ function ToolbenchPanel({
     return () => {
       cancelled = true;
     };
-  }, [selection, sessionId]);
+  }, [resolvedSelection.id, resolvedSelection.kind, sessionId]);
 
   return (
     <section className="panel workstation-toolbench" aria-label="Toolbench">
@@ -54,7 +60,7 @@ function ToolbenchPanel({
         <h2>Toolbench</h2>
       </div>
       <p className="muted-text">
-        Session {sessionId} · {selection.kind}:{selection.id}
+        Session {sessionId} · {resolvedSelection.kind}:{resolvedSelection.id}
       </p>
 
       {isLoading ? <p className="muted-text">Loading tool recommendations...</p> : null}

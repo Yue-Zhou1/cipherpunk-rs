@@ -81,6 +81,12 @@ impl FrameworkDetector {
                         .or_default()
                         .push(format!("{} (.circom)", path.display()));
                 }
+                if path.extension().and_then(|e| e.to_str()) == Some("cairo") {
+                    framework_hits
+                        .entry(Framework::Cairo)
+                        .or_default()
+                        .push(format!("{} (.cairo)", path.display()));
+                }
 
                 if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                     continue;

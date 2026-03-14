@@ -33,7 +33,7 @@ function editorLanguage(filePath: string | null): string {
   }
 
   if (filePath.endsWith(".toml")) {
-    return "ini";
+    return "toml";
   }
 
   return "plaintext";

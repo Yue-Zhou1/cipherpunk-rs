@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -43,6 +43,12 @@ impl KnowledgeBase {
             domains,
             store: KnowledgeStore::default(),
         })
+    }
+
+    pub fn load_from_repo_root_with_store(store_path: impl AsRef<Path>) -> Result<Self> {
+        let mut kb = Self::load_from_repo_root()?;
+        kb.store = KnowledgeStore::load_from_path(store_path.as_ref())?;
+        Ok(kb)
     }
 
     pub fn route_tools(&self, context: &[String]) -> Vec<String> {
@@ -183,6 +189,10 @@ impl KnowledgeBase {
         }
 
         matched.into_iter().take(limit.max(1)).collect()
+    }
+
+    pub fn persist_feedback_store(&self, store_path: impl AsRef<Path>) -> Result<()> {
+        self.store.persist_to_path(store_path.as_ref())
     }
 }
 

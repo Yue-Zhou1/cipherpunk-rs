@@ -102,6 +102,7 @@ pub enum FindingCategory {
 pub enum Framework {
     Halo2,
     Circom,
+    Cairo,
     SP1,
     RISC0,
     MadSim,

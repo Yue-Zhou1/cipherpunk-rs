@@ -21,6 +21,7 @@ pub struct RemoteExecutionResult {
     pub duration_ms: u64,
     pub resource_usage: ResourceUsage,
     pub signed_manifest: SignedArtifactManifest,
+    pub simulated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -58,17 +59,25 @@ impl RemoteExecutor {
         request: ExecutionRequest,
     ) -> Result<RemoteExecutionResult, SandboxError> {
         let worker_request = to_worker_request(request);
-        let worker_result = if self.test_mode {
+        let simulation_warning =
+            "remote worker transport is not configured; using simulated execution result";
+
+        let mut worker_result = if self.test_mode {
             simulated_worker_result(&worker_request)
         } else {
             // v3 ships with deterministic simulation until transport + worker auth are enabled.
             warn!(
                 endpoint = %self.endpoint,
-                "remote worker transport is not configured; using simulated execution result"
+                "{simulation_warning}"
             );
-            simulated_worker_result(&worker_request)
+            let mut result = simulated_worker_result(&worker_request);
+            result.stderr = simulation_warning.to_string();
+            result
         };
-        Ok(from_worker_result(worker_result))
+        if self.test_mode && worker_result.stderr.is_empty() {
+            worker_result.stderr = "simulated remote worker result (test mode)".to_string();
+        }
+        Ok(from_worker_result(worker_result, true))
     }
 }
 
@@ -127,7 +136,7 @@ fn simulated_worker_result(request: &WorkerExecutionRequest) -> WorkerExecutionR
     }
 }
 
-fn from_worker_result(result: WorkerExecutionResult) -> RemoteExecutionResult {
+fn from_worker_result(result: WorkerExecutionResult, simulated: bool) -> RemoteExecutionResult {
     RemoteExecutionResult {
         exit_code: result.exit_code,
         stdout: redact_ai_prompt(&result.stdout),
@@ -140,6 +149,7 @@ fn from_worker_result(result: WorkerExecutionResult) -> RemoteExecutionResult {
             cpu_nanos: result.resource_usage.cpu_nanos,
         },
         signed_manifest: result.signed_manifest,
+        simulated,
     }
 }
 

@@ -26,3 +26,13 @@ async fn remote_worker_executes_job_and_returns_signed_artifact_manifest() {
     assert!(!result.artifacts.is_empty());
     assert!(!result.signed_manifest.signature.is_empty());
 }
+
+#[tokio::test]
+async fn remote_worker_surfaces_simulation_warning_when_transport_is_unconfigured() {
+    let runner = sandbox::remote::RemoteExecutor::new("http://127.0.0.1:8787");
+    let result = runner.execute(sample_remote_request()).await.unwrap();
+    assert!(
+        result.stderr.to_ascii_lowercase().contains("simulated"),
+        "expected explicit simulation warning in stderr"
+    );
+}

@@ -145,7 +145,14 @@ impl SandboxExecutor {
                 .execute(request.clone())
                 .await
             {
-                Ok(remote_result) => return Ok(remote_result.into()),
+                Ok(remote_result) => {
+                    if remote_result.simulated {
+                        eprintln!(
+                            "{{\"event\":\"sandbox.remote_simulation\",\"message\":\"remote worker transport unavailable; using simulated result\"}}"
+                        );
+                    }
+                    return Ok(remote_result.into());
+                }
                 Err(err) => {
                     eprintln!("{{\"event\":\"sandbox.remote_fallback\",\"error\":\"{err}\"}}");
                 }
@@ -158,7 +165,9 @@ impl SandboxExecutor {
 
         let image = self.image_registry.resolve(&request.image);
         self.ensure_image(&image).await?;
-        eprintln!("{{\"event\":\"sandbox.start\",\"backend\":\"local_docker\",\"image\":\"{image}\"}}");
+        eprintln!(
+            "{{\"event\":\"sandbox.start\",\"backend\":\"local_docker\",\"image\":\"{image}\"}}"
+        );
 
         let container_name = format!("audit-sandbox-{}", Uuid::new_v4().simple());
         let network_mode = match request.network {
