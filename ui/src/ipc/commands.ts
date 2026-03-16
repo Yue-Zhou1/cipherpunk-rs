@@ -414,7 +414,7 @@ const FALLBACK_FILE_GRAPH: ProjectGraphResponse = {
   redactedValues: true,
   nodes: [
     { id: "f1", label: "crates/core/src/session.rs", kind: "file", filePath: "crates/core/src/session.rs" },
-    { id: "f2", label: "crates/tauri-ui/src/ipc.rs", kind: "file", filePath: "crates/tauri-ui/src/ipc.rs" },
+    { id: "f2", label: "crates/apps/tauri-ui/src/ipc.rs", kind: "file", filePath: "crates/apps/tauri-ui/src/ipc.rs" },
     { id: "f3", label: "ui/src/features/workstation/WorkstationShell.tsx", kind: "file", filePath: "ui/src/features/workstation/WorkstationShell.tsx" },
   ],
   edges: [

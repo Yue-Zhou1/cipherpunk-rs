@@ -1,0 +1,23 @@
+[package]
+name = "tauri-ui"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = "1"
+audit-agent-core = { path = "../../core" }
+chrono = { version = "0.4", features = ["clock"] }
+intake = { path = "../../services/intake" }
+knowledge = { path = "../../services/knowledge" }
+orchestrator = { path = "../orchestrator" }
+project-ir = { path = "../../data/project-ir" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+session-store = { path = "../../data/session-store" }
+zip = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }

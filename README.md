@@ -14,21 +14,32 @@ and economic attack surfaces — backed by formal verification evidence (Z3, Kan
 
 ```
 crates/
-  core/              shared types: AuditConfig, Finding, AuditManifest, engine traits
-  intake/            source resolution (git/local/archive), config parsing, framework detection
-  engine-crypto/     crypto-misuse rules, Circom signal graph, Z3 checker, Kani scaffolder, Halo2 CDG
-  engine-distributed/ MadSim feasibility, chaos scripts, invariant monitor, economic attack checker
-  llm/               LlmProvider trait, OpenAI/Anthropic/Ollama adapters, evidence gate
-  orchestrator/      DAG execution, finding deduplication, output production
-  findings/          SARIF/JSON export, deduplication pipeline
-  evidence/          evidence store (zip pack)
-  report/            report generation (.md + .pdf), regression artifact layout
-  sandbox/           container-based execution (Docker/Kani/Z3)
-  tauri-ui/          IPC session layer for the desktop app
-  cli/               audit-agent binary (clap)
-ui/                  React + Vite frontend, Tauri v2 app shell
-rules/               YAML rule packs (crypto-misuse/, economic/)
-docs/                design docs, schemas, UI layout spec
+  core/                shared types: AuditConfig, Finding, AuditManifest, engine traits
+  engines/
+    crypto/            crypto-misuse rules, Circom signal graph, Z3 checker, Kani scaffolder, Halo2 CDG
+    distributed/       MadSim feasibility, chaos scripts, invariant monitor, economic attack checker
+    lean/              Lean formal verification engine (AXLE integration)
+  data/
+    evidence/          evidence store (zip pack)
+    findings/          SARIF/JSON export, deduplication pipeline
+    project-ir/        project intermediate representation (multi-framework graph)
+    session-store/     SQLite-backed session persistence
+  services/
+    intake/            source resolution (git/local/archive), config parsing, framework detection
+    knowledge/         domain checklists, tool playbooks, adjudicated cases
+    llm/               LlmProvider trait, OpenAI/Anthropic/Ollama adapters, evidence gate
+    report/            report generation (.md + .pdf), regression artifact layout
+    sandbox/           container-based execution (Docker/Kani/Z3)
+  workers/
+    protocol/          remote worker protocol definitions
+    runner/            remote worker execution runtime
+  apps/
+    cli/               audit-agent binary (clap)
+    orchestrator/      DAG execution, finding deduplication, output production
+    tauri-ui/          IPC session layer for the desktop app
+ui/                    React + Vite frontend, Tauri v2 app shell
+rules/                 YAML rule packs (crypto-misuse/, economic/)
+docs/                  design docs, schemas, UI layout spec
 ```
 
 ## Prerequisites
@@ -188,8 +199,8 @@ cd ui && npm run build
 
 ## Remote Worker Rollout
 
-`v3` includes a remote execution protocol (`crates/worker-protocol`) and a basic
-worker runner binary (`crates/worker-runner`). Local Docker remains the default
+`v3` includes a remote execution protocol (`crates/workers/protocol`) and a basic
+worker runner binary (`crates/workers/runner`). Local Docker remains the default
 backend; remote execution can be enabled per sandbox runtime as rollout hardening
 advances.
 

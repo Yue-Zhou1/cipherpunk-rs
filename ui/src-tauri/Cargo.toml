@@ -19,7 +19,7 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 tokio = { version = "1", features = ["sync"] }
-tauri-ui = { path = "../../crates/tauri-ui", package = "tauri-ui" }
+tauri-ui = { path = "../../crates/apps/tauri-ui", package = "tauri-ui" }
 audit-agent-core = { path = "../../crates/core" }
 
 [workspace]

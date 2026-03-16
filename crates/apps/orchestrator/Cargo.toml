@@ -1,0 +1,26 @@
+[package]
+name = "orchestrator"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+audit-agent-core = { path = "../../core" }
+chrono = "0.4"
+engine-crypto = { path = "../../engines/crypto" }
+engine-distributed = { path = "../../engines/distributed" }
+engine-lean = { path = "../../engines/lean" }
+findings = { path = "../../data/findings" }
+intake = { path = "../../services/intake" }
+llm = { path = "../../services/llm" }
+report = { path = "../../services/report" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+session-store = { path = "../../data/session-store" }
+
+[dev-dependencies]
+sandbox = { path = "../../services/sandbox" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
