@@ -178,6 +178,12 @@ impl AuditOrchestrator {
     }
 
     pub async fn run_tool_action(&self, request: ToolActionRequest) -> Result<ToolActionResult> {
+        if request.tool_family == ToolFamily::LeanExternal {
+            let base_url = std::env::var("AXLE_API_URL")
+                .unwrap_or_else(|_| engine_lean::types::AXLE_BASE_URL.to_string());
+            return engine_lean::execute_lean_action(&request, &base_url).await;
+        }
+
         let plan = tool_actions::plan_tool_action(&request);
         let workspace_root = request
             .workspace_root
