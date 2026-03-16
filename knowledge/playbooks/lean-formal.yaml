@@ -1,0 +1,13 @@
+id: lean-formal
+applies_to:
+  - rust
+  - circom
+domains:
+  - crypto
+  - zk
+preferred_tools:
+  - lean-external
+initial_queries:
+  - key invariants expressible as Lean theorems
+  - protocol safety properties amenable to counterexample search
+  - overflow or underflow conditions in arithmetic-heavy functions

@@ -10,6 +10,7 @@ pub enum LlmRole {
     Scaffolding,
     SearchHints,
     ProseRendering,
+    LeanScaffold,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -11,6 +11,7 @@ audit-agent-core = { path = "../core" }
 chrono = "0.4"
 engine-crypto = { path = "../engine-crypto" }
 engine-distributed = { path = "../engine-distributed" }
+engine-lean = { path = "../engine-lean" }
 findings = { path = "../findings" }
 intake = { path = "../intake" }
 llm = { path = "../llm" }
