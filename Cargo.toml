@@ -1,5 +1,24 @@
 [workspace]
-members = ["crates/cli", "crates/core", "crates/engine-crypto", "crates/engine-distributed", "crates/engine-lean", "crates/evidence", "crates/findings", "crates/intake", "crates/knowledge", "crates/llm", "crates/orchestrator", "crates/project-ir", "crates/report", "crates/sandbox", "crates/session-store", "crates/tauri-ui", "crates/worker-protocol", "crates/worker-runner"]
+members = [
+    "crates/core",
+    "crates/engines/crypto",
+    "crates/engines/distributed",
+    "crates/engines/lean",
+    "crates/data/evidence",
+    "crates/data/findings",
+    "crates/data/project-ir",
+    "crates/data/session-store",
+    "crates/services/intake",
+    "crates/services/knowledge",
+    "crates/services/llm",
+    "crates/services/report",
+    "crates/services/sandbox",
+    "crates/workers/protocol",
+    "crates/workers/runner",
+    "crates/apps/cli",
+    "crates/apps/orchestrator",
+    "crates/apps/tauri-ui",
+]
 resolver = "2"
 
 [workspace.package]
