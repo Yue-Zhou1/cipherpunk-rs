@@ -710,6 +710,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-lean"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "audit-agent-core",
+ "chrono",
+ "llm",
+ "mockito",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
