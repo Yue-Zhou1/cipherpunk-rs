@@ -2125,6 +2125,7 @@ dependencies = [
  "chrono",
  "engine-crypto",
  "engine-distributed",
+ "engine-lean",
  "findings",
  "intake",
  "llm",
