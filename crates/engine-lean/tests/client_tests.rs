@@ -10,6 +10,41 @@ fn env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous_value: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous_value = std::env::var(key).ok();
+        unsafe { std::env::set_var(key, value) };
+        Self {
+            key,
+            previous_value,
+        }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous_value = std::env::var(key).ok();
+        unsafe { std::env::remove_var(key) };
+        Self {
+            key,
+            previous_value,
+        }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.previous_value {
+            unsafe { std::env::set_var(self.key, previous) };
+        } else {
+            unsafe { std::env::remove_var(self.key) };
+        }
+    }
+}
+
 fn check_response_ok() -> &'static str {
     r#"{"okay":true,"content":"theorem foo : 1 = 1 := rfl","lean_messages":{"errors":[],"warnings":[],"infos":[]},"tool_messages":{"errors":[],"warnings":[],"infos":[]},"failed_declarations":[]}"#
 }
@@ -155,18 +190,16 @@ async fn sorry2lemma_returns_extracted_lemma_names() {
 
 #[tokio::test]
 async fn from_env_uses_key_when_set() {
-    let _guard = env_lock().lock().expect("env lock");
-    unsafe { std::env::set_var("AXLE_API_KEY", "env-key") };
+    let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _api_key = EnvVarGuard::set("AXLE_API_KEY", "env-key");
     let client = AxleClient::from_env("http://localhost".to_string());
     assert!(client.has_api_key());
-
-    unsafe { std::env::remove_var("AXLE_API_KEY") };
 }
 
 #[tokio::test]
 async fn from_env_proceeds_without_key() {
-    let _guard = env_lock().lock().expect("env lock");
-    unsafe { std::env::remove_var("AXLE_API_KEY") };
+    let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _api_key = EnvVarGuard::remove("AXLE_API_KEY");
     let client = AxleClient::from_env("http://localhost".to_string());
     assert!(!client.has_api_key());
 }

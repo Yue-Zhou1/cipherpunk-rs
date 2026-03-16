@@ -15,8 +15,7 @@ use audit_agent_core::tooling::{
 use engine_lean::client::AxleClient;
 use engine_lean::tool_actions::axle::execute_lean_action;
 use engine_lean::types::{
-    AXLE_BASE_URL, AxleCheckRequest, AxleDisproveRequest, AxleSorry2LemmaRequest,
-    DEFAULT_LEAN_ENV,
+    AXLE_BASE_URL, AxleCheckRequest, AxleDisproveRequest, AxleSorry2LemmaRequest, DEFAULT_LEAN_ENV,
 };
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -169,6 +168,7 @@ async fn live_disprove_does_not_disprove_true_theorem() {
 #[tokio::test]
 #[ignore = "requires live network access to axle.axiommath.ai"]
 async fn live_full_pipeline_on_sorry_theorem_completes() {
+    let artifact_root = tempfile::tempdir().unwrap();
     let mut tmp = NamedTempFile::new().unwrap();
     tmp.write_all(LEAN_WITH_SORRY.as_bytes()).unwrap();
     let path = tmp.path().to_str().unwrap().to_string();
@@ -184,7 +184,7 @@ async fn live_full_pipeline_on_sorry_theorem_completes() {
         },
     };
 
-    let result = execute_lean_action(&request, AXLE_BASE_URL)
+    let result = execute_lean_action(&request, AXLE_BASE_URL, artifact_root.path())
         .await
         .expect("full pipeline must complete without error");
 
@@ -205,6 +205,7 @@ async fn live_full_pipeline_on_sorry_theorem_completes() {
 #[tokio::test]
 #[ignore = "requires live network access to axle.axiommath.ai"]
 async fn live_full_pipeline_on_false_claim_completes_and_reports_disproved() {
+    let artifact_root = tempfile::tempdir().unwrap();
     let mut tmp = NamedTempFile::new().unwrap();
     tmp.write_all(FALSE_CLAIM.as_bytes()).unwrap();
     let path = tmp.path().to_str().unwrap().to_string();
@@ -220,7 +221,7 @@ async fn live_full_pipeline_on_false_claim_completes_and_reports_disproved() {
         },
     };
 
-    let result = execute_lean_action(&request, AXLE_BASE_URL)
+    let result = execute_lean_action(&request, AXLE_BASE_URL, artifact_root.path())
         .await
         .expect("full pipeline must complete without error");
 

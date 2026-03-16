@@ -178,10 +178,16 @@ impl AuditOrchestrator {
     }
 
     pub async fn run_tool_action(&self, request: ToolActionRequest) -> Result<ToolActionResult> {
+        let artifact_root = self
+            .output_dir
+            .join("tool-runs")
+            .join(request.session_id.clone());
+
         if request.tool_family == ToolFamily::LeanExternal {
             let base_url = std::env::var("AXLE_API_URL")
                 .unwrap_or_else(|_| engine_lean::types::AXLE_BASE_URL.to_string());
-            return engine_lean::execute_lean_action(&request, &base_url).await;
+            let _ = std::fs::create_dir_all(&artifact_root);
+            return engine_lean::execute_lean_action(&request, &base_url, &artifact_root).await;
         }
 
         let plan = tool_actions::plan_tool_action(&request);
@@ -190,10 +196,6 @@ impl AuditOrchestrator {
             .clone()
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
-        let artifact_root = self
-            .output_dir
-            .join("tool-runs")
-            .join(request.session_id.clone());
         let _ = std::fs::create_dir_all(&artifact_root);
         let sandbox_request =
             tool_actions::sandbox_request(&plan, &request.budget, &workspace_root, &artifact_root);

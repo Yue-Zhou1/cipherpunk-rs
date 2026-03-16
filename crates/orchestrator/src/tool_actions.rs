@@ -35,10 +35,9 @@ pub fn plan_tool_action(request: &ToolActionRequest) -> ToolExecutionPlan {
             &request.target,
             "External Cairo adapter slot (explicitly configured by analyst policy)",
         ),
-        ToolFamily::LeanExternal => engine_lean::tool_actions::axle::sentinel_plan(
-            &request.session_id,
-            &request.target,
-        ),
+        ToolFamily::LeanExternal => {
+            engine_lean::tool_actions::axle::sentinel_plan(&request.session_id, &request.target)
+        }
     }
 }
 

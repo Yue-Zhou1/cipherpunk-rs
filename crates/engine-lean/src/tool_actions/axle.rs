@@ -5,27 +5,28 @@ use audit_agent_core::tooling::{
     ToolTarget,
 };
 use chrono::Utc;
+use std::path::Path;
 
 use crate::client::AxleClient;
 use crate::types::{
-    AxleCheckRequest, AxleDisproveRequest, AxleSorry2LemmaRequest, LeanWorkflowOutput,
-    DEFAULT_LEAN_ENV,
+    AxleCheckRequest, AxleDisproveRequest, AxleSorry2LemmaRequest, DEFAULT_LEAN_ENV,
+    LeanWorkflowOutput,
 };
 
 pub async fn execute_lean_action(
     request: &ToolActionRequest,
     axle_base_url: &str,
+    artifact_root: &Path,
 ) -> Result<ToolActionResult> {
     let lean_path = request.target.display_value();
     let target_slug = request.target.slug();
     let lean_content = std::fs::read_to_string(lean_path)
         .with_context(|| format!("failed to read Lean file: {lean_path}"))?;
 
-    let api_key = std::env::var("AXLE_API_KEY")
-        .ok()
-        .filter(|key| !key.trim().is_empty());
-    let authenticated = api_key.is_some();
-    let client = AxleClient::new(axle_base_url.to_string(), api_key);
+    // AXLE calls are direct HTTP requests and bypass the sandbox, so
+    // `budget.allow_network` does not apply in this execution path.
+    let client = AxleClient::from_env(axle_base_url.to_string());
+    let authenticated = client.has_api_key();
 
     let timeout_per_step = (request.budget.timeout_secs as f64) / 3.0;
 
@@ -50,13 +51,14 @@ pub async fn execute_lean_action(
             "check: FAILED\nauthenticated: {authenticated}\nerrors: {}",
             check.lean_messages.errors.join("; ")
         );
-        return Ok(build_result(
+        return build_result(
             request,
             ToolActionStatus::Failed,
             &target_slug,
+            artifact_root,
             &output,
             summary,
-        ));
+        );
     }
 
     let sorry = client
@@ -102,28 +104,42 @@ pub async fn execute_lean_action(
             output.disproved_theorems.join(", ")
         }
     );
-    Ok(build_result(
+    build_result(
         request,
         ToolActionStatus::Completed,
         &target_slug,
+        artifact_root,
         &output,
         summary,
-    ))
+    )
 }
 
 fn build_result(
     request: &ToolActionRequest,
     status: ToolActionStatus,
     target_slug: &str,
-    _output: &LeanWorkflowOutput,
+    artifact_root: &Path,
+    output: &LeanWorkflowOutput,
     summary: String,
-) -> ToolActionResult {
+) -> Result<ToolActionResult> {
     let artifact_ref = format!(
         "{}/tool-runs/axle/{target_slug}/result.json",
         request.session_id
     );
+    let result_path = artifact_root
+        .join("axle")
+        .join(target_slug)
+        .join("result.json");
+    if let Some(parent) = result_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create artifact dir {}", parent.display()))?;
+    }
+    let payload = serde_json::to_vec_pretty(output).context("failed to serialize AXLE output")?;
+    std::fs::write(&result_path, payload)
+        .with_context(|| format!("failed to write AXLE result {}", result_path.display()))?;
+
     let preview = summary[..summary.len().min(1024)].to_string();
-    ToolActionResult {
+    Ok(ToolActionResult {
         action_id: format!("axle-{}", Utc::now().timestamp_micros()),
         session_id: request.session_id.clone(),
         tool_family: ToolFamily::LeanExternal,
@@ -139,7 +155,7 @@ fn build_result(
         status,
         stdout_preview: Some(preview),
         stderr_preview: None,
-    }
+    })
 }
 
 pub fn sentinel_plan(session_id: &str, target: &ToolTarget) -> ToolExecutionPlan {

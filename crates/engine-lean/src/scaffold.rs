@@ -16,8 +16,12 @@ pub async fn generate_lean_stub(
     llm: &dyn LlmProvider,
 ) -> Result<String> {
     let safe_name = sanitize_prompt_input(target_name);
-    let safe_snippet =
-        sanitize_prompt_input(&rust_snippet.chars().take(MAX_SNIPPET_CHARS).collect::<String>());
+    let safe_snippet = sanitize_prompt_input(
+        &rust_snippet
+            .chars()
+            .take(MAX_SNIPPET_CHARS)
+            .collect::<String>(),
+    );
     let prompt = format!(
         "{LEAN_STUB_PROMPT}\n\nFunction name: {safe_name}\nRust source:\n{safe_snippet}\n\nLean 4 formalization:"
     );

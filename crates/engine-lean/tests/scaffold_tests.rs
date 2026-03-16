@@ -22,7 +22,8 @@ impl LlmProvider for FixedProvider {
 
 #[tokio::test]
 async fn generate_stub_returns_llm_output() {
-    let provider = FixedProvider("import Mathlib\ntheorem foo_invariant : True := sorry".to_string());
+    let provider =
+        FixedProvider("import Mathlib\ntheorem foo_invariant : True := sorry".to_string());
     let stub = generate_lean_stub("foo", "fn foo(x: u64) -> u64 { x }", &provider)
         .await
         .unwrap();
