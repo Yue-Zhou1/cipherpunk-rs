@@ -375,7 +375,10 @@ impl ProjectIr {
             .filter(|node| includes(&node.id))
             .cloned()
             .collect();
-        fragment.dataflow_graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        fragment
+            .dataflow_graph
+            .nodes
+            .sort_by(|a, b| a.id.cmp(&b.id));
         fragment.dataflow_graph.edges = self
             .dataflow_graph
             .edges
@@ -410,9 +413,9 @@ impl ProjectIr {
                 })
             })
             .collect();
-        fragment.framework_views.sort_by(|a, b| {
-            (&a.framework, &a.node_ids).cmp(&(&b.framework, &b.node_ids))
-        });
+        fragment
+            .framework_views
+            .sort_by(|a, b| (&a.framework, &a.node_ids).cmp(&(&b.framework, &b.node_ids)));
 
         fragment
     }
@@ -563,7 +566,12 @@ fn read_file_prefix(path: &Path, max_bytes: usize, max_chars: usize) -> Option<S
     let handle = File::open(path).ok()?;
     let mut bytes = Vec::<u8>::new();
     handle.take(max_bytes as u64).read_to_end(&mut bytes).ok()?;
-    Some(String::from_utf8_lossy(&bytes).chars().take(max_chars).collect())
+    Some(
+        String::from_utf8_lossy(&bytes)
+            .chars()
+            .take(max_chars)
+            .collect(),
+    )
 }
 
 fn contains_crypto_indicator(value: &str) -> bool {

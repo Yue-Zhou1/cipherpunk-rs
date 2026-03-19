@@ -268,7 +268,10 @@ fn context_snippets_respect_budget_and_return_source_backed_entries() {
         "dataflow:alpha".to_string(),
     ];
     let snippets = graph.context_snippets_for_nodes(&node_ids, 120);
-    assert!(!snippets.is_empty(), "should emit snippets for matched node file paths");
+    assert!(
+        !snippets.is_empty(),
+        "should emit snippets for matched node file paths"
+    );
 
     let total_chars = snippets
         .iter()

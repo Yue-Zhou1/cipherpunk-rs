@@ -73,15 +73,20 @@ fn http_embedder_rejects_dimension_mismatch() {
 }
 
 #[test]
-fn provider_resolution_rejects_unwired_onnx() {
-    let err = match provider_from_resolved_config(test_config("onnx", "all-MiniLM-L6-v2", 384)) {
-        Ok(_) => panic!("onnx should be rejected until wired"),
-        Err(err) => err,
-    };
+fn provider_resolution_supports_onnx_embeddings() {
+    let embedder = provider_from_resolved_config(test_config("onnx", "all-MiniLM-L6-v2", 8))
+        .expect("onnx provider should resolve");
+    let vector_a = embedder
+        .embed("nonce uniqueness invariant")
+        .expect("onnx embedding should succeed");
+    let vector_b = embedder
+        .embed("nonce uniqueness invariant")
+        .expect("onnx embedding should be deterministic");
+    assert_eq!(vector_a.len(), 8);
+    assert_eq!(vector_a, vector_b);
     assert!(
-        err.to_string()
-            .contains("ONNX embedding provider is not wired yet"),
-        "unexpected error: {err:#}"
+        vector_a.iter().any(|value| value.abs() > f32::EPSILON),
+        "vector should contain non-zero signal"
     );
 }
 

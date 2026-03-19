@@ -182,6 +182,9 @@ fn validate_vector_dimensions(header: &BlockHeader, metadata: &ArtifactMetadata)
             metadata.signatures.len()
         );
     }
+    if header.signature_count == 0 {
+        bail!("memory block corpus is empty");
+    }
     if header.dimensions == 0 {
         bail!("embedding dimensions must be greater than zero");
     }

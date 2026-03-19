@@ -243,6 +243,77 @@ fn memory_block_load_rejects_overlapping_vector_and_metadata_sections() {
     );
 }
 
+#[test]
+fn memory_block_load_rejects_empty_corpus() {
+    let temp = tempdir().expect("tempdir");
+    let artifact_path = temp.path().join("knowledge.bin");
+    let config = test_embedding_config("test-mini-lm");
+    write_test_memory_block(&artifact_path, &config, vec![], vec![]).expect("write artifact");
+
+    let mut lookup = BTreeMap::new();
+    lookup.insert("nonce query".to_string(), l2_normalize(vec![1.0, 0.0, 0.0]));
+    let embedder = FixedEmbedder::new(config.clone(), lookup);
+    let err = MemoryBlock::load(&artifact_path, &config, Box::new(embedder))
+        .expect_err("empty corpus should fail");
+    assert!(
+        err.to_string().contains("corpus is empty"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn memory_block_load_rejects_truncated_file() {
+    let temp = tempdir().expect("tempdir");
+    let artifact_path = temp.path().join("knowledge.bin");
+    let config = test_embedding_config("test-mini-lm");
+    write_test_memory_block(
+        &artifact_path,
+        &config,
+        vec![l2_normalize(vec![1.0, 0.0, 0.0])],
+        vec![signature(
+            "SIG-1",
+            "Nonce reuse in AEAD",
+            "Counter resets cause nonce collisions",
+            &["aead", "nonce"],
+        )],
+    )
+    .expect("write artifact");
+
+    let len = fs::metadata(&artifact_path)
+        .expect("artifact metadata")
+        .len();
+    truncate_file(&artifact_path, len.saturating_sub(7)).expect("truncate artifact");
+
+    let mut lookup = BTreeMap::new();
+    lookup.insert("nonce query".to_string(), l2_normalize(vec![1.0, 0.0, 0.0]));
+    let embedder = FixedEmbedder::new(config.clone(), lookup);
+    let err = MemoryBlock::load(&artifact_path, &config, Box::new(embedder))
+        .expect_err("truncated file should fail");
+    let message = err.to_string();
+    assert!(
+        message.contains("out of bounds")
+            || message.contains("overflows")
+            || message.contains("decode metadata blob"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn memory_block_load_rejects_header_truncated_file() {
+    let temp = tempdir().expect("tempdir");
+    let artifact_path = temp.path().join("knowledge.bin");
+    let config = test_embedding_config("test-mini-lm");
+    fs::write(&artifact_path, vec![0u8; HEADER_LEN - 5]).expect("write short file");
+
+    let embedder = FixedEmbedder::new(config.clone(), BTreeMap::new());
+    let err = MemoryBlock::load(&artifact_path, &config, Box::new(embedder))
+        .expect_err("truncated header should fail");
+    assert!(
+        err.to_string().contains("file too small"),
+        "unexpected error: {err:#}"
+    );
+}
+
 #[derive(Debug, Clone)]
 struct FixedEmbedder {
     config: ResolvedEmbeddingConfig,
@@ -395,5 +466,11 @@ fn overwrite_bytes(path: &Path, offset: usize, bytes: &[u8]) -> Result<()> {
     let end = offset + bytes.len();
     raw[offset..end].copy_from_slice(bytes);
     fs::write(path, raw)?;
+    Ok(())
+}
+
+fn truncate_file(path: &Path, new_len: u64) -> Result<()> {
+    let file = File::options().write(true).open(path)?;
+    file.set_len(new_len)?;
     Ok(())
 }

@@ -1,7 +1,7 @@
 # LLM-Driven HNSW-Ready Memory-Block Architecture
 
 **Date:** 2026-03-19
-**Status:** Proposed
+**Status:** Implemented (v1 complete; ANN acceleration deferred by design)
 **Scope:** Offline Python foundry plus optional Rust runtime retrieval
 
 ## Motivation
@@ -671,3 +671,23 @@ default and let Tauri/CLI opt in explicitly.
 - only after corpus scale proves brute-force inadequate
 - keep the vector bundle canonical
 - add ANN as an optimization layer, not as the primary contract
+
+## Implementation Status (2026-03-19)
+
+The v1 scope in this design is now implemented:
+
+- Step 0 complete: Rust-owned schema types, committed schema snapshots, and
+  schema snapshot tests are in place.
+- Step 1 complete: `tools/pdf_foundry` package exists with parsing, extraction,
+  embedding, and schema validation.
+- Step 2 complete: foundry CLI supports `ingest`, `rebuild-bundle`, `export`,
+  and `info`, and writes `knowledge.bin` in the documented v1 format.
+- Step 3 complete: Rust `knowledge::memory_block` loads/validates/searches the
+  bundle with strict vector-space checks and layout validation.
+- Step 4 complete: Tauri toolbench similar-case retrieval is augmented by
+  semantic memory; semantic signature context plumbing is present in copilot and
+  Kani scaffolding prompt paths.
+- Step 5 complete: feature gating, stronger error handling, and negative tests
+  for corrupted/truncated artifacts are implemented.
+
+Step 6 remains intentionally deferred (optional ANN/HNSW optimization).

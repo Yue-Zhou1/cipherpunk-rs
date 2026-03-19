@@ -1,3 +1,9 @@
 /target/
 **/.audit-work/
 **/audit-output/
+tools/pdf_foundry/data/markdown/
+tools/pdf_foundry/data/manifest.json
+tools/pdf_foundry/data/signatures.jsonl
+tools/pdf_foundry/output/knowledge.bin
+.venv-pdf-foundry/
+*.egg-info/

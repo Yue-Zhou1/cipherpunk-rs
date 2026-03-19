@@ -40,15 +40,13 @@ template PoseidonHash() {
     );
     assert!(
         ir.symbol_graph.nodes.iter().any(|node| {
-            node.kind == "circom_signal_input"
-                && node.name == "PoseidonHash::left"
+            node.kind == "circom_signal_input" && node.name == "PoseidonHash::left"
         }),
         "signal input declarations should be represented as symbol nodes"
     );
     assert!(
         ir.symbol_graph.nodes.iter().any(|node| {
-            node.kind == "circom_signal_output"
-                && node.name == "PoseidonHash::out"
+            node.kind == "circom_signal_output" && node.name == "PoseidonHash::out"
         }),
         "signal output declarations should be represented as symbol nodes"
     );
