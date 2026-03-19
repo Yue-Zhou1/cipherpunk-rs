@@ -6,9 +6,9 @@ description: |
   Crypto result is unwrapped directly in a hot path.
 detection:
   patterns:
-    - type: function_call
+    - type: method_call
       name_matches:
-        - "unwrap_crypto_result"
+        - "unwrap_or_default"
   semantic_checks:
     - unchecked_unwrap
 references:

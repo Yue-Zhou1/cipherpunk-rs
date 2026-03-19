@@ -54,11 +54,41 @@ pub struct FnRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSymbolRef {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionCallRef {
+    pub caller: String,
+    pub callee: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroSite {
+    pub crate_name: String,
+    pub macro_name: String,
+    pub file: PathBuf,
+    pub line: u32,
+    pub column: u32,
+    pub caller: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CfgDivergence {
     pub crate_name: String,
     pub feature: String,
     pub file: PathBuf,
     pub line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustSemanticFacts {
+    pub function_symbols: Vec<FunctionSymbolRef>,
+    pub function_calls: Vec<FunctionCallRef>,
+    pub macro_sites: Vec<MacroSite>,
+    pub trait_impls: Vec<FnRef>,
+    pub cfg_divergences: Vec<CfgDivergence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +129,7 @@ pub struct SemanticIndex {
     pub macro_expansions: MacroExpansionMap,
     pub trait_impls: TraitImplMap,
     pub cfg_variants: CfgVariantMap,
+    pub rust_facts: RustSemanticFacts,
     pub backend: SemanticBackend,
 }
 
@@ -155,6 +186,10 @@ impl SemanticIndex {
             .collect()
     }
 
+    pub fn rust_facts(&self) -> &RustSemanticFacts {
+        &self.rust_facts
+    }
+
     pub fn record_backend_tool_version(&self, tool_versions: &mut HashMap<String, String>) {
         self.backend.record_in_tool_versions(tool_versions);
     }
@@ -189,6 +224,7 @@ fn build_with_backend(
 ) -> Result<SemanticIndex> {
     let mut call_graph = CallGraph::new();
     let mut macro_expansions = MacroExpansionMap::new();
+    let mut macro_sites = Vec::<MacroSite>::new();
     let mut trait_impls = TraitImplMap::new();
     let mut cfg_variants = CfgVariantMap::new();
 
@@ -202,19 +238,143 @@ fn build_with_backend(
                 &content,
                 &mut call_graph,
                 &mut macro_expansions,
+                &mut macro_sites,
                 &mut trait_impls,
                 &mut cfg_variants,
             );
         }
     }
 
+    let rust_facts = build_rust_facts(&call_graph, macro_sites, &trait_impls, &cfg_variants);
+
     Ok(SemanticIndex {
         call_graph,
         macro_expansions,
         trait_impls,
         cfg_variants,
+        rust_facts,
         backend,
     })
+}
+
+fn build_rust_facts(
+    call_graph: &CallGraph,
+    mut macro_sites: Vec<MacroSite>,
+    trait_impls: &TraitImplMap,
+    cfg_variants: &CfgVariantMap,
+) -> RustSemanticFacts {
+    let mut function_symbols = call_graph
+        .keys()
+        .filter(|name| name.as_str() != "__macro_root__")
+        .cloned()
+        .map(|name| FunctionSymbolRef { name })
+        .collect::<Vec<_>>();
+    function_symbols.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut function_calls = Vec::<FunctionCallRef>::new();
+    for (caller, callees) in call_graph {
+        if caller == "__macro_root__" {
+            continue;
+        }
+        for callee in callees {
+            function_calls.push(FunctionCallRef {
+                caller: caller.clone(),
+                callee: callee.clone(),
+            });
+        }
+    }
+    function_calls.sort_by(|a, b| {
+        (a.caller.as_str(), a.callee.as_str()).cmp(&(b.caller.as_str(), b.callee.as_str()))
+    });
+    function_calls.dedup_by(|a, b| a.caller == b.caller && a.callee == b.callee);
+
+    macro_sites.sort_by(|a, b| {
+        (
+            a.file.as_path(),
+            a.line,
+            a.column,
+            a.macro_name.as_str(),
+            a.crate_name.as_str(),
+        )
+            .cmp(&(
+                b.file.as_path(),
+                b.line,
+                b.column,
+                b.macro_name.as_str(),
+                b.crate_name.as_str(),
+            ))
+    });
+    macro_sites.dedup_by(|a, b| {
+        a.file == b.file
+            && a.line == b.line
+            && a.column == b.column
+            && a.macro_name == b.macro_name
+            && a.crate_name == b.crate_name
+    });
+
+    let mut trait_impl_refs = trait_impls
+        .values()
+        .flat_map(|refs| refs.iter().cloned())
+        .collect::<Vec<_>>();
+    trait_impl_refs.sort_by(|a, b| {
+        (
+            a.trait_name.as_str(),
+            a.method_name.as_str(),
+            a.impl_type.as_str(),
+            a.file.as_path(),
+            a.line,
+            a.crate_name.as_str(),
+        )
+            .cmp(&(
+                b.trait_name.as_str(),
+                b.method_name.as_str(),
+                b.impl_type.as_str(),
+                b.file.as_path(),
+                b.line,
+                b.crate_name.as_str(),
+            ))
+    });
+    trait_impl_refs.dedup_by(|a, b| {
+        a.trait_name == b.trait_name
+            && a.method_name == b.method_name
+            && a.impl_type == b.impl_type
+            && a.file == b.file
+            && a.line == b.line
+            && a.crate_name == b.crate_name
+    });
+
+    let mut cfg_divergences = cfg_variants
+        .values()
+        .flat_map(|points| points.iter().cloned())
+        .collect::<Vec<_>>();
+    cfg_divergences.sort_by(|a, b| {
+        (
+            a.feature.as_str(),
+            a.file.as_path(),
+            a.line,
+            a.crate_name.as_str(),
+        )
+            .cmp(&(
+                b.feature.as_str(),
+                b.file.as_path(),
+                b.line,
+                b.crate_name.as_str(),
+            ))
+    });
+    cfg_divergences.dedup_by(|a, b| {
+        a.feature == b.feature
+            && a.file == b.file
+            && a.line == b.line
+            && a.crate_name == b.crate_name
+    });
+
+    RustSemanticFacts {
+        function_symbols,
+        function_calls,
+        macro_sites,
+        trait_impls: trait_impl_refs,
+        cfg_divergences,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -238,9 +398,14 @@ fn scan_file(
     content: &str,
     call_graph: &mut CallGraph,
     macro_expansions: &mut MacroExpansionMap,
+    macro_sites: &mut Vec<MacroSite>,
     trait_impls: &mut TraitImplMap,
     cfg_variants: &mut CfgVariantMap,
 ) {
+    // Keep this scanner in sync with
+    // `crates/data/project-ir/src/semantic.rs::scan_line_level_rust_facts`.
+    // Known limitation: impl/fn context tracking is best-effort and assumes
+    // top-level declarations rather than full nested-block semantics.
     let mut impl_ctx: Option<ImplContext> = None;
     let mut fn_ctx: Option<FnContext> = None;
     let mut brace_state = BraceScanState::default();
@@ -279,6 +444,14 @@ fn scan_file(
                 column: matched.start() as u32 + 1,
             };
             macro_expansions.insert(span, format!("expanded::{macro_name}"));
+            macro_sites.push(MacroSite {
+                crate_name: crate_name.to_string(),
+                macro_name: last_path_segment(&macro_name).to_string(),
+                file: file_path.to_path_buf(),
+                line: line_no,
+                column: matched.start() as u32 + 1,
+                caller: fn_ctx.as_ref().map(|ctx| ctx.name.clone()),
+            });
             call_graph
                 .entry("__macro_root__".to_string())
                 .or_default()
@@ -391,6 +564,7 @@ fn last_path_segment(symbol: &str) -> &str {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct BraceScanState {
+    // Keep in sync with `crates/data/project-ir/src/semantic.rs::BraceScanState`.
     block_comment_depth: usize,
     in_string: bool,
     string_escaped: bool,

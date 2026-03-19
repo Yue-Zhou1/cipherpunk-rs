@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use audit_agent_core::workspace::{CargoWorkspace, CrateKind, CrateMeta, DependencyGraph};
+use intake::workspace::WorkspaceAnalyzer;
 
 mod cairo;
 mod circom;
@@ -94,6 +95,7 @@ impl ProjectIrBuilder {
             }
         }
 
+        merge_workspace_feature_flags(&workspace, &mut ir);
         redaction::redact_dataflow(&mut ir.dataflow_graph.edges, self.allow_value_previews);
         Ok(ir)
     }
@@ -282,6 +284,22 @@ fn contains_crypto_indicator(value: &str) -> bool {
 }
 
 fn workspace_from_path(root: &Path) -> Result<CargoWorkspace> {
+    let absolute_root = resolve_workspace_root(root)?;
+    let manifest_path = absolute_root.join("Cargo.toml");
+
+    if manifest_path.exists() {
+        return WorkspaceAnalyzer::analyze(&absolute_root).with_context(|| {
+            format!(
+                "analyze Cargo workspace metadata from {}",
+                manifest_path.display()
+            )
+        });
+    }
+
+    Ok(synthetic_workspace_from_root(absolute_root))
+}
+
+fn resolve_workspace_root(root: &Path) -> Result<PathBuf> {
     let absolute_root = if root.is_absolute() {
         root.to_path_buf()
     } else {
@@ -301,12 +319,16 @@ fn workspace_from_path(root: &Path) -> Result<CargoWorkspace> {
         }
     };
 
+    Ok(absolute_root)
+}
+
+fn synthetic_workspace_from_root(absolute_root: PathBuf) -> CargoWorkspace {
     let crate_name = absolute_root
         .file_name()
         .map(|value| value.to_string_lossy().to_string())
         .unwrap_or_else(|| "workspace".to_string());
 
-    Ok(CargoWorkspace {
+    CargoWorkspace {
         root: absolute_root.clone(),
         members: vec![CrateMeta {
             name: crate_name,
@@ -318,5 +340,32 @@ fn workspace_from_path(root: &Path) -> Result<CargoWorkspace> {
             edges: HashMap::new(),
         },
         feature_flags: HashMap::new(),
-    })
+    }
+}
+
+fn merge_workspace_feature_flags(workspace: &CargoWorkspace, ir: &mut ProjectIr) {
+    let mut seen_feature_names = ir
+        .feature_graph
+        .nodes
+        .iter()
+        .map(|node| node.name.clone())
+        .collect::<HashSet<_>>();
+
+    for member in &workspace.members {
+        let source = member.path.join("Cargo.toml").display().to_string();
+        let Some(flags) = workspace.feature_flags.get(&member.name) else {
+            continue;
+        };
+        for flag in flags {
+            if !seen_feature_names.insert(flag.name.clone()) {
+                continue;
+            }
+
+            ir.feature_graph.nodes.push(FeatureNode {
+                id: format!("feature:{}::{}", member.name, flag.name),
+                name: flag.name.clone(),
+                source: source.clone(),
+            });
+        }
+    }
 }

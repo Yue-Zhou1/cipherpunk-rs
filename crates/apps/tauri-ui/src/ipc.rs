@@ -9,10 +9,13 @@ use audit_agent_core::finding::{Severity, VerificationStatus};
 use audit_agent_core::output::AuditManifest;
 use audit_agent_core::session::{AuditRecord, AuditRecordKind, AuditSession, SessionUiState};
 use chrono::Utc;
+use engine_crypto::intake_bridge::{CryptoEngineContext, EnvironmentManifest};
+use engine_crypto::rules::RuleEvaluator;
 use intake::config::{ConfigParser, RawEngineConfig, RawScope, RawSource, ValidatedConfig};
 use intake::confirmation::{ConfirmationSummary, UserDecisions};
 use intake::project_snapshot_from_config;
 use intake::source::SourceInput;
+use intake::workspace::WorkspaceAnalyzer;
 use knowledge::KnowledgeBase;
 use knowledge::models::AdjudicatedCase;
 use orchestrator::{AuditJob, AuditJobKind, AuditOrchestrator};
@@ -280,6 +283,8 @@ pub struct ReviewQueueItemResponse {
     pub verification_status: String,
     pub labels: Vec<String>,
     pub evidence_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ir_node_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -779,8 +784,13 @@ impl UiSessionState {
         let mut records = self.load_candidate_records(session_id)?;
 
         if records.is_empty() {
-            let seeded = self.seed_default_candidate(session_id).await?;
-            records.push(seeded);
+            let seeded_from_rules = self.seed_rule_based_candidates(session_id).await?;
+            if seeded_from_rules.is_empty() {
+                let seeded = self.seed_default_candidate(session_id).await?;
+                records.push(seeded);
+            } else {
+                records.extend(seeded_from_rules);
+            }
         }
 
         Ok(LoadReviewQueueResponse {
@@ -961,8 +971,77 @@ impl UiSessionState {
                 .to_string();
         record.labels.push("generated".to_string());
         record.evidence_refs.push("evidence://pending".to_string());
+        record.ir_node_ids = default_review_ir_node_ids(&ir);
         self.persist_review_record(session_id, &record)?;
         Ok(record)
+    }
+
+    async fn seed_rule_based_candidates(&mut self, session_id: &str) -> Result<Vec<AuditRecord>> {
+        let Some(config) = self.audit_config.as_ref() else {
+            return Ok(vec![]);
+        };
+
+        let rules_dir = crypto_rule_pack_dir()?;
+        let evaluator = match RuleEvaluator::load_from_dir(&rules_dir) {
+            Ok(value) => value,
+            Err(_) => return Ok(vec![]),
+        };
+        let workspace = match WorkspaceAnalyzer::analyze(&config.source.local_path) {
+            Ok(value) => value,
+            Err(_) => return Ok(vec![]),
+        };
+        let engine_ctx = CryptoEngineContext {
+            workspace: workspace.clone(),
+            build_matrix: config.scope.build_matrix.clone(),
+            entry_points: vec![],
+            spec_constraints: vec![],
+            environment_manifest: EnvironmentManifest {
+                rust_toolchain: "rustc unknown".to_string(),
+                cargo_lock_hash: "unavailable".to_string(),
+                workspace_root: workspace.root.clone(),
+                audit_id: config.audit_id.clone(),
+                content_hash: config.source.content_hash.clone(),
+            },
+        };
+        let rules_by_id = evaluator
+            .rules()
+            .iter()
+            .map(|rule| (rule.id.clone(), rule.clone()))
+            .collect::<HashMap<_, _>>();
+
+        let matches = evaluator.evaluate_workspace(&engine_ctx).await;
+        let mut seeded = Vec::<AuditRecord>::new();
+        for (idx, matched) in matches.into_iter().enumerate() {
+            let Some(rule) = rules_by_id.get(&matched.rule_id) else {
+                continue;
+            };
+
+            let mut record = AuditRecord::candidate(
+                format!("rule-{}-{}", matched.rule_id.to_ascii_lowercase(), idx + 1),
+                rule.title.clone(),
+                VerificationStatus::unverified(
+                    "Deterministic rule match requires analyst confirmation",
+                ),
+            );
+            record.summary = format!(
+                "{} Matched snippet: {}",
+                rule.description, matched.matched_snippet
+            );
+            record.severity = Some(rule.severity.clone());
+            record.locations.push(matched.location.clone());
+            record
+                .evidence_refs
+                .push(format!("rule://{}", matched.rule_id));
+            record.labels.push("deterministic".to_string());
+            record
+                .labels
+                .push(format!("rule:{}", matched.rule_id.to_ascii_lowercase()));
+            record.ir_node_ids = matched.ir_node_ids.clone();
+            self.persist_review_record(session_id, &record)?;
+            seeded.push(record);
+        }
+
+        Ok(seeded)
     }
 
     fn ensure_session_loaded(&mut self, session_id: &str) -> Result<AuditSession> {
@@ -1022,6 +1101,16 @@ fn make_session_id() -> String {
 
 fn make_snapshot_id() -> String {
     format!("snap-{}", Utc::now().timestamp_micros())
+}
+
+fn crypto_rule_pack_dir() -> Result<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(|value| value.parent())
+        .and_then(|value| value.parent())
+        .context("resolve repository root from tauri-ui manifest")?;
+    Ok(repo_root.join("rules/crypto-misuse"))
 }
 
 fn job_to_view(job: &AuditJob) -> SessionJobView {
@@ -1519,6 +1608,59 @@ fn fallback_tool_recommendations(plan: &IrChecklistPlan) -> Vec<ToolbenchRecomme
     recommendations
 }
 
+fn default_review_ir_node_ids(ir: &ProjectIr) -> Vec<String> {
+    let mut ids = Vec::<String>::new();
+    let mut seen = HashSet::<String>::new();
+
+    let push_id = |id: &str, ids: &mut Vec<String>, seen: &mut HashSet<String>| {
+        if !id.trim().is_empty() && seen.insert(id.to_string()) {
+            ids.push(id.to_string());
+        }
+    };
+
+    let mut sorted_edges = ir.dataflow_graph.edges.iter().collect::<Vec<_>>();
+    sorted_edges.sort_by(|a, b| {
+        (a.from.as_str(), a.to.as_str(), a.relation.as_str()).cmp(&(
+            b.from.as_str(),
+            b.to.as_str(),
+            b.relation.as_str(),
+        ))
+    });
+
+    for edge in sorted_edges.into_iter().take(2) {
+        push_id(&edge.from, &mut ids, &mut seen);
+        push_id(&edge.to, &mut ids, &mut seen);
+    }
+
+    if ids.is_empty() {
+        let mut sorted_symbol_ids = ir
+            .symbol_graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>();
+        sorted_symbol_ids.sort_unstable();
+        for symbol_id in sorted_symbol_ids.into_iter().take(3) {
+            push_id(symbol_id, &mut ids, &mut seen);
+        }
+    }
+
+    if ids.is_empty() {
+        let mut sorted_file_ids = ir
+            .file_graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>();
+        sorted_file_ids.sort_unstable();
+        for file_id in sorted_file_ids.into_iter().take(3) {
+            push_id(file_id, &mut ids, &mut seen);
+        }
+    }
+
+    ids
+}
+
 fn review_queue_item_response(record: &AuditRecord) -> ReviewQueueItemResponse {
     ReviewQueueItemResponse {
         record_id: record.record_id.clone(),
@@ -1537,6 +1679,7 @@ fn review_queue_item_response(record: &AuditRecord) -> ReviewQueueItemResponse {
         verification_status: verification_status_name(&record.verification_status).to_string(),
         labels: record.labels.clone(),
         evidence_refs: record.evidence_refs.clone(),
+        ir_node_ids: record.ir_node_ids.clone(),
     }
 }
 
@@ -1766,5 +1909,43 @@ mod tests {
             record.verification_status,
             VerificationStatus::Verified
         ));
+    }
+
+    #[test]
+    fn default_review_ir_node_ids_are_deterministic_for_same_edge_set() {
+        let mut ir_a = ProjectIr::default();
+        ir_a.dataflow_graph.edges.push(project_ir::DataflowEdge {
+            from: "dataflow:Z".to_string(),
+            to: "dataflow:A".to_string(),
+            relation: "x".to_string(),
+            value_preview: None,
+        });
+        ir_a.dataflow_graph.edges.push(project_ir::DataflowEdge {
+            from: "dataflow:B".to_string(),
+            to: "dataflow:C".to_string(),
+            relation: "x".to_string(),
+            value_preview: None,
+        });
+
+        let mut ir_b = ProjectIr::default();
+        ir_b.dataflow_graph.edges.push(project_ir::DataflowEdge {
+            from: "dataflow:B".to_string(),
+            to: "dataflow:C".to_string(),
+            relation: "x".to_string(),
+            value_preview: None,
+        });
+        ir_b.dataflow_graph.edges.push(project_ir::DataflowEdge {
+            from: "dataflow:Z".to_string(),
+            to: "dataflow:A".to_string(),
+            relation: "x".to_string(),
+            value_preview: None,
+        });
+
+        let ids_a = default_review_ir_node_ids(&ir_a);
+        let ids_b = default_review_ir_node_ids(&ir_b);
+        assert_eq!(
+            ids_a, ids_b,
+            "provenance seed ordering must be stable for identical edge sets"
+        );
     }
 }

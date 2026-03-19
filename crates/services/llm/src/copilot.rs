@@ -83,6 +83,7 @@ impl CopilotService {
             locations: vec![],
             evidence_refs: vec![],
             labels: vec!["ai-generated".to_string(), "overview".to_string()],
+            ir_node_ids: vec![],
         })
     }
 
@@ -115,6 +116,7 @@ impl CopilotService {
             locations: vec![],
             evidence_refs: vec![],
             labels: vec!["ai-generated".to_string(), "candidate".to_string()],
+            ir_node_ids: vec![],
         })
     }
 

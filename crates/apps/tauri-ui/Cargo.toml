@@ -8,6 +8,7 @@ version.workspace = true
 anyhow = "1"
 audit-agent-core = { path = "../../core" }
 chrono = { version = "0.4", features = ["clock"] }
+engine-crypto = { path = "../../engines/crypto" }
 intake = { path = "../../services/intake" }
 knowledge = { path = "../../services/knowledge" }
 orchestrator = { path = "../orchestrator" }

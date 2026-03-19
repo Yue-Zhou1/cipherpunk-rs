@@ -197,6 +197,37 @@ cd ui && npm test
 cd ui && npm run build
 ```
 
+## Crypto Rule Schema
+
+Crypto misuse rules live under `rules/crypto-misuse/*.yaml`. The deterministic
+engine validates rule files at load time and rejects unsupported fields.
+
+Supported `detection.patterns[*].type` values:
+
+- `function_call`
+- `method_call`
+- `macro_call`
+- `path_contains`
+- `attribute`
+
+Supported `detection.semantic_checks[*]` values:
+
+- `nonce_is_not_bound_to_session_id`
+- `missing_domain_separator`
+- `missing_canonicality_check`
+- `rng_is_predictable`
+- `missing_small_subgroup_check`
+- `unchecked_unwrap`
+- `hardcoded_secret_present`
+- `unsafe_in_verification_path`
+- `suspicious_nonce_initialization`
+- `hardcoded_seed_usage`
+
+Rules can combine pattern and semantic checks. Pattern matches define candidate
+sites, and semantic checks are evaluated deterministically before findings are emitted.
+When multiple `semantic_checks` are listed, they use AND semantics: all listed
+checks must match for the rule to emit.
+
 ## Remote Worker Rollout
 
 `v3` includes a remote execution protocol (`crates/workers/protocol`) and a basic

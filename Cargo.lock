@@ -2386,6 +2386,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "audit-agent-core",
+ "intake",
+ "regex",
+ "tempfile",
  "tokio",
  "tree-sitter",
  "tree-sitter-rust",
@@ -3322,6 +3325,7 @@ dependencies = [
  "anyhow",
  "audit-agent-core",
  "chrono",
+ "engine-crypto",
  "intake",
  "knowledge",
  "orchestrator",

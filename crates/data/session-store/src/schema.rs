@@ -1,6 +1,9 @@
 use anyhow::{Result, bail};
 use rusqlite::Connection;
 
+// Keep schema version stable for additive serde-backed record/session fields.
+// Provenance additions such as `ir_node_ids` are stored inside `record_json`
+// and deserialize via `#[serde(default)]`, so no SQL migration is required.
 const SCHEMA_VERSION: i64 = 1;
 
 pub fn initialize(conn: &Connection) -> Result<()> {

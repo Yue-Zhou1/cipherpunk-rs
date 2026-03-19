@@ -55,6 +55,8 @@ pub struct AuditRecord {
     pub locations: Vec<CodeLocation>,
     pub evidence_refs: Vec<String>,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub ir_node_ids: Vec<String>,
 }
 
 impl AuditRecord {
@@ -74,6 +76,7 @@ impl AuditRecord {
             locations: vec![],
             evidence_refs: vec![],
             labels: vec![],
+            ir_node_ids: vec![],
         }
     }
 }
@@ -107,4 +110,49 @@ pub struct SessionUiState {
     pub active_file: Option<PathBuf>,
     pub active_record_id: Option<String>,
     pub active_graph_view: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::finding::VerificationStatus;
+
+    #[test]
+    fn audit_record_serde_roundtrip_preserves_ir_node_ids() {
+        let mut record = AuditRecord::candidate(
+            "cand-1",
+            "candidate finding",
+            VerificationStatus::unverified("pending"),
+        );
+        record.ir_node_ids = vec![
+            "file:/tmp/repo/src/lib.rs".to_string(),
+            "symbol:/tmp/repo/src/lib.rs::aead_encrypt".to_string(),
+        ];
+
+        let encoded = serde_json::to_string(&record).expect("serialize record");
+        let decoded: AuditRecord = serde_json::from_str(&encoded).expect("deserialize record");
+
+        assert_eq!(decoded.ir_node_ids, record.ir_node_ids);
+    }
+
+    #[test]
+    fn audit_record_serde_defaults_ir_node_ids_for_legacy_json() {
+        let legacy_json = serde_json::json!({
+            "record_id": "cand-legacy",
+            "kind": "Candidate",
+            "title": "legacy",
+            "summary": "legacy record",
+            "severity": null,
+            "verification_status": {"Unverified": {"reason": "legacy"}},
+            "locations": [],
+            "evidence_refs": [],
+            "labels": []
+        });
+
+        let decoded: AuditRecord = serde_json::from_value(legacy_json).expect("deserialize");
+        assert!(
+            decoded.ir_node_ids.is_empty(),
+            "legacy records should deserialize with empty provenance"
+        );
+    }
 }

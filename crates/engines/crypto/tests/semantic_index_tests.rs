@@ -150,6 +150,14 @@ impl Chip for RangeCheckChip {
         impls.iter().any(|f| f.impl_type == "RangeCheckChip"),
         "expected Chip::configure impl for RangeCheckChip"
     );
+    assert!(
+        index.rust_facts().trait_impls.iter().any(|f| {
+            f.trait_name == "Chip"
+                && f.method_name == "configure"
+                && f.impl_type == "RangeCheckChip"
+        }),
+        "structured facts should surface trait impl methods for halo2 analysis"
+    );
     assert!(matches!(
         index.backend,
         SemanticBackend::RustAnalyzer { .. } | SemanticBackend::LspSubprocess { .. }
@@ -198,6 +206,14 @@ pub fn field_mul_generic() -> u64 { 2 }
             .iter()
             .any(|point| point.feature == "asm" && point.crate_name == "zk"),
         "expected asm cfg divergence point"
+    );
+    assert!(
+        index
+            .rust_facts()
+            .cfg_divergences
+            .iter()
+            .any(|point| point.feature == "asm" && point.crate_name == "zk"),
+        "structured facts should surface cfg divergence points"
     );
 }
 
@@ -381,6 +397,15 @@ pub fn configure() {
     assert!(
         semantic_macro_calls.contains("halo2_gate!"),
         "semantic graph should include macro expansion edge"
+    );
+
+    let facts = index.rust_facts();
+    assert!(
+        facts
+            .macro_sites
+            .iter()
+            .any(|site| site.macro_name == "halo2_gate" && site.file.ends_with("zk/src/lib.rs")),
+        "structured facts should surface macro invocation sites with file-backed spans"
     );
 }
 
