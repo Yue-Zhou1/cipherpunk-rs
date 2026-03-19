@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-foundry"
+version = "0.1.0"
+description = "Offline PDF -> vulnerability signature -> knowledge.bin foundry"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "click>=8.0.0",
+  "httpx>=0.27.0",
+  "jsonschema>=4.0.0",
+  "msgpack>=1.0.0",
+  "onnxruntime>=1.17.0",
+  "pydantic>=2.0.0",
+  "pymupdf4llm>=0.0.10",
+  "tokenizers>=0.15.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+pdf-foundry = "pdf_foundry.__main__:cli"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pdf_foundry*"]

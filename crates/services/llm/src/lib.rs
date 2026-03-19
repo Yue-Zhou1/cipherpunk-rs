@@ -3,6 +3,7 @@ pub mod copilot;
 pub mod evidence_gate;
 pub mod provider;
 pub mod sanitize;
+pub mod semantic_memory;
 
 pub use contracts::{ArchitectureOverview, CandidateDraft, ChecklistPlan, DomainPlan};
 pub use copilot::CopilotService;

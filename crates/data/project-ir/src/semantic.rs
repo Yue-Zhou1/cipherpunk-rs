@@ -5,14 +5,49 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
+use regex::Regex;
 use tree_sitter::{Node, Parser};
 use walkdir::WalkDir;
+
+static FN_DECL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").expect("fn regex"));
+static IMPL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\bimpl(?:\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_:]*)\s+for\s+([A-Za-z_][A-Za-z0-9_:]*)",
+    )
+    .expect("impl regex")
+});
+static MACRO_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([A-Za-z_][A-Za-z0-9_:]*)!\s*\(").expect("macro regex"));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSymbol {
     pub name: String,
+    pub line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroSite {
+    pub macro_name: String,
+    pub line: u32,
+    pub column: u32,
+    pub caller: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitImplRef {
+    pub trait_name: String,
+    pub method_name: String,
+    pub impl_type: String,
+    pub line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfgDivergence {
+    pub feature: String,
     pub line: u32,
 }
 
@@ -22,6 +57,9 @@ pub struct SemanticFile {
     pub functions: Vec<FunctionSymbol>,
     pub function_calls: Vec<FunctionCallSite>,
     pub cfg_features: Vec<String>,
+    pub macro_sites: Vec<MacroSite>,
+    pub trait_impls: Vec<TraitImplRef>,
+    pub cfg_divergences: Vec<CfgDivergence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -58,6 +96,9 @@ fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
     let mut functions = Vec::<FunctionSymbol>::new();
     let mut function_calls = Vec::<FunctionCallSite>::new();
     let mut cfg_features = Vec::<String>::new();
+    let mut macro_sites = Vec::<MacroSite>::new();
+    let mut trait_impls = Vec::<TraitImplRef>::new();
+    let mut cfg_divergences = Vec::<CfgDivergence>::new();
 
     let mut parser = Parser::new();
     if parser.set_language(&tree_sitter_rust::language()).is_err() {
@@ -66,6 +107,9 @@ fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
             functions,
             function_calls,
             cfg_features,
+            macro_sites,
+            trait_impls,
+            cfg_divergences,
         };
     }
 
@@ -75,6 +119,9 @@ fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
             functions,
             function_calls,
             cfg_features,
+            macro_sites,
+            trait_impls,
+            cfg_divergences,
         };
     };
 
@@ -84,13 +131,18 @@ fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
         &mut functions,
         &mut function_calls,
         &mut cfg_features,
+        &mut cfg_divergences,
     );
+    scan_line_level_rust_facts(content, &mut macro_sites, &mut trait_impls);
 
     SemanticFile {
         path,
         functions,
         function_calls,
         cfg_features,
+        macro_sites,
+        trait_impls,
+        cfg_divergences,
     }
 }
 
@@ -100,12 +152,21 @@ fn walk_node(
     functions: &mut Vec<FunctionSymbol>,
     function_calls: &mut Vec<FunctionCallSite>,
     cfg_features: &mut Vec<String>,
+    cfg_divergences: &mut Vec<CfgDivergence>,
 ) {
     if node.kind() == "attribute_item"
         && let Some(feature) = parse_cfg_feature(node, source)
-        && !cfg_features.iter().any(|existing| existing == &feature)
     {
-        cfg_features.push(feature);
+        let line = node.start_position().row as u32 + 1;
+        if !cfg_features.iter().any(|existing| existing == &feature) {
+            cfg_features.push(feature.clone());
+        }
+        if !cfg_divergences
+            .iter()
+            .any(|existing| existing.feature == feature && existing.line == line)
+        {
+            cfg_divergences.push(CfgDivergence { feature, line });
+        }
     }
 
     if node.kind() == "function_item"
@@ -121,7 +182,129 @@ fn walk_node(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        walk_node(child, source, functions, function_calls, cfg_features);
+        walk_node(
+            child,
+            source,
+            functions,
+            function_calls,
+            cfg_features,
+            cfg_divergences,
+        );
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ImplContext {
+    trait_name: String,
+    impl_type: String,
+    brace_depth: i32,
+    opened_block: bool,
+}
+
+#[derive(Debug, Clone)]
+struct FnContext {
+    name: String,
+    brace_depth: i32,
+    opened_block: bool,
+}
+
+fn scan_line_level_rust_facts(
+    content: &str,
+    macro_sites: &mut Vec<MacroSite>,
+    trait_impls: &mut Vec<TraitImplRef>,
+) {
+    // Keep this lightweight scanner in sync with
+    // `crates/engines/crypto/src/semantic/ra_client.rs::scan_file`.
+    // Both intentionally duplicate brace/comment handling to avoid a crate cycle.
+    // Known limitation: impl/fn context tracking is best-effort and assumes
+    // top-level declarations rather than full nested-block semantics.
+    let mut impl_ctx: Option<ImplContext> = None;
+    let mut fn_ctx: Option<FnContext> = None;
+    let mut brace_state = BraceScanState::default();
+
+    for (line_idx, line) in content.lines().enumerate() {
+        let line_no = line_idx as u32 + 1;
+        let line_delta = brace_delta(line, &mut brace_state);
+
+        for macro_capture in MACRO_RE.captures_iter(line) {
+            let Some(matched) = macro_capture.get(0) else {
+                continue;
+            };
+            let macro_name = macro_capture
+                .get(1)
+                .map(|value| last_path_segment(value.as_str()).to_string())
+                .unwrap_or_default();
+            macro_sites.push(MacroSite {
+                macro_name,
+                line: line_no,
+                column: matched.start() as u32 + 1,
+                caller: fn_ctx.as_ref().map(|ctx| ctx.name.clone()),
+            });
+        }
+
+        if impl_ctx.is_none()
+            && let Some(captures) = IMPL_RE.captures(line)
+        {
+            let trait_name = captures
+                .get(1)
+                .map(|m| last_path_segment(m.as_str()).to_string())
+                .unwrap_or_default();
+            let impl_type = captures
+                .get(2)
+                .map(|m| last_path_segment(m.as_str()).to_string())
+                .unwrap_or_default();
+            impl_ctx = Some(ImplContext {
+                trait_name,
+                impl_type,
+                brace_depth: 0,
+                opened_block: false,
+            });
+        }
+
+        if fn_ctx.is_none()
+            && let Some(captures) = FN_DECL_RE.captures(line)
+        {
+            let fn_name = captures
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            fn_ctx = Some(FnContext {
+                name: fn_name,
+                brace_depth: 0,
+                opened_block: false,
+            });
+        }
+
+        if let Some(ctx) = impl_ctx.as_mut() {
+            if let Some(captures) = FN_DECL_RE.captures(line)
+                && let Some(method_name) = captures.get(1).map(|m| m.as_str().to_string())
+            {
+                trait_impls.push(TraitImplRef {
+                    trait_name: ctx.trait_name.clone(),
+                    method_name,
+                    impl_type: ctx.impl_type.clone(),
+                    line: line_no,
+                });
+            }
+
+            if line.contains('{') {
+                ctx.opened_block = true;
+            }
+            ctx.brace_depth += line_delta;
+            if ctx.opened_block && ctx.brace_depth <= 0 {
+                impl_ctx = None;
+            }
+        }
+
+        if let Some(ctx) = fn_ctx.as_mut() {
+            if line.contains('{') {
+                ctx.opened_block = true;
+            }
+            ctx.brace_depth += line_delta;
+            if ctx.opened_block && ctx.brace_depth <= 0 {
+                fn_ctx = None;
+            }
+        }
     }
 }
 
@@ -301,6 +484,121 @@ fn should_ignore_call_symbol(symbol: &str) -> bool {
             | "Self"
             | "self"
     )
+}
+
+fn last_path_segment(symbol: &str) -> &str {
+    symbol.rsplit("::").next().unwrap_or(symbol)
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct BraceScanState {
+    // Keep in sync with `crates/engines/crypto/src/semantic/ra_client.rs::BraceScanState`.
+    block_comment_depth: usize,
+    in_string: bool,
+    string_escaped: bool,
+    raw_string_hashes: Option<usize>,
+}
+
+fn brace_delta(line: &str, state: &mut BraceScanState) -> i32 {
+    let bytes = line.as_bytes();
+    let mut delta = 0i32;
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        if let Some(hashes) = state.raw_string_hashes {
+            if raw_string_closes_at(bytes, idx, hashes) {
+                state.raw_string_hashes = None;
+                idx += 1 + hashes;
+                continue;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if state.in_string {
+            if state.string_escaped {
+                state.string_escaped = false;
+            } else {
+                match bytes[idx] {
+                    b'\\' => state.string_escaped = true,
+                    b'"' => state.in_string = false,
+                    _ => {}
+                }
+            }
+            idx += 1;
+            continue;
+        }
+
+        if state.block_comment_depth > 0 {
+            if starts_with(bytes, idx, b"/*") {
+                state.block_comment_depth += 1;
+                idx += 2;
+                continue;
+            }
+            if starts_with(bytes, idx, b"*/") {
+                state.block_comment_depth -= 1;
+                idx += 2;
+                continue;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if starts_with(bytes, idx, b"//") {
+            break;
+        }
+        if starts_with(bytes, idx, b"/*") {
+            state.block_comment_depth += 1;
+            idx += 2;
+            continue;
+        }
+        if let Some(raw_hashes) = raw_string_opens_at(bytes, idx) {
+            state.raw_string_hashes = Some(raw_hashes);
+            idx += 2 + raw_hashes;
+            continue;
+        }
+
+        match bytes[idx] {
+            b'"' => {
+                state.in_string = true;
+                state.string_escaped = false;
+            }
+            b'{' => delta += 1,
+            b'}' => delta -= 1,
+            _ => {}
+        }
+
+        idx += 1;
+    }
+
+    delta
+}
+
+fn starts_with(bytes: &[u8], idx: usize, pattern: &[u8]) -> bool {
+    idx + pattern.len() <= bytes.len() && &bytes[idx..idx + pattern.len()] == pattern
+}
+
+fn raw_string_opens_at(bytes: &[u8], idx: usize) -> Option<usize> {
+    if bytes.get(idx) != Some(&b'r') {
+        return None;
+    }
+
+    let mut cursor = idx + 1;
+    while cursor < bytes.len() && bytes[cursor] == b'#' {
+        cursor += 1;
+    }
+
+    (cursor < bytes.len() && bytes[cursor] == b'"').then_some(cursor - idx - 1)
+}
+
+fn raw_string_closes_at(bytes: &[u8], idx: usize, hashes: usize) -> bool {
+    if bytes.get(idx) != Some(&b'"') || idx + 1 + hashes > bytes.len() {
+        return false;
+    }
+
+    bytes[idx + 1..idx + 1 + hashes]
+        .iter()
+        .all(|byte| *byte == b'#')
 }
 
 #[cfg(test)]

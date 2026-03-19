@@ -7,12 +7,17 @@ use audit_agent_core::finding::VerificationStatus;
 use audit_agent_core::session::{AuditRecord, AuditRecordKind};
 
 use crate::provider::{CompletionOpts, LlmProvider, LlmRole, json_only_prompt, llm_call};
-use crate::sanitize::{parse_json_contract, sanitize_prompt_input};
+use crate::sanitize::{
+    GraphContextEntry, pack_graph_aware_context, parse_json_contract, sanitize_prompt_input,
+};
+use crate::semantic_memory::format_semantic_signatures;
 
 pub use crate::contracts::DomainPlan;
 pub use crate::contracts::{ArchitectureOverview, CandidateDraft, ChecklistPlan};
+pub use crate::semantic_memory::SemanticSignatureContext;
 
 static RECORD_COUNTER: AtomicU64 = AtomicU64::new(1);
+const DEFAULT_PROMPT_CONTEXT_BUDGET: usize = 2_000;
 
 pub struct CopilotService {
     provider: Arc<dyn LlmProvider>,
@@ -83,15 +88,40 @@ impl CopilotService {
             locations: vec![],
             evidence_refs: vec![],
             labels: vec!["ai-generated".to_string(), "overview".to_string()],
+            ir_node_ids: vec![],
         })
     }
 
     pub async fn generate_candidate(&self, hotspot: &str) -> Result<AuditRecord> {
+        self.generate_candidate_with_context(hotspot, "", &[]).await
+    }
+
+    pub async fn generate_candidate_with_context(
+        &self,
+        hotspot: &str,
+        source_context: &str,
+        graph_context: &[GraphContextEntry],
+    ) -> Result<AuditRecord> {
+        self.generate_candidate_with_semantic_context(hotspot, source_context, graph_context, &[])
+            .await
+    }
+
+    pub async fn generate_candidate_with_semantic_context(
+        &self,
+        hotspot: &str,
+        source_context: &str,
+        graph_context: &[GraphContextEntry],
+        semantic_signatures: &[SemanticSignatureContext],
+    ) -> Result<AuditRecord> {
+        let packed_context =
+            pack_graph_aware_context(source_context, graph_context, DEFAULT_PROMPT_CONTEXT_BUDGET);
         let prompt = json_only_prompt(
             "CandidateDraft",
             &format!(
-                "Generate a concise candidate for hotspot:\n{}",
-                sanitize_prompt_input(hotspot)
+                "Generate a concise candidate for hotspot:\n{}\n\nContext:\n{}\n\nHistorical signatures:\n{}",
+                sanitize_prompt_input(hotspot),
+                packed_context,
+                format_semantic_signatures(semantic_signatures)
             ),
         );
         let draft: CandidateDraft = self.complete_json(LlmRole::SearchHints, &prompt).await?;
@@ -115,6 +145,7 @@ impl CopilotService {
             locations: vec![],
             evidence_refs: vec![],
             labels: vec!["ai-generated".to_string(), "candidate".to_string()],
+            ir_node_ids: vec![],
         })
     }
 

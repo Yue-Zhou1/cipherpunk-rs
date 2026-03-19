@@ -11,6 +11,7 @@ import {
 
 type GraphLensProps = {
   sessionId: string;
+  selectedNodeIds?: string[];
 };
 
 const LENS_OPTIONS: Array<{ kind: GraphLensKind; label: string }> = [
@@ -20,7 +21,7 @@ const LENS_OPTIONS: Array<{ kind: GraphLensKind; label: string }> = [
 ];
 const CytoscapeComponent = lazy(() => import("react-cytoscapejs"));
 
-function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
+function GraphLens({ sessionId, selectedNodeIds = [] }: GraphLensProps): JSX.Element {
   const [lens, setLens] = useState<GraphLensKind>("file");
   const [includeValues, setIncludeValues] = useState(false);
   const [graph, setGraph] = useState<ProjectGraphResponse | null>(null);
@@ -75,6 +76,7 @@ function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
   const isJsdom =
     typeof navigator !== "undefined" &&
     navigator.userAgent.toLowerCase().includes("jsdom");
+  const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const elements = useMemo<ElementDefinition[]>(
     () =>
       graph
@@ -85,6 +87,7 @@ function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
                 label: node.label,
                 kind: node.kind,
               },
+              classes: selectedNodeIdSet.has(node.id) ? "selected" : "",
             })),
             ...graph.edges.map((edge, index) => ({
               data: {
@@ -98,7 +101,7 @@ function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
             })),
           ]
         : [],
-    [graph]
+    [graph, selectedNodeIdSet]
   );
 
   return (
@@ -138,6 +141,9 @@ function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
 
       {isLoading ? <p className="muted-text">Loading graph...</p> : null}
       {error ? <p className="banner banner-error">{error}</p> : null}
+      {selectedNodeIds.length > 0 ? (
+        <p className="muted-text">Review context selected {selectedNodeIds.length} node(s).</p>
+      ) : null}
 
       {!isLoading && !error && graph ? (
         <>
@@ -189,10 +195,31 @@ function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
                         "text-background-padding": "1px",
                       },
                     },
+                    {
+                      selector: "node.selected",
+                      style: {
+                        "border-color": "#ffd166",
+                        "border-width": 2,
+                        "background-color": "#0a84ff",
+                      },
+                    },
                   ]}
                   style={{ width: "100%", height: "100%" }}
                   minZoom={0.2}
                   maxZoom={2.4}
+                  cy={(cy) => {
+                    // This runs whenever the Cytoscape instance is (re)created, so a selected
+                    // review context will refit on graph reload/lens switch as well as selection.
+                    if (selectedNodeIds.length === 0) {
+                      return;
+                    }
+                    const targets = cy
+                      .nodes()
+                      .filter((node) => selectedNodeIdSet.has(node.id()));
+                    if (targets.length > 0) {
+                      cy.fit(targets, 36);
+                    }
+                  }}
                 />
               </Suspense>
             </div>
@@ -202,7 +229,10 @@ function GraphLens({ sessionId }: GraphLensProps): JSX.Element {
                 <h3>Nodes</h3>
                 <ul>
                   {graph.nodes.slice(0, 8).map((node) => (
-                    <li key={node.id}>
+                    <li
+                      key={node.id}
+                      className={selectedNodeIdSet.has(node.id) ? "selected" : undefined}
+                    >
                       <code>{node.label}</code>
                     </li>
                   ))}

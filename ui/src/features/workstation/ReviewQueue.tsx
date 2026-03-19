@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   applyReviewDecision,
@@ -9,13 +9,24 @@ import {
 
 type ReviewQueueProps = {
   sessionId: string;
+  selectedRecordId?: string | null;
+  onSelectRecord?: (item: ReviewQueueItem) => void;
 };
 
-function ReviewQueue({ sessionId }: ReviewQueueProps): JSX.Element {
+function ReviewQueue({
+  sessionId,
+  selectedRecordId = null,
+  onSelectRecord,
+}: ReviewQueueProps): JSX.Element {
   const [items, setItems] = useState<ReviewQueueItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyRecordId, setBusyRecordId] = useState<string | null>(null);
+  const onSelectRecordRef = useRef(onSelectRecord);
+
+  useEffect(() => {
+    onSelectRecordRef.current = onSelectRecord;
+  }, [onSelectRecord]);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,6 +37,9 @@ function ReviewQueue({ sessionId }: ReviewQueueProps): JSX.Element {
       .then((response) => {
         if (!cancelled) {
           setItems(response.items);
+          if (!selectedRecordId && response.items.length > 0) {
+            onSelectRecordRef.current?.(response.items[0]);
+          }
         }
       })
       .catch(() => {
@@ -43,7 +57,7 @@ function ReviewQueue({ sessionId }: ReviewQueueProps): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [selectedRecordId, sessionId]);
 
   const pendingCount = useMemo(
     () => items.filter((item) => item.verificationStatus === "unverified").length,
@@ -65,6 +79,9 @@ function ReviewQueue({ sessionId }: ReviewQueueProps): JSX.Element {
         setItems((current) =>
           current.map((item) => (item.recordId === response.item.recordId ? response.item : item))
         );
+        if (response.item.recordId === selectedRecordId) {
+          onSelectRecordRef.current?.(response.item);
+        }
       })
       .catch(() => {
         setError("Unable to apply review decision.");
@@ -95,10 +112,20 @@ function ReviewQueue({ sessionId }: ReviewQueueProps): JSX.Element {
         <ul className="toolbench-list" aria-label="Review candidates">
           {items.map((item) => {
             const busy = busyRecordId === item.recordId;
+            const active = item.recordId === selectedRecordId;
             return (
-              <li key={item.recordId} className="review-queue-item">
+              <li
+                key={item.recordId}
+                className={`review-queue-item${active ? " selected" : ""}`}
+              >
                 <div className="review-queue-item-head">
-                  <strong>{item.title}</strong>
+                  <button
+                    type="button"
+                    className="review-queue-select inline-action"
+                    onClick={() => onSelectRecordRef.current?.(item)}
+                  >
+                    {item.title}
+                  </button>
                   <span className="muted-text">{item.verificationStatus}</span>
                 </div>
                 <p className="muted-text">{item.summary}</p>

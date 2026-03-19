@@ -169,7 +169,12 @@ impl SessionStore {
             params![
                 session_id,
                 record.record_id,
-                format!("{} {}", record.title, record.summary)
+                format!(
+                    "{} {} {}",
+                    record.title,
+                    record.summary,
+                    record.ir_node_ids.join(" ")
+                )
             ],
         )?;
         Ok(())

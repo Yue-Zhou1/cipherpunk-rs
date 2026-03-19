@@ -1113,6 +1113,12 @@ pre code {
   color: #c9c9c9;
 }
 
+.graph-lens-block li.selected {
+  border-left: 2px solid #ffd166;
+  padding-left: 6px;
+  color: #ffffff;
+}
+
 .workstation-tree-list ul {
   list-style: none;
   margin: 6px 0 0 12px;
@@ -1222,11 +1228,25 @@ pre code {
   gap: 8px;
 }
 
+.review-queue-item.selected {
+  border-color: #ffd166;
+  box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.2) inset;
+}
+
 .review-queue-item-head {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   align-items: center;
+}
+
+.review-queue-select {
+  font-weight: 600;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: #d4d4d4;
+  padding: 0;
 }
 
 .review-queue-actions {

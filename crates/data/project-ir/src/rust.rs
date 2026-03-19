@@ -30,6 +30,7 @@ impl LanguageMapper for RustMapper {
         let mut symbol_ids_by_name = HashMap::<String, Vec<String>>::new();
         let mut symbol_edges = HashSet::<(String, String, String)>::new();
         let mut dataflow_edges = HashSet::<(String, String, String)>::new();
+        let mut feature_nodes_seen = HashSet::<(String, String)>::new();
 
         for member in &workspace.members {
             let semantic = build_rust_semantic_index(&member.path)?;
@@ -65,7 +66,101 @@ impl LanguageMapper for RustMapper {
                         .push(symbol_id.clone());
                 }
 
-                for feature in file.cfg_features {
+                for macro_site in &file.macro_sites {
+                    let macro_label = format!("{}!", macro_site.macro_name);
+                    let macro_symbol_id = format!(
+                        "symbol:{}::macro:{}:{}:{}",
+                        file.path.display(),
+                        macro_site.line,
+                        macro_site.column,
+                        macro_site.macro_name
+                    );
+                    fragment.symbol_graph.nodes.push(SymbolNode {
+                        id: macro_symbol_id.clone(),
+                        name: macro_label,
+                        file: file.path.clone(),
+                        kind: "macro_call".to_string(),
+                    });
+                    fragment.symbol_graph.edges.push(BasicEdge {
+                        from: file_id.clone(),
+                        to: macro_symbol_id.clone(),
+                        relation: "contains".to_string(),
+                    });
+
+                    if let Some(caller) = &macro_site.caller {
+                        let caller_symbol_id =
+                            format!("symbol:{}::{}", file.path.display(), caller);
+                        let edge_key = (
+                            caller_symbol_id.clone(),
+                            macro_symbol_id.clone(),
+                            "invokes_macro".to_string(),
+                        );
+                        if symbol_edges.insert(edge_key) {
+                            fragment.symbol_graph.edges.push(BasicEdge {
+                                from: caller_symbol_id,
+                                to: macro_symbol_id,
+                                relation: "invokes_macro".to_string(),
+                            });
+                        }
+                    }
+                }
+
+                for trait_impl in &file.trait_impls {
+                    let symbol_id = format!(
+                        "symbol:{}::impl:{}:{}:{}",
+                        file.path.display(),
+                        trait_impl.impl_type,
+                        trait_impl.method_name,
+                        trait_impl.line
+                    );
+                    fragment.symbol_graph.nodes.push(SymbolNode {
+                        id: symbol_id.clone(),
+                        name: format!(
+                            "{}::{}@{}",
+                            trait_impl.trait_name, trait_impl.method_name, trait_impl.impl_type
+                        ),
+                        file: file.path.clone(),
+                        kind: "trait_impl_method".to_string(),
+                    });
+                    fragment.symbol_graph.edges.push(BasicEdge {
+                        from: file_id.clone(),
+                        to: symbol_id.clone(),
+                        relation: "contains".to_string(),
+                    });
+                    symbol_ids_by_name
+                        .entry(trait_impl.method_name.clone())
+                        .or_default()
+                        .push(symbol_id);
+                }
+
+                for divergence in &file.cfg_divergences {
+                    let feature_key = (divergence.feature.clone(), file.path.display().to_string());
+                    if !feature_nodes_seen.insert(feature_key) {
+                        continue;
+                    }
+                    let feature_id = format!(
+                        "feature:{}:{}:{}",
+                        divergence.feature,
+                        file.path.display(),
+                        divergence.line
+                    );
+                    fragment.feature_graph.nodes.push(FeatureNode {
+                        id: feature_id.clone(),
+                        name: divergence.feature.clone(),
+                        source: format!("{}:{}", file.path.display(), divergence.line),
+                    });
+                    fragment.feature_graph.edges.push(BasicEdge {
+                        from: file_id.clone(),
+                        to: feature_id,
+                        relation: "cfg_divergence".to_string(),
+                    });
+                }
+
+                for feature in &file.cfg_features {
+                    let feature_key = (feature.clone(), file.path.display().to_string());
+                    if !feature_nodes_seen.insert(feature_key) {
+                        continue;
+                    }
                     let feature_id = format!("feature:{feature}");
                     fragment.feature_graph.nodes.push(FeatureNode {
                         id: feature_id.clone(),

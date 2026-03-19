@@ -111,3 +111,75 @@ fn open_enables_wal_journal_mode() {
         .expect("query journal mode");
     assert_eq!(mode.to_ascii_lowercase(), "wal");
 }
+
+#[test]
+fn upsert_and_load_record_roundtrip_preserves_ir_node_ids() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = SessionStore::open(dir.path().join("sessions.sqlite")).expect("open store");
+    store
+        .create_session(&AuditSession::sample("sess-3"))
+        .expect("create session");
+
+    let mut record = AuditRecord::candidate(
+        "cand-provenance",
+        "candidate",
+        VerificationStatus::unverified("x"),
+    );
+    record.ir_node_ids = vec![
+        "file:/tmp/repo/src/lib.rs".to_string(),
+        "symbol:/tmp/repo/src/lib.rs::aead_encrypt".to_string(),
+    ];
+    store
+        .upsert_record("sess-3", &record)
+        .expect("upsert candidate");
+
+    let loaded = store
+        .load_record("sess-3", "cand-provenance")
+        .expect("load result")
+        .expect("record exists");
+    assert_eq!(loaded.ir_node_ids, record.ir_node_ids);
+}
+
+#[test]
+fn legacy_record_json_without_ir_node_ids_deserializes_as_empty_vec() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = SessionStore::open(dir.path().join("sessions.sqlite")).expect("open store");
+    store
+        .create_session(&AuditSession::sample("sess-legacy"))
+        .expect("create session");
+
+    let mut legacy = serde_json::to_value(AuditRecord::candidate(
+        "cand-legacy",
+        "legacy candidate",
+        VerificationStatus::unverified("legacy"),
+    ))
+    .expect("serialize candidate");
+    legacy
+        .as_object_mut()
+        .expect("object value")
+        .remove("ir_node_ids");
+
+    let conn = Connection::open(store.db_path()).expect("open db");
+    conn.execute(
+        r#"
+        INSERT INTO audit_records(session_id, record_id, kind, record_json)
+        VALUES (?1, ?2, ?3, ?4)
+        "#,
+        rusqlite::params![
+            "sess-legacy",
+            "cand-legacy",
+            "candidate",
+            legacy.to_string()
+        ],
+    )
+    .expect("insert legacy row");
+
+    let loaded = store
+        .load_record("sess-legacy", "cand-legacy")
+        .expect("load result")
+        .expect("record exists");
+    assert!(
+        loaded.ir_node_ids.is_empty(),
+        "legacy rows should load with empty provenance vec"
+    );
+}

@@ -5,6 +5,8 @@ type CodeEditorPaneProps = {
   content: string;
   isLoading: boolean;
   error: string | null;
+  focusedRecordId?: string | null;
+  focusedNodeCount?: number;
 };
 
 function editorLanguage(filePath: string | null): string {
@@ -47,7 +49,14 @@ function shouldRenderMonaco(): boolean {
   return !/jsdom/i.test(navigator.userAgent);
 }
 
-function CodeEditorPane({ filePath, content, isLoading, error }: CodeEditorPaneProps): JSX.Element {
+function CodeEditorPane({
+  filePath,
+  content,
+  isLoading,
+  error,
+  focusedRecordId,
+  focusedNodeCount = 0,
+}: CodeEditorPaneProps): JSX.Element {
   const language = editorLanguage(filePath);
 
   return (
@@ -59,6 +68,12 @@ function CodeEditorPane({ filePath, content, isLoading, error }: CodeEditorPaneP
         <h2>Code Editor</h2>
         <span className="muted-text">{filePath ?? "Select a file"}</span>
       </div>
+      {focusedRecordId ? (
+        <p className="muted-text">
+          Focused by review item {focusedRecordId} ({focusedNodeCount} graph node
+          {focusedNodeCount === 1 ? "" : "s"}).
+        </p>
+      ) : null}
 
       {isLoading ? <p className="muted-text">Loading file...</p> : null}
       {error ? <p className="banner banner-error">{error}</p> : null}

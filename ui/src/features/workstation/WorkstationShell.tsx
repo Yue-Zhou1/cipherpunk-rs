@@ -1,5 +1,7 @@
+import { useCallback, useState } from "react";
 import { Blocks, Files, GitBranch, Search, Settings } from "lucide-react";
 
+import type { ProjectTreeNode, ReviewQueueItem } from "../../ipc/commands";
 import ActivityConsole from "./ActivityConsole";
 import ChecklistPanel from "./ChecklistPanel";
 import CodeEditorPane from "./CodeEditorPane";
@@ -30,6 +32,70 @@ function fileTabLabel(path: string | null): string {
   return segments[segments.length - 1] ?? path;
 }
 
+function collectFilePaths(nodes: ProjectTreeNode[]): string[] {
+  const files: string[] = [];
+  for (const node of nodes) {
+    if (node.kind === "file") {
+      files.push(node.path);
+      continue;
+    }
+    files.push(...collectFilePaths(node.children));
+  }
+  return files;
+}
+
+function fileCandidatesFromNodeIds(nodeIds: string[]): string[] {
+  const candidates: string[] = [];
+  for (const nodeId of nodeIds) {
+    if (nodeId.startsWith("file:")) {
+      candidates.push(nodeId.slice("file:".length));
+      continue;
+    }
+    if (nodeId.startsWith("symbol:")) {
+      const rest = nodeId.slice("symbol:".length);
+      const [path] = rest.split("::");
+      if (path) {
+        candidates.push(path);
+      }
+    }
+  }
+  return Array.from(new Set(candidates));
+}
+
+function resolveSelectedFilePath(
+  nodeIds: string[] | undefined,
+  treeNodes: ProjectTreeNode[]
+): string | null {
+  if (!nodeIds || nodeIds.length === 0) {
+    return null;
+  }
+
+  const candidates = fileCandidatesFromNodeIds(nodeIds).map((value) =>
+    value.replaceAll("\\", "/")
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const available = collectFilePaths(treeNodes).map((value) => value.replaceAll("\\", "/"));
+  for (const candidate of candidates) {
+    if (available.includes(candidate)) {
+      return candidate;
+    }
+    const bySuffix = available.find((path) => {
+      const normalized = path.replaceAll("\\", "/");
+      return (
+        candidate === normalized || candidate.endsWith(`/${normalized}`)
+      );
+    });
+    if (bySuffix) {
+      return bySuffix;
+    }
+  }
+
+  return null;
+}
+
 function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const {
     projectTree,
@@ -42,6 +108,22 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
     fileError,
     selectFile,
   } = useSessionState(sessionId);
+  const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
+  const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
+
+  const handleSelectReviewRecord = useCallback(
+    (item: ReviewQueueItem) => {
+      setSelectedReviewRecordId(item.recordId);
+      const nodeIds = item.irNodeIds ?? [];
+      setSelectedGraphNodeIds(nodeIds);
+
+      const matchedFilePath = resolveSelectedFilePath(nodeIds, projectTree);
+      if (matchedFilePath) {
+        selectFile(matchedFilePath);
+      }
+    },
+    [projectTree, selectFile]
+  );
 
   return (
     <div className="desktop-app-shell workstation-shell vscode-shell">
@@ -106,8 +188,10 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
               content={fileContent}
               isLoading={fileLoading}
               error={fileError}
+              focusedRecordId={selectedReviewRecordId}
+              focusedNodeCount={selectedGraphNodeIds.length}
             />
-            <GraphLens sessionId={sessionId} />
+            <GraphLens sessionId={sessionId} selectedNodeIds={selectedGraphNodeIds} />
           </div>
         </section>
 
@@ -122,7 +206,11 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                 : { kind: "session", id: sessionId }
             }
           />
-          <ReviewQueue sessionId={sessionId} />
+          <ReviewQueue
+            sessionId={sessionId}
+            selectedRecordId={selectedReviewRecordId}
+            onSelectRecord={handleSelectReviewRecord}
+          />
         </aside>
       </main>
 

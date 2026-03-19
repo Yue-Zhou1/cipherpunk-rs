@@ -91,12 +91,62 @@ fn create_local_workspace_repo(root: &Path) -> (PathBuf, String) {
     .expect("write workspace manifest");
     fs::write(
         repo_root.join("rollup-core/Cargo.toml"),
-        "[package]\nname = \"rollup-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "[package]\nname = \"rollup-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[features]\ndefault = [\"workspace-fast-path\"]\nworkspace-fast-path = []\n",
     )
     .expect("write crate manifest");
     fs::write(
         repo_root.join("rollup-core/src/lib.rs"),
         "pub fn verifier_ready() -> bool { true }\n",
+    )
+    .expect("write crate source");
+
+    run_git(&repo_root, &["init", "-q"]);
+    run_git(&repo_root, &["config", "user.name", "test"]);
+    run_git(&repo_root, &["config", "user.email", "test@example.com"]);
+    run_git(&repo_root, &["add", "."]);
+    run_git(&repo_root, &["commit", "-qm", "initial"]);
+
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&repo_root)
+        .output()
+        .expect("read git sha");
+    if !output.status.success() {
+        panic!(
+            "git rev-parse HEAD failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    (repo_root, sha)
+}
+
+fn create_local_crypto_rule_hit_repo(root: &Path) -> (PathBuf, String) {
+    let repo_root = root.join("repo-crypto");
+    fs::create_dir_all(repo_root.join("rollup-core/src")).expect("create repo crate");
+    fs::write(
+        repo_root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"rollup-core\"]\nresolver = \"2\"\n",
+    )
+    .expect("write workspace manifest");
+    fs::write(
+        repo_root.join("rollup-core/Cargo.toml"),
+        "[package]\nname = \"rollup-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write crate manifest");
+    fs::write(
+        repo_root.join("rollup-core/src/lib.rs"),
+        r#"
+pub fn trigger_nonce_reuse() {
+    let key = [7u8; 32];
+    let nonce = 0u64;
+    aead_encrypt(key, nonce, b"secret");
+}
+
+fn aead_encrypt(_key: [u8; 32], _nonce: u64, _plaintext: &[u8]) {}
+"#,
     )
     .expect("write crate source");
 
@@ -421,6 +471,13 @@ async fn workstation_commands_return_tree_file_and_console_data() {
         .await
         .expect("load feature graph");
     assert_eq!(feature_graph.lens, "feature");
+    assert!(
+        feature_graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "workspace-fast-path"),
+        "feature graph should surface workspace manifest features"
+    );
 
     let dataflow_graph = session
         .load_dataflow_graph(&created.session_id, false)
@@ -477,6 +534,10 @@ async fn workstation_commands_return_tree_file_and_console_data() {
         !queue.items.is_empty(),
         "review queue should contain at least one candidate"
     );
+    assert!(
+        !queue.items[0].ir_node_ids.is_empty(),
+        "review queue items should expose graph provenance ids"
+    );
 
     let updated = session
         .apply_review_decision(
@@ -490,4 +551,50 @@ async fn workstation_commands_return_tree_file_and_console_data() {
         .await
         .expect("apply review decision");
     assert_eq!(updated.item.verification_status, "verified");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn review_queue_prefers_deterministic_rule_records_over_heuristic_seed() {
+    let dir = tempdir().expect("tempdir");
+    let (repo_root, commit_sha) = create_local_crypto_rule_hit_repo(dir.path());
+
+    let mut session = UiSessionState::new(dir.path().join(".audit-work"));
+    session
+        .resolve_source(SourceInputIpc {
+            kind: SourceKind::Local,
+            value: repo_root.display().to_string(),
+            commit_or_ref: Some(commit_sha),
+        })
+        .await
+        .expect("resolve local source");
+    session.detect_workspace().expect("detect workspace");
+    session
+        .confirm_workspace(ConfirmWorkspaceRequest {
+            confirmed: true,
+            ambiguous_crates: HashMap::new(),
+            no_llm_prose: false,
+        })
+        .expect("confirm workspace");
+
+    let created = session
+        .create_audit_session()
+        .await
+        .expect("create audit session");
+
+    let queue = session
+        .load_review_queue(&created.session_id)
+        .await
+        .expect("load review queue");
+
+    assert!(
+        queue
+            .items
+            .iter()
+            .any(|item| item.record_id.starts_with("rule-")),
+        "review queue should include records seeded from deterministic rule matches"
+    );
+    assert!(
+        queue.items.iter().any(|item| !item.ir_node_ids.is_empty()),
+        "deterministic records should expose graph provenance ids"
+    );
 }
