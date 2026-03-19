@@ -737,7 +737,7 @@ impl UiSessionState {
         let ir = self.load_or_build_project_ir(session_id, false).await?;
         let overview = ir.security_overview();
         let checklist = ir.checklist_plan();
-        let context_terms = toolbench_context_terms(&selection, &checklist, &overview);
+        let context_terms = toolbench_context_terms(&selection, &checklist, &overview, &ir);
 
         let (mut recommended_tools, similar_cases) = match self.load_knowledge_base() {
             Ok(knowledge_base) => {
@@ -1449,6 +1449,7 @@ fn toolbench_context_terms(
     selection: &ToolbenchSelectionRequest,
     checklist: &IrChecklistPlan,
     overview: &IrSecurityOverview,
+    ir: &ProjectIr,
 ) -> Vec<String> {
     let mut terms = Vec::<String>::new();
     let mut seen = HashSet::<String>::new();
@@ -1499,7 +1500,79 @@ fn toolbench_context_terms(
         }
     }
 
+    let seed_ids = toolbench_seed_node_ids(ir, selection);
+    if !seed_ids.is_empty() {
+        let neighborhood = ir.ir_neighborhood(&seed_ids, 24, 2);
+        for node_id in &neighborhood {
+            push_term(node_id);
+        }
+
+        let subgraph = ir.subgraph_for_nodes(&neighborhood);
+        for node in &subgraph.file_graph.nodes {
+            push_term(&relative_path_to_string(&node.path));
+            push_term(&node.language);
+        }
+        for node in &subgraph.symbol_graph.nodes {
+            push_term(&node.kind);
+            for token in split_context_tokens(&node.name) {
+                push_term(&token);
+            }
+        }
+        for node in &subgraph.feature_graph.nodes {
+            push_term(&node.name);
+            for token in split_context_tokens(&node.source) {
+                push_term(&token);
+            }
+        }
+        for edge in &subgraph.dataflow_graph.edges {
+            push_term(&edge.relation);
+        }
+        for snippet in ir.context_snippets_for_nodes(&neighborhood, 900) {
+            push_term(&snippet.node_id);
+            push_term(&relative_path_to_string(&snippet.file_path));
+            for token in split_context_tokens(&snippet.snippet).into_iter().take(24) {
+                push_term(&token);
+            }
+        }
+    }
+
     terms
+}
+
+fn toolbench_seed_node_ids(ir: &ProjectIr, selection: &ToolbenchSelectionRequest) -> Vec<String> {
+    let mut seeds = Vec::<String>::new();
+    match selection.kind.as_str() {
+        "file" => {
+            for node in &ir.file_graph.nodes {
+                let relative = relative_path_to_string(&node.path);
+                let absolute = node.path.to_string_lossy();
+                if selection.id == node.id
+                    || selection.id == relative
+                    || selection.id == absolute
+                    || absolute.ends_with(&selection.id)
+                {
+                    seeds.push(node.id.clone());
+                }
+            }
+        }
+        "symbol" => {
+            let query = selection.id.trim().to_ascii_lowercase();
+            for node in &ir.symbol_graph.nodes {
+                if selection.id == node.id
+                    || node.name.eq_ignore_ascii_case(&selection.id)
+                    || (!query.is_empty() && node.name.to_ascii_lowercase().contains(&query))
+                {
+                    seeds.push(node.id.clone());
+                }
+            }
+        }
+        "session" => {}
+        _ => {}
+    }
+
+    seeds.sort();
+    seeds.dedup();
+    seeds
 }
 
 fn split_context_tokens(value: &str) -> Vec<String> {

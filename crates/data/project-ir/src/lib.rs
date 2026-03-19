@@ -4,7 +4,9 @@
 //! The explicit edge type keeps lens-specific edge payloads strongly typed
 //! (for example, `DataflowEdge` with redaction metadata).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -23,8 +25,8 @@ use circom::CircomMapper;
 use rust::RustMapper;
 
 pub use graph::{
-    BasicEdge, DataflowEdge, DataflowNode, FeatureNode, FileNode, FrameworkView, Graph, ProjectIr,
-    ProjectIrFragment, SymbolNode,
+    BasicEdge, ContextSnippet, DataflowEdge, DataflowNode, FeatureNode, FileNode, FrameworkView,
+    Graph, ProjectIr, ProjectIrFragment, SymbolNode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +254,316 @@ impl ProjectIr {
 
         ChecklistPlan { domains }
     }
+
+    pub fn ir_neighborhood(
+        &self,
+        seed_node_ids: &[String],
+        max_nodes: usize,
+        max_hops: usize,
+    ) -> Vec<String> {
+        if max_nodes == 0 {
+            return vec![];
+        }
+
+        let known = self.known_node_ids();
+        let adjacency = self.adjacency_map();
+        let mut queue = VecDeque::<(String, usize)>::new();
+        let mut visited = BTreeSet::<String>::new();
+        let mut ordered = Vec::<String>::new();
+
+        for seed in seed_node_ids {
+            if known.contains(seed) && visited.insert(seed.clone()) {
+                queue.push_back((seed.clone(), 0));
+            }
+        }
+
+        while let Some((node_id, hops)) = queue.pop_front() {
+            ordered.push(node_id.clone());
+            if ordered.len() >= max_nodes {
+                break;
+            }
+
+            if hops >= max_hops {
+                continue;
+            }
+
+            if let Some(neighbors) = adjacency.get(&node_id) {
+                for neighbor in neighbors {
+                    if visited.insert(neighbor.clone()) {
+                        queue.push_back((neighbor.clone(), hops + 1));
+                    }
+                }
+            }
+        }
+
+        ordered
+    }
+
+    pub fn subgraph_for_nodes(&self, node_ids: &[String]) -> ProjectIrFragment {
+        let selected = node_ids
+            .iter()
+            .filter(|id| !id.trim().is_empty())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let includes = |id: &str| selected.contains(id);
+
+        let mut fragment = ProjectIrFragment::default();
+        fragment.file_graph.nodes = self
+            .file_graph
+            .nodes
+            .iter()
+            .filter(|node| includes(&node.id))
+            .cloned()
+            .collect();
+        fragment.file_graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        fragment.file_graph.edges = self
+            .file_graph
+            .edges
+            .iter()
+            .filter(|edge| includes(&edge.from) && includes(&edge.to))
+            .cloned()
+            .collect();
+        fragment
+            .file_graph
+            .edges
+            .sort_by(|a, b| (&a.from, &a.to, &a.relation).cmp(&(&b.from, &b.to, &b.relation)));
+
+        fragment.symbol_graph.nodes = self
+            .symbol_graph
+            .nodes
+            .iter()
+            .filter(|node| includes(&node.id))
+            .cloned()
+            .collect();
+        fragment.symbol_graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        fragment.symbol_graph.edges = self
+            .symbol_graph
+            .edges
+            .iter()
+            .filter(|edge| includes(&edge.from) && includes(&edge.to))
+            .cloned()
+            .collect();
+        fragment
+            .symbol_graph
+            .edges
+            .sort_by(|a, b| (&a.from, &a.to, &a.relation).cmp(&(&b.from, &b.to, &b.relation)));
+
+        fragment.feature_graph.nodes = self
+            .feature_graph
+            .nodes
+            .iter()
+            .filter(|node| includes(&node.id))
+            .cloned()
+            .collect();
+        fragment.feature_graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        fragment.feature_graph.edges = self
+            .feature_graph
+            .edges
+            .iter()
+            .filter(|edge| includes(&edge.from) && includes(&edge.to))
+            .cloned()
+            .collect();
+        fragment
+            .feature_graph
+            .edges
+            .sort_by(|a, b| (&a.from, &a.to, &a.relation).cmp(&(&b.from, &b.to, &b.relation)));
+
+        fragment.dataflow_graph.nodes = self
+            .dataflow_graph
+            .nodes
+            .iter()
+            .filter(|node| includes(&node.id))
+            .cloned()
+            .collect();
+        fragment.dataflow_graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        fragment.dataflow_graph.edges = self
+            .dataflow_graph
+            .edges
+            .iter()
+            .filter(|edge| includes(&edge.from) && includes(&edge.to))
+            .cloned()
+            .collect();
+        fragment.dataflow_graph.edges.sort_by(|a, b| {
+            (&a.from, &a.to, &a.relation, &a.value_preview).cmp(&(
+                &b.from,
+                &b.to,
+                &b.relation,
+                &b.value_preview,
+            ))
+        });
+
+        fragment.framework_views = self
+            .framework_views
+            .iter()
+            .filter_map(|view| {
+                let mut view_nodes = view
+                    .node_ids
+                    .iter()
+                    .filter(|id| includes(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                view_nodes.sort();
+                view_nodes.dedup();
+                (!view_nodes.is_empty()).then(|| FrameworkView {
+                    framework: view.framework.clone(),
+                    node_ids: view_nodes,
+                })
+            })
+            .collect();
+        fragment.framework_views.sort_by(|a, b| {
+            (&a.framework, &a.node_ids).cmp(&(&b.framework, &b.node_ids))
+        });
+
+        fragment
+    }
+
+    pub fn context_snippets_for_nodes(
+        &self,
+        node_ids: &[String],
+        max_chars: usize,
+    ) -> Vec<ContextSnippet> {
+        if max_chars == 0 {
+            return vec![];
+        }
+
+        let mut remaining = max_chars;
+        let mut resolved = BTreeMap::<String, PathBuf>::new();
+        for node_id in node_ids {
+            if node_id.trim().is_empty() || resolved.contains_key(node_id) {
+                continue;
+            }
+
+            if let Some(path) = self.resolve_file_for_node_id(node_id) {
+                resolved.insert(node_id.clone(), path);
+            }
+        }
+
+        let mut snippets = Vec::<ContextSnippet>::new();
+        for (node_id, file_path) in resolved {
+            if remaining == 0 {
+                break;
+            }
+
+            let max_bytes = (remaining.saturating_mul(4)).clamp(512, 16 * 1024);
+            let Some(snippet) = read_file_prefix(&file_path, max_bytes, remaining) else {
+                continue;
+            };
+            if snippet.trim().is_empty() {
+                continue;
+            }
+
+            remaining = remaining.saturating_sub(snippet.chars().count());
+            snippets.push(ContextSnippet {
+                node_id,
+                file_path,
+                snippet,
+            });
+        }
+
+        snippets
+    }
+
+    fn known_node_ids(&self) -> BTreeSet<String> {
+        let mut ids = BTreeSet::<String>::new();
+        ids.extend(self.file_graph.nodes.iter().map(|node| node.id.clone()));
+        ids.extend(self.symbol_graph.nodes.iter().map(|node| node.id.clone()));
+        ids.extend(self.feature_graph.nodes.iter().map(|node| node.id.clone()));
+        ids.extend(self.dataflow_graph.nodes.iter().map(|node| node.id.clone()));
+        ids
+    }
+
+    fn adjacency_map(&self) -> BTreeMap<String, BTreeSet<String>> {
+        let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
+        let add_edge =
+            |adjacency: &mut BTreeMap<String, BTreeSet<String>>, from: &str, to: &str| {
+                adjacency
+                    .entry(from.to_string())
+                    .or_default()
+                    .insert(to.to_string());
+                adjacency
+                    .entry(to.to_string())
+                    .or_default()
+                    .insert(from.to_string());
+            };
+
+        for edge in &self.file_graph.edges {
+            add_edge(&mut adjacency, &edge.from, &edge.to);
+        }
+        for edge in &self.symbol_graph.edges {
+            add_edge(&mut adjacency, &edge.from, &edge.to);
+        }
+        for edge in &self.feature_graph.edges {
+            add_edge(&mut adjacency, &edge.from, &edge.to);
+        }
+        for edge in &self.dataflow_graph.edges {
+            add_edge(&mut adjacency, &edge.from, &edge.to);
+        }
+
+        adjacency
+    }
+
+    fn resolve_file_for_node_id(&self, node_id: &str) -> Option<PathBuf> {
+        if let Some(node) = self.file_graph.nodes.iter().find(|node| node.id == node_id) {
+            return Some(node.path.clone());
+        }
+        if let Some(node) = self
+            .symbol_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+        {
+            return Some(node.file.clone());
+        }
+        if let Some(node) = self
+            .dataflow_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+            && let Some(path) = &node.file
+        {
+            return Some(path.clone());
+        }
+        if let Some(node) = self
+            .feature_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+        {
+            return parse_feature_source_path(&node.source);
+        }
+        if let Some(path) = node_id.strip_prefix("file:") {
+            let parsed = PathBuf::from(path);
+            if parsed.exists() {
+                return Some(parsed);
+            }
+        }
+
+        None
+    }
+}
+
+fn parse_feature_source_path(source: &str) -> Option<PathBuf> {
+    let direct = PathBuf::from(source);
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    let (path, suffix) = source.rsplit_once(':')?;
+    if suffix.chars().all(|ch| ch.is_ascii_digit()) {
+        let line_scoped = PathBuf::from(path);
+        if line_scoped.exists() {
+            return Some(line_scoped);
+        }
+    }
+
+    None
+}
+
+fn read_file_prefix(path: &Path, max_bytes: usize, max_chars: usize) -> Option<String> {
+    let handle = File::open(path).ok()?;
+    let mut bytes = Vec::<u8>::new();
+    handle.take(max_bytes as u64).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).chars().take(max_chars).collect())
 }
 
 fn contains_crypto_indicator(value: &str) -> bool {

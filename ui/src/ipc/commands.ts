@@ -156,6 +156,7 @@ export type ReviewQueueItem = {
   verificationStatus: "verified" | "unverified";
   labels: string[];
   evidenceRefs: string[];
+  irNodeIds?: string[];
 };
 
 export type LoadReviewQueueResponse = {
@@ -515,6 +516,7 @@ const FALLBACK_REVIEW_QUEUE_ITEMS: ReviewQueueItem[] = [
     verificationStatus: "unverified",
     labels: ["generated", "crypto"],
     evidenceRefs: ["evidence://pending"],
+    irNodeIds: ["f2", "f1"],
   },
 ];
 
@@ -525,6 +527,7 @@ function cloneReviewQueueItems(items: ReviewQueueItem[]): ReviewQueueItem[] {
     ...item,
     labels: [...item.labels],
     evidenceRefs: [...item.evidenceRefs],
+    irNodeIds: [...(item.irNodeIds ?? [])],
   }));
 }
 
@@ -547,6 +550,7 @@ function applyFallbackReviewDecision(
     ...item,
     labels: [...item.labels],
     evidenceRefs: [...item.evidenceRefs],
+    irNodeIds: [...(item.irNodeIds ?? [])],
   };
 
   if (request.note && request.note.trim().length > 0) {

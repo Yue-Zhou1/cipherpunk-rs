@@ -65,6 +65,13 @@ pub struct FrameworkView {
     pub node_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextSnippet {
+    pub node_id: String,
+    pub file_path: PathBuf,
+    pub snippet: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectIr {
     pub file_graph: Graph<FileNode, BasicEdge>,
