@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use audit_agent_core::finding::CodeLocation;
-use llm::{CompletionOpts, EvidenceGate, HarnessCode, LlmProvider, LlmRole, llm_call};
 use llm::sanitize::{GraphContextEntry, pack_graph_aware_context};
+use llm::semantic_memory::format_semantic_signatures;
+use llm::{CompletionOpts, EvidenceGate, HarnessCode, LlmProvider, LlmRole, llm_call};
 use num_bigint::BigUint;
 use sandbox::SandboxExecutor;
+
+pub use llm::semantic_memory::SemanticSignatureContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSignature {
@@ -33,6 +36,7 @@ pub struct HarnessRequest {
     pub target_fn: FunctionSignature,
     pub source_context: String,
     pub graph_context: Vec<GraphContextEntry>,
+    pub semantic_signatures: Vec<SemanticSignatureContext>,
     pub context_char_budget: usize,
     pub rule_trigger: RuleTrigger,
     pub required_assertion: AssertionSpec,
@@ -145,9 +149,12 @@ impl KaniHarnessScaffolder {
              counterexample faster without over-constraining the input space.\n\
              Output ONLY valid Rust kani::assume!(...) lines. \
              Do NOT add new assert!() calls. Do NOT change existing assertions.\n\
-             Function:\n{context}\n\nSkeleton:\n{skeleton}",
+             Function:\n{context}\n\n\
+             Historical signatures:\n{signatures}\n\n\
+             Skeleton:\n{skeleton}",
             assertion = req.required_assertion,
             context = packed_context,
+            signatures = format_semantic_signatures(&req.semantic_signatures),
         );
         let raw = llm_call(
             llm,

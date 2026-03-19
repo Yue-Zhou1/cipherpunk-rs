@@ -4,10 +4,24 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
+[features]
+default = []
+memory-block = [
+  "dep:reqwest",
+  "dep:rmp-serde",
+  "dep:schemars",
+  "dep:serde_json",
+]
+
 [dependencies]
 anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+rmp-serde = { version = "1", optional = true }
+schemars = { version = "0.8", features = ["derive"], optional = true }
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
 serde_yaml = "0.9"
 
 [dev-dependencies]
+mockito = "1"
 tempfile = "3"

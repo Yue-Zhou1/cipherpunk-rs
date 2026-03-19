@@ -17,6 +17,8 @@ use intake::project_snapshot_from_config;
 use intake::source::SourceInput;
 use intake::workspace::WorkspaceAnalyzer;
 use knowledge::KnowledgeBase;
+use knowledge::memory_block::MemoryBlock;
+use knowledge::memory_block::embedder::resolved_config_and_provider_from_env;
 use knowledge::models::AdjudicatedCase;
 use orchestrator::{AuditJob, AuditJobKind, AuditOrchestrator};
 use project_ir::{
@@ -1064,8 +1066,45 @@ impl UiSessionState {
         self.work_dir.join("knowledge-feedback.yaml")
     }
 
+    fn memory_block_path(&self) -> Option<PathBuf> {
+        if let Ok(raw) = std::env::var("KNOWLEDGE_MEMORY_BLOCK_PATH") {
+            let value = raw.trim();
+            if !value.is_empty() {
+                return Some(PathBuf::from(value));
+            }
+        }
+
+        let default = self.work_dir.join("knowledge.bin");
+        if default.exists() {
+            Some(default)
+        } else {
+            None
+        }
+    }
+
     fn load_knowledge_base(&self) -> Result<KnowledgeBase> {
-        KnowledgeBase::load_from_repo_root_with_store(self.knowledge_feedback_store_path())
+        let mut knowledge_base =
+            KnowledgeBase::load_from_repo_root_with_store(self.knowledge_feedback_store_path())?;
+
+        if let Some(path) = self.memory_block_path() {
+            if path.exists() {
+                match resolved_config_and_provider_from_env()
+                    .and_then(|(config, embedder)| MemoryBlock::load(&path, &config, embedder))
+                {
+                    Ok(block) => knowledge_base.attach_memory_block(block),
+                    Err(err) => {
+                        let payload = serde_json::json!({
+                            "event": "knowledge.memory_block.load_failed",
+                            "path": path.display().to_string(),
+                            "error": err.to_string(),
+                        });
+                        eprintln!("{payload}");
+                    }
+                }
+            }
+        }
+
+        Ok(knowledge_base)
     }
 }
 

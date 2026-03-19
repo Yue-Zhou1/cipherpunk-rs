@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use async_trait::async_trait;
 use audit_agent_core::finding::VerificationStatus;
-use llm::copilot::{ChecklistPlan, CopilotService};
+use llm::copilot::{ChecklistPlan, CopilotService, SemanticSignatureContext};
 use llm::sanitize::{GraphContextEntry, pack_graph_aware_context};
 use llm::{CompletionOpts, LlmProvider};
 
@@ -76,7 +76,10 @@ async fn candidate_generation_prefers_graph_context_when_available() {
         .expect("candidate");
 
     assert_eq!(candidate.title, "Possible bug");
-    let prompt = captured_prompt.lock().expect("lock captured prompt").clone();
+    let prompt = captured_prompt
+        .lock()
+        .expect("lock captured prompt")
+        .clone();
     assert!(prompt.contains("GRAPH_CONTEXT_SENTINEL"));
     assert!(!prompt.contains("SOURCE_CONTEXT_SENTINEL"));
 }
@@ -95,11 +98,58 @@ async fn candidate_generation_without_graph_context_does_not_duplicate_hotspot()
         .await
         .expect("candidate");
 
-    let prompt = captured_prompt.lock().expect("lock captured prompt").clone();
+    let prompt = captured_prompt
+        .lock()
+        .expect("lock captured prompt")
+        .clone();
     let count = prompt.matches("HOTSPOT_SENTINEL").count();
     assert_eq!(
         count, 1,
         "hotspot text should appear once when no graph context is supplied"
+    );
+}
+
+#[tokio::test]
+async fn candidate_generation_includes_semantic_signature_context_when_provided() {
+    let captured_prompt = Arc::new(Mutex::new(String::new()));
+    let provider = Arc::new(CapturePromptProvider {
+        prompt: captured_prompt.clone(),
+        json: r#"{"title":"Possible bug","summary":"review me"}"#.to_string(),
+    });
+    let service = CopilotService::new(provider);
+
+    let _candidate = service
+        .generate_candidate_with_semantic_context(
+            "hotspot",
+            "source",
+            &[],
+            &[SemanticSignatureContext {
+                id: "MEM-1".to_string(),
+                title: "Nonce uniqueness invariant".to_string(),
+                summary: "Distinct calls must use distinct nonces".to_string(),
+                invariant: "nonce(a) != nonce(b)".to_string(),
+                remediation: "Persist nonce state".to_string(),
+                tags: vec!["nonce".to_string(), "aead".to_string()],
+            }],
+        )
+        .await
+        .expect("candidate");
+
+    let prompt = captured_prompt
+        .lock()
+        .expect("lock captured prompt")
+        .clone();
+    assert!(
+        prompt.contains("Historical signatures"),
+        "prompt should include semantic signatures section"
+    );
+    assert!(
+        prompt.contains("MEM-1"),
+        "prompt should include semantic signature id"
+    );
+    assert!(
+        prompt.contains("nonce(a) != nonce(b)"),
+        "prompt should include semantic invariant"
     );
 }
 

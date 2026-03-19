@@ -4,10 +4,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub mod loader;
+#[cfg(feature = "memory-block")]
+pub mod memory_block;
 pub mod models;
 pub mod store;
 
 use loader::{load_domains, load_playbooks};
+#[cfg(feature = "memory-block")]
+use memory_block::MemoryBlock;
 use models::{AdjudicatedCase, DomainChecklist, ReproPattern, ToolPlaybook, ToolSequence};
 use store::KnowledgeStore;
 
@@ -17,11 +21,13 @@ pub struct ToolRecommendation {
     pub rationale: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct KnowledgeBase {
     playbooks: Vec<ToolPlaybook>,
     domains: BTreeMap<String, DomainChecklist>,
     store: KnowledgeStore,
+    #[cfg(feature = "memory-block")]
+    memory_block: Option<MemoryBlock>,
 }
 
 impl KnowledgeBase {
@@ -43,6 +49,8 @@ impl KnowledgeBase {
             playbooks,
             domains,
             store: KnowledgeStore::default(),
+            #[cfg(feature = "memory-block")]
+            memory_block: None,
         })
     }
 
@@ -134,6 +142,11 @@ impl KnowledgeBase {
         self.domains.get(domain_id)
     }
 
+    #[cfg(feature = "memory-block")]
+    pub fn attach_memory_block(&mut self, memory_block: MemoryBlock) {
+        self.memory_block = Some(memory_block);
+    }
+
     pub fn ingest_true_positive(&mut self, case: AdjudicatedCase) {
         self.store.ingest_true_positive(case);
     }
@@ -187,6 +200,25 @@ impl KnowledgeBase {
 
         if matched.is_empty() {
             matched.extend(self.store.false_positives().iter().cloned());
+        }
+
+        #[cfg(feature = "memory-block")]
+        if let Some(memory_block) = &self.memory_block {
+            let query_text = context.join(" ");
+            if !query_text.trim().is_empty() {
+                if let Ok(semantic) = memory_block.search(&query_text, limit.max(1)) {
+                    let mut seen_ids = matched
+                        .iter()
+                        .map(|case| case.id.clone())
+                        .collect::<BTreeSet<_>>();
+                    for result in semantic {
+                        let semantic_case = result.signature.to_adjudicated_case();
+                        if seen_ids.insert(semantic_case.id.clone()) {
+                            matched.push(semantic_case);
+                        }
+                    }
+                }
+            }
         }
 
         matched.into_iter().take(limit.max(1)).collect()
