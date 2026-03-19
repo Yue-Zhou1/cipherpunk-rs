@@ -206,15 +206,13 @@ fn parse_signal_decls(line: &str) -> Vec<(String, String)> {
         ("intermediate", after_signal)
     };
 
-    let declarations = remainder
+    remainder
         .split(';')
         .next()
         .unwrap_or("")
         .split(',')
         .filter_map(|value| parse_signal_name(value).map(|name| (kind.to_string(), name)))
-        .collect::<Vec<_>>();
-
-    declarations
+        .collect::<Vec<_>>()
 }
 
 fn parse_signal_name(value: &str) -> Option<String> {

@@ -20,6 +20,14 @@ pub type MacroExpansionMap = HashMap<SpanId, String>;
 pub type TraitImplMap = HashMap<String, Vec<FnRef>>;
 pub type CfgVariantMap = HashMap<String, Vec<CfgDivergence>>;
 
+struct FileScanOutputs<'a> {
+    call_graph: &'a mut CallGraph,
+    macro_expansions: &'a mut MacroExpansionMap,
+    macro_sites: &'a mut Vec<MacroSite>,
+    trait_impls: &'a mut TraitImplMap,
+    cfg_variants: &'a mut CfgVariantMap,
+}
+
 static FN_DECL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").expect("fn regex"));
 static CALL_RE: LazyLock<Regex> =
@@ -236,11 +244,13 @@ fn build_with_backend(
                 &member.name,
                 &file_path,
                 &content,
-                &mut call_graph,
-                &mut macro_expansions,
-                &mut macro_sites,
-                &mut trait_impls,
-                &mut cfg_variants,
+                &mut FileScanOutputs {
+                    call_graph: &mut call_graph,
+                    macro_expansions: &mut macro_expansions,
+                    macro_sites: &mut macro_sites,
+                    trait_impls: &mut trait_impls,
+                    cfg_variants: &mut cfg_variants,
+                },
             );
         }
     }
@@ -396,12 +406,16 @@ fn scan_file(
     crate_name: &str,
     file_path: &Path,
     content: &str,
-    call_graph: &mut CallGraph,
-    macro_expansions: &mut MacroExpansionMap,
-    macro_sites: &mut Vec<MacroSite>,
-    trait_impls: &mut TraitImplMap,
-    cfg_variants: &mut CfgVariantMap,
+    outputs: &mut FileScanOutputs<'_>,
 ) {
+    let FileScanOutputs {
+        call_graph,
+        macro_expansions,
+        macro_sites,
+        trait_impls,
+        cfg_variants,
+    } = outputs;
+
     // Keep this scanner in sync with
     // `crates/data/project-ir/src/semantic.rs::scan_line_level_rust_facts`.
     // Known limitation: impl/fn context tracking is best-effort and assumes
