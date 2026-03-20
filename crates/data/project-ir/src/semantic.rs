@@ -95,6 +95,35 @@ pub struct FunctionCallSite {
     pub callee: String,
 }
 
+#[derive(Debug, Default)]
+struct SemanticScanState {
+    functions: Vec<FunctionSymbol>,
+    variables: Vec<VariableSymbol>,
+    function_calls: Vec<FunctionCallSite>,
+    cfg_features: Vec<String>,
+    cfg_divergences: Vec<CfgDivergence>,
+}
+
+impl SemanticScanState {
+    fn into_semantic_file(
+        self,
+        path: PathBuf,
+        macro_sites: Vec<MacroSite>,
+        trait_impls: Vec<TraitImplRef>,
+    ) -> SemanticFile {
+        SemanticFile {
+            path,
+            functions: self.functions,
+            variables: self.variables,
+            function_calls: self.function_calls,
+            cfg_features: self.cfg_features,
+            macro_sites,
+            trait_impls,
+            cfg_divergences: self.cfg_divergences,
+        }
+    }
+}
+
 pub fn build_rust_semantic_index(root: &Path) -> Result<SemanticIndex> {
     let mut files = Vec::<SemanticFile>::new();
     for entry in WalkDir::new(root).follow_links(true) {
@@ -115,39 +144,17 @@ pub fn build_rust_semantic_index(root: &Path) -> Result<SemanticIndex> {
 }
 
 fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
-    let mut functions = Vec::<FunctionSymbol>::new();
-    let mut variables = Vec::<VariableSymbol>::new();
-    let mut function_calls = Vec::<FunctionCallSite>::new();
-    let mut cfg_features = Vec::<String>::new();
+    let mut scan_state = SemanticScanState::default();
     let mut macro_sites = Vec::<MacroSite>::new();
     let mut trait_impls = Vec::<TraitImplRef>::new();
-    let mut cfg_divergences = Vec::<CfgDivergence>::new();
 
     let mut parser = Parser::new();
     if parser.set_language(&tree_sitter_rust::language()).is_err() {
-        return SemanticFile {
-            path,
-            functions,
-            variables,
-            function_calls,
-            cfg_features,
-            macro_sites,
-            trait_impls,
-            cfg_divergences,
-        };
+        return scan_state.into_semantic_file(path, macro_sites, trait_impls);
     }
 
     let Some(tree) = parser.parse(content, None) else {
-        return SemanticFile {
-            path,
-            functions,
-            variables,
-            function_calls,
-            cfg_features,
-            macro_sites,
-            trait_impls,
-            cfg_divergences,
-        };
+        return scan_state.into_semantic_file(path, macro_sites, trait_impls);
     };
 
     walk_node(
@@ -155,24 +162,11 @@ fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
         content.as_bytes(),
         None,
         &[],
-        &mut functions,
-        &mut variables,
-        &mut function_calls,
-        &mut cfg_features,
-        &mut cfg_divergences,
+        &mut scan_state,
     );
     scan_line_level_rust_facts(content, &mut macro_sites, &mut trait_impls);
 
-    SemanticFile {
-        path,
-        functions,
-        variables,
-        function_calls,
-        cfg_features,
-        macro_sites,
-        trait_impls,
-        cfg_divergences,
-    }
+    scan_state.into_semantic_file(path, macro_sites, trait_impls)
 }
 
 fn walk_node(
@@ -180,24 +174,27 @@ fn walk_node(
     source: &[u8],
     current_function: Option<&str>,
     module_scope: &[String],
-    functions: &mut Vec<FunctionSymbol>,
-    variables: &mut Vec<VariableSymbol>,
-    function_calls: &mut Vec<FunctionCallSite>,
-    cfg_features: &mut Vec<String>,
-    cfg_divergences: &mut Vec<CfgDivergence>,
+    scan_state: &mut SemanticScanState,
 ) {
     if node.kind() == "attribute_item"
         && let Some(feature) = parse_cfg_feature(node, source)
     {
         let line = node.start_position().row as u32 + 1;
-        if !cfg_features.iter().any(|existing| existing == &feature) {
-            cfg_features.push(feature.clone());
+        if !scan_state
+            .cfg_features
+            .iter()
+            .any(|existing| existing == &feature)
+        {
+            scan_state.cfg_features.push(feature.clone());
         }
-        if !cfg_divergences
+        if !scan_state
+            .cfg_divergences
             .iter()
             .any(|existing| existing.feature == feature && existing.line == line)
         {
-            cfg_divergences.push(CfgDivergence { feature, line });
+            scan_state
+                .cfg_divergences
+                .push(CfgDivergence { feature, line });
         }
     }
 
@@ -211,13 +208,13 @@ fn walk_node(
         } else {
             format!("{}::{function_name}", module_scope.join("::"))
         };
-        functions.push(FunctionSymbol {
+        scan_state.functions.push(FunctionSymbol {
             name: function_name.clone(),
             qualified_name: Some(qualified_name),
             line: node.start_position().row as u32 + 1,
             signature: extract_function_signature(node, source),
         });
-        collect_calls_in_function(node, source, &function_name, function_calls);
+        collect_calls_in_function(node, source, &function_name, &mut scan_state.function_calls);
 
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
@@ -226,11 +223,7 @@ fn walk_node(
                 source,
                 Some(&function_name),
                 module_scope,
-                functions,
-                variables,
-                function_calls,
-                cfg_features,
-                cfg_divergences,
+                scan_state,
             );
         }
         return;
@@ -240,23 +233,22 @@ fn walk_node(
         && let Some(pattern) = node.child_by_field_name("pattern")
         && let Some(name) = first_pattern_identifier(pattern, source)
     {
-        variables.push(VariableSymbol {
+        scan_state.variables.push(VariableSymbol {
             name: name.to_string(),
             line: node.start_position().row as u32 + 1,
             function: current_function.map(str::to_string),
         });
     }
 
-    if node.kind() == "const_item" || node.kind() == "static_item" {
-        if let Some(name_node) = node.child_by_field_name("name")
-            && let Some(name) = node_text(name_node, source)
-        {
-            variables.push(VariableSymbol {
-                name: name.to_string(),
-                line: node.start_position().row as u32 + 1,
-                function: None,
-            });
-        }
+    if (node.kind() == "const_item" || node.kind() == "static_item")
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Some(name) = node_text(name_node, source)
+    {
+        scan_state.variables.push(VariableSymbol {
+            name: name.to_string(),
+            line: node.start_position().row as u32 + 1,
+            function: None,
+        });
     }
 
     if node.kind() == "mod_item"
@@ -273,11 +265,7 @@ fn walk_node(
                 source,
                 current_function,
                 &nested_scope,
-                functions,
-                variables,
-                function_calls,
-                cfg_features,
-                cfg_divergences,
+                scan_state,
             );
         }
         return;
@@ -290,11 +278,7 @@ fn walk_node(
             source,
             current_function,
             module_scope,
-            functions,
-            variables,
-            function_calls,
-            cfg_features,
-            cfg_divergences,
+            scan_state,
         );
     }
 }
