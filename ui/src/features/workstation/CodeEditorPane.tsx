@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import Editor from "@monaco-editor/react";
+import type { editor as MonacoEditor } from "monaco-editor";
 
 type CodeEditorPaneProps = {
   filePath: string | null;
@@ -7,6 +9,7 @@ type CodeEditorPaneProps = {
   error: string | null;
   focusedRecordId?: string | null;
   focusedNodeCount?: number;
+  onSymbolFocus?: (symbol: string | null) => void;
 };
 
 function editorLanguage(filePath: string | null): string {
@@ -56,8 +59,13 @@ function CodeEditorPane({
   error,
   focusedRecordId,
   focusedNodeCount = 0,
+  onSymbolFocus,
 }: CodeEditorPaneProps): JSX.Element {
   const language = editorLanguage(filePath);
+
+  useEffect(() => {
+    onSymbolFocus?.(null);
+  }, [filePath, onSymbolFocus]);
 
   return (
     <section className="panel workstation-editor" aria-label="Code Editor">
@@ -92,6 +100,17 @@ function CodeEditorPane({
                 automaticLayout: true,
                 wordWrap: "on",
                 fontSize: 13,
+              }}
+              onMount={(editorInstance: MonacoEditor.IStandaloneCodeEditor) => {
+                editorInstance.onMouseDown((event) => {
+                  if (!event.target.position || !onSymbolFocus) {
+                    return;
+                  }
+                  const symbol = editorInstance
+                    .getModel()
+                    ?.getWordAtPosition(event.target.position)?.word;
+                  onSymbolFocus(symbol ?? null);
+                });
               }}
             />
           </div>

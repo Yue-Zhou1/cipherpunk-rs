@@ -1,0 +1,10 @@
+services:
+  audit-agent:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./audit-data:/data
+    environment:
+      - WORK_DIR=/data
+      - AUDIT_WEB_EVENTS_POLL_MS=2000

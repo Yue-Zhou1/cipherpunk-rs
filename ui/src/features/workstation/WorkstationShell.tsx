@@ -1,7 +1,11 @@
 import { useCallback, useState } from "react";
+import { Allotment } from "allotment";
 import { Blocks, Files, GitBranch, Search, Settings } from "lucide-react";
 
+import { Button } from "../../components/ui/button";
 import type { ProjectTreeNode, ReviewQueueItem } from "../../ipc/commands";
+import { getTransport } from "../../ipc/transport";
+import "allotment/dist/style.css";
 import ActivityConsole from "./ActivityConsole";
 import ChecklistPanel from "./ChecklistPanel";
 import CodeEditorPane from "./CodeEditorPane";
@@ -108,14 +112,20 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
     fileError,
     selectFile,
   } = useSessionState(sessionId);
+  const webMode = getTransport().kind === "http";
+  const useSplitLayout =
+    typeof navigator !== "undefined" &&
+    !navigator.userAgent.toLowerCase().includes("jsdom");
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
+  const [focusedSymbolName, setFocusedSymbolName] = useState<string | null>(null);
 
   const handleSelectReviewRecord = useCallback(
     (item: ReviewQueueItem) => {
       setSelectedReviewRecordId(item.recordId);
       const nodeIds = item.irNodeIds ?? [];
       setSelectedGraphNodeIds(nodeIds);
+      setFocusedSymbolName(null);
 
       const matchedFilePath = resolveSelectedFilePath(nodeIds, projectTree);
       if (matchedFilePath) {
@@ -138,13 +148,19 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
         </div>
         <div className="vscode-title-center">audit-agent - {sessionId}</div>
         <div className="vscode-title-right">
-          <button type="button" className="vscode-title-action">
+          <Button type="button" variant="ghost" size="sm" className="vscode-title-action">
             Split Editor
-          </button>
+          </Button>
         </div>
       </header>
 
-      <main className="vscode-workbench">
+      <main
+        className={
+          useSplitLayout
+            ? "vscode-workbench workstation-resizable"
+            : "vscode-workbench"
+        }
+      >
         <aside className="vscode-activity-bar" aria-label="Activity Bar">
           <div className="vscode-activity-items">
             {ACTIVITY_ITEMS.map((item, index) => {
@@ -166,52 +182,137 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
             <Settings size={18} />
           </button>
         </aside>
+        {useSplitLayout ? (
+          <Allotment className="workstation-main-allotment" defaultSizes={[22, 53, 25]}>
+            <Allotment.Pane minSize={180}>
+              <ProjectExplorer
+                sessionId={sessionId}
+                nodes={projectTree}
+                selectedFilePath={selectedFilePath}
+                onSelectFile={selectFile}
+                isLoading={treeLoading}
+                error={treeError}
+              />
+            </Allotment.Pane>
 
-        <ProjectExplorer
-          sessionId={sessionId}
-          nodes={projectTree}
-          selectedFilePath={selectedFilePath}
-          onSelectFile={selectFile}
-          isLoading={treeLoading}
-          error={treeError}
-        />
+            <Allotment.Pane minSize={460}>
+              <section className="vscode-editor-column">
+                <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
+                  <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
+                    {fileTabLabel(selectedFilePath)}
+                  </button>
+                </div>
+                <Allotment vertical className="workstation-editor-allotment" defaultSizes={[58, 42]}>
+                  <Allotment.Pane minSize={180}>
+                    <CodeEditorPane
+                      filePath={selectedFilePath}
+                      content={fileContent}
+                      isLoading={fileLoading}
+                      error={fileError}
+                      focusedRecordId={selectedReviewRecordId}
+                      focusedNodeCount={selectedGraphNodeIds.length}
+                      onSymbolFocus={setFocusedSymbolName}
+                    />
+                  </Allotment.Pane>
+                  <Allotment.Pane minSize={180}>
+                    <GraphLens
+                      sessionId={sessionId}
+                      selectedNodeIds={selectedGraphNodeIds}
+                      focusSymbolName={focusedSymbolName}
+                      onNavigateToSource={(filePath) => {
+                        setFocusedSymbolName(null);
+                        selectFile(filePath);
+                      }}
+                    />
+                  </Allotment.Pane>
+                </Allotment>
+              </section>
+            </Allotment.Pane>
 
-        <section className="vscode-editor-column">
-          <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
-            <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
-              {fileTabLabel(selectedFilePath)}
-            </button>
-          </div>
-          <div className="vscode-editor-stack">
-            <CodeEditorPane
-              filePath={selectedFilePath}
-              content={fileContent}
-              isLoading={fileLoading}
-              error={fileError}
-              focusedRecordId={selectedReviewRecordId}
-              focusedNodeCount={selectedGraphNodeIds.length}
+            <Allotment.Pane minSize={220}>
+              <aside className="vscode-right-column">
+                <SecurityOverviewPanel sessionId={sessionId} />
+                {webMode ? null : (
+                  <>
+                    <ChecklistPanel sessionId={sessionId} />
+                    <ToolbenchPanel
+                      sessionId={sessionId}
+                      selection={
+                        selectedFilePath
+                          ? { kind: "file", id: selectedFilePath }
+                          : { kind: "session", id: sessionId }
+                      }
+                    />
+                    <ReviewQueue
+                      sessionId={sessionId}
+                      selectedRecordId={selectedReviewRecordId}
+                      onSelectRecord={handleSelectReviewRecord}
+                    />
+                  </>
+                )}
+              </aside>
+            </Allotment.Pane>
+          </Allotment>
+        ) : (
+          <>
+            <ProjectExplorer
+              sessionId={sessionId}
+              nodes={projectTree}
+              selectedFilePath={selectedFilePath}
+              onSelectFile={selectFile}
+              isLoading={treeLoading}
+              error={treeError}
             />
-            <GraphLens sessionId={sessionId} selectedNodeIds={selectedGraphNodeIds} />
-          </div>
-        </section>
-
-        <aside className="vscode-right-column">
-          <SecurityOverviewPanel sessionId={sessionId} />
-          <ChecklistPanel sessionId={sessionId} />
-          <ToolbenchPanel
-            sessionId={sessionId}
-            selection={
-              selectedFilePath
-                ? { kind: "file", id: selectedFilePath }
-                : { kind: "session", id: sessionId }
-            }
-          />
-          <ReviewQueue
-            sessionId={sessionId}
-            selectedRecordId={selectedReviewRecordId}
-            onSelectRecord={handleSelectReviewRecord}
-          />
-        </aside>
+            <section className="vscode-editor-column">
+              <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
+                <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
+                  {fileTabLabel(selectedFilePath)}
+                </button>
+              </div>
+              <div className="vscode-editor-stack">
+                <CodeEditorPane
+                  filePath={selectedFilePath}
+                  content={fileContent}
+                  isLoading={fileLoading}
+                  error={fileError}
+                  focusedRecordId={selectedReviewRecordId}
+                  focusedNodeCount={selectedGraphNodeIds.length}
+                  onSymbolFocus={setFocusedSymbolName}
+                />
+                <GraphLens
+                  sessionId={sessionId}
+                  selectedNodeIds={selectedGraphNodeIds}
+                  focusSymbolName={focusedSymbolName}
+                  onNavigateToSource={(filePath) => {
+                    setFocusedSymbolName(null);
+                    selectFile(filePath);
+                  }}
+                />
+              </div>
+            </section>
+            <aside className="vscode-right-column">
+              <SecurityOverviewPanel sessionId={sessionId} />
+              {webMode ? null : (
+                <>
+                  <ChecklistPanel sessionId={sessionId} />
+                  <ToolbenchPanel
+                    sessionId={sessionId}
+                    selection={
+                      selectedFilePath
+                        ? { kind: "file", id: selectedFilePath }
+                        : { kind: "session", id: sessionId }
+                    }
+                  />
+                  <ReviewQueue
+                    sessionId={sessionId}
+                    selectedRecordId={selectedReviewRecordId}
+                    onSelectRecord={handleSelectReviewRecord}
+                  />
+                </>
+              )}
+            </aside>
+          </>
+        )}
       </main>
 
       <ActivityConsole entries={consoleEntries} />

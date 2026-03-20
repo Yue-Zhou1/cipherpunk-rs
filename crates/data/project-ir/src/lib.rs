@@ -26,7 +26,7 @@ use rust::RustMapper;
 
 pub use graph::{
     BasicEdge, ContextSnippet, DataflowEdge, DataflowNode, FeatureNode, FileNode, FrameworkView,
-    Graph, ProjectIr, ProjectIrFragment, SymbolNode,
+    FunctionSignature, Graph, ParameterInfo, ProjectIr, ProjectIrFragment, SymbolNode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

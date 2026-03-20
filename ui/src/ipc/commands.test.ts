@@ -8,7 +8,9 @@ import {
   getAuditManifest,
   isTauriRuntime,
   resolveSource,
+  subscribeExecutionUpdates,
 } from "./commands";
+import { setTransportForTests, type Transport } from "./transport";
 
 describe("ipc commands", () => {
   beforeEach(() => {
@@ -16,6 +18,7 @@ describe("ipc commands", () => {
   });
 
   afterEach(() => {
+    setTransportForTests(null);
     vi.restoreAllMocks();
   });
 
@@ -30,6 +33,39 @@ describe("ipc commands", () => {
     });
 
     expect(response.auditId).toContain("audit-");
+  });
+
+  it("delegates command invocation to the configured transport", async () => {
+    const invokeCalls: Array<{
+      command: string;
+      args: Record<string, unknown>;
+    }> = [];
+    const invoke: Transport["invoke"] = async <T>(
+      command: string,
+      args: Record<string, unknown>
+    ): Promise<T> => {
+      invokeCalls.push({ command, args });
+      return { auditId: "audit-from-transport" } as T;
+    };
+    const transport: Transport = {
+      kind: "http",
+      invoke,
+      subscribe: () => () => undefined,
+    };
+    setTransportForTests(transport);
+
+    const response = await confirmWorkspace({
+      confirmed: true,
+      ambiguousCrates: { "bridge-adapter": false },
+    });
+
+    expect(invokeCalls).toEqual([
+      {
+        command: "confirm_workspace",
+        args: { decisions: { confirmed: true, ambiguousCrates: { "bridge-adapter": false } } },
+      },
+    ]);
+    expect(response.auditId).toBe("audit-from-transport");
   });
 
   it("uses tauri invoke bridge when available", async () => {
@@ -48,6 +84,28 @@ describe("ipc commands", () => {
       decisions: { confirmed: true, ambiguousCrates: { "bridge-adapter": false } },
     });
     expect(response.auditId).toBe("audit-from-tauri");
+  });
+
+  it("uses transport subscription when http transport is configured", () => {
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => unsubscribe);
+    const transport: Transport = {
+      kind: "http",
+      invoke: async <T>() => ({} as T),
+      subscribe,
+    };
+    setTransportForTests(transport);
+
+    const stop = subscribeExecutionUpdates("audit-123", () => undefined);
+
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledWith(
+      "audit_execution_update",
+      "audit-123",
+      expect.any(Function)
+    );
+    stop();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it("returns download destination through fallback in browser mode", async () => {

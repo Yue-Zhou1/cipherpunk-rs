@@ -2,9 +2,11 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
 import App from "./App";
+import { setTransportForTests, type Transport } from "./ipc/transport";
 
 afterEach(() => {
   delete (window as typeof window & { __TAURI__?: unknown }).__TAURI__;
+  setTransportForTests(null);
   vi.restoreAllMocks();
 });
 
@@ -97,6 +99,62 @@ describe("App layout shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /step 4/i }));
     fireEvent.click(screen.getByRole("button", { name: /confirm and start audit/i }));
+
+    expect(await screen.findByLabelText(/activity bar/i)).toBeInTheDocument();
+  });
+
+  it("uses URL routing in http transport mode", async () => {
+    const invoke: Transport["invoke"] = async function <T>(command: string): Promise<T> {
+      switch (command) {
+        case "get_project_tree":
+          return { sessionId: "sess-web", rootName: "repo", nodes: [] } as T;
+        case "read_source_file":
+          return { sessionId: "sess-web", path: "README.md", content: "# demo" } as T;
+        case "tail_session_console":
+          return { sessionId: "sess-web", entries: [] } as T;
+        case "load_file_graph":
+          return {
+            sessionId: "sess-web",
+            lens: "file",
+            redactedValues: true,
+            nodes: [],
+            edges: [],
+          } as T;
+        case "load_security_overview":
+          return {
+            sessionId: "sess-web",
+            assets: [],
+            trustBoundaries: [],
+            hotspots: [],
+            reviewNotes: [],
+          } as T;
+        case "load_checklist_plan":
+          return { sessionId: "sess-web", domains: [] } as T;
+        case "load_toolbench_context":
+          return {
+            sessionId: "sess-web",
+            selection: { kind: "session", id: "sess-web" },
+            recommendedTools: [],
+            domains: [],
+            overviewNotes: [],
+            similarCases: [],
+          } as T;
+        case "load_review_queue":
+          return { sessionId: "sess-web", items: [] } as T;
+        default:
+          return {} as T;
+      }
+    };
+
+    const transport: Transport = {
+      kind: "http",
+      invoke,
+      subscribe: () => () => undefined,
+    };
+    setTransportForTests(transport);
+    window.history.pushState({}, "", "/sessions/sess-web");
+
+    render(<App />);
 
     expect(await screen.findByLabelText(/activity bar/i)).toBeInTheDocument();
   });
