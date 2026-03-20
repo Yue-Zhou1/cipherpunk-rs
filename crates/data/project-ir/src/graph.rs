@@ -26,8 +26,24 @@ pub struct FileNode {
 pub struct SymbolNode {
     pub id: String,
     pub name: String,
+    pub qualified_name: Option<String>,
     pub file: PathBuf,
     pub kind: String,
+    pub line: u32,
+    pub signature: Option<FunctionSignature>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSignature {
+    pub parameters: Vec<ParameterInfo>,
+    pub return_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParameterInfo {
+    pub name: String,
+    pub type_annotation: Option<String>,
+    pub position: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

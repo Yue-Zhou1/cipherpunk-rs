@@ -402,12 +402,7 @@ struct FnContext {
     opened_block: bool,
 }
 
-fn scan_file(
-    crate_name: &str,
-    file_path: &Path,
-    content: &str,
-    outputs: &mut FileScanOutputs<'_>,
-) {
+fn scan_file(crate_name: &str, file_path: &Path, content: &str, outputs: &mut FileScanOutputs<'_>) {
     let FileScanOutputs {
         call_graph,
         macro_expansions,

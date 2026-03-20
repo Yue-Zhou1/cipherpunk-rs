@@ -14,15 +14,52 @@ use intake::confirmation::{ConfirmationSummary, CrateDecision, IntakeWarning, Us
 use intake::detection::FrameworkDetector;
 use intake::source::{SourceInput, SourceResolver};
 use intake::workspace::WorkspaceAnalyzer;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zip::CompressionMethod;
 use zip::write::FileOptions;
 
-pub mod ipc;
 
-pub use session_manager::{
-    ConfigParseResponse, CrateDecisionStyle, EvidencePreview, OutputType, ResolvedSourceView,
-};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedSourceView {
+    pub source: ResolvedSource,
+    pub warnings: Vec<IntakeWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigParseResponse {
+    Validated {
+        target_crates: Option<Vec<String>>,
+        exclude_crates: Option<Vec<String>>,
+        output_dir: PathBuf,
+    },
+    ConfigErrors {
+        errors: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrateDecisionStyle {
+    InScope,
+    Excluded,
+    Ambiguous,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputType {
+    ExecutivePdf,
+    TechnicalPdf,
+    EvidencePackZip,
+    FindingsSarif,
+    FindingsJson,
+    RegressionTestsZip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidencePreview {
+    pub script: String,
+    pub copyable: bool,
+}
 
 pub async fn resolve_source(input: SourceInput, work_dir: &Path) -> Result<ResolvedSourceView> {
     let resolved = SourceResolver::resolve(&input, work_dir).await?;

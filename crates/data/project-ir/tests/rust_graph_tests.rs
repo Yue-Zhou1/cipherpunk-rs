@@ -112,6 +112,118 @@ fn helper() {}
     );
 }
 
+#[tokio::test]
+async fn rust_ir_surfaces_variable_nodes_and_parameter_return_dataflow_edges() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_file(
+        &dir.path().join("Cargo.toml"),
+        r#"[workspace]
+members = ["demo"]
+resolver = "2"
+"#,
+    );
+    write_file(
+        &dir.path().join("demo/Cargo.toml"),
+        r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+"#,
+    );
+    write_file(
+        &dir.path().join("demo/src/lib.rs"),
+        r#"
+const MAX_RETRIES: usize = 3;
+
+fn callee(input: u32) -> u32 {
+    let doubled = input * 2;
+    doubled
+}
+
+fn caller(seed: u32) -> u32 {
+    let local = callee(seed);
+    local + 1
+}
+"#,
+    );
+
+    let ir = ProjectIrBuilder::for_path(dir.path())
+        .build()
+        .await
+        .expect("build project ir");
+
+    let caller_symbol = ir
+        .symbol_graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == "function" && node.name == "caller")
+        .expect("caller symbol");
+    let callee_symbol = ir
+        .symbol_graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == "function" && node.name == "callee")
+        .expect("callee symbol");
+
+    assert_eq!(caller_symbol.line, 9);
+    let callee_signature = callee_symbol.signature.as_ref().expect("callee signature");
+    assert_eq!(callee_signature.parameters.len(), 1);
+    assert_eq!(callee_signature.parameters[0].name, "input");
+    assert_eq!(
+        callee_signature.return_type.as_deref(),
+        Some("u32"),
+        "function signature return type should be captured"
+    );
+
+    assert!(
+        ir.dataflow_graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "MAX_RETRIES"),
+        "const declarations should become dataflow nodes"
+    );
+    assert!(
+        ir.dataflow_graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "doubled"),
+        "local let declarations should become dataflow nodes"
+    );
+    assert!(
+        ir.dataflow_graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "local"),
+        "caller-local let declarations should become dataflow nodes"
+    );
+
+    let caller_dataflow_id = format!("dataflow:{}", caller_symbol.id);
+    let callee_dataflow_id = format!("dataflow:{}", callee_symbol.id);
+    assert!(
+        ir.dataflow_graph.edges.iter().any(|edge| {
+            edge.from == caller_dataflow_id
+                && edge.to == callee_dataflow_id
+                && edge.relation == "parameter_flow"
+        }),
+        "call edges should emit parameter_flow relation"
+    );
+    assert!(
+        ir.dataflow_graph.edges.iter().any(|edge| {
+            edge.from == callee_dataflow_id
+                && edge.to == caller_dataflow_id
+                && edge.relation == "return_flow"
+        }),
+        "call edges should emit return_flow relation"
+    );
+    assert!(
+        ir.dataflow_graph
+            .edges
+            .iter()
+            .all(|edge| edge.relation != "call-arg-flow"),
+        "legacy placeholder relation should be removed"
+    );
+}
+
 #[test]
 fn ir_neighborhood_is_bounded_and_deduplicated_in_deterministic_order() {
     let graph = ProjectIr {
@@ -240,14 +352,20 @@ fn context_snippets_respect_budget_and_return_source_backed_entries() {
                 SymbolNode {
                     id: format!("symbol:{}::alpha", file_a.display()),
                     name: "alpha".to_string(),
+                    qualified_name: Some("alpha".to_string()),
                     file: file_a.clone(),
                     kind: "function".to_string(),
+                    line: 1,
+                    signature: None,
                 },
                 SymbolNode {
                     id: format!("symbol:{}::bravo", file_b.display()),
                     name: "bravo".to_string(),
+                    qualified_name: Some("bravo".to_string()),
                     file: file_b.clone(),
                     kind: "function".to_string(),
+                    line: 1,
+                    signature: None,
                 },
             ],
             edges: vec![],

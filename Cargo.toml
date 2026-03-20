@@ -9,6 +9,7 @@ members = [
     "crates/data/project-ir",
     "crates/data/session-store",
     "crates/services/intake",
+    "crates/services/session-manager",
     "crates/services/knowledge",
     "crates/services/llm",
     "crates/services/report",
@@ -18,6 +19,7 @@ members = [
     "crates/apps/cli",
     "crates/apps/orchestrator",
     "crates/apps/tauri-ui",
+    "crates/apps/web-server",
 ]
 resolver = "2"
 

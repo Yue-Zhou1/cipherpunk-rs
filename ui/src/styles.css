@@ -1,6 +1,21 @@
 @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
+  --tw-background: 222 47% 11%;
+  --tw-foreground: 210 40% 98%;
+  --tw-muted: 217 32% 17%;
+  --tw-muted-foreground: 215 20% 65%;
+  --tw-border: 215 16% 40%;
+  --tw-input: 215 20% 55%;
+  --tw-ring: 217 91% 60%;
+  --tw-primary: 142 71% 45%;
+  --tw-primary-foreground: 142 90% 7%;
+  --radius: 0.5rem;
+
   --bg-base: #0f172a;
   --bg-surface: #1e293b;
   --bg-elevated: #334155;
@@ -855,6 +870,26 @@ pre code {
   grid-template-columns: 48px 280px minmax(0, 1fr) 320px;
 }
 
+.vscode-workbench.workstation-resizable {
+  grid-template-columns: 48px minmax(0, 1fr);
+}
+
+.workstation-main-allotment {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.workstation-main-allotment .split-view-view,
+.workstation-editor-allotment .split-view-view {
+  min-height: 0;
+}
+
+.workstation-editor-allotment {
+  flex: 1;
+  min-height: 0;
+}
+
 .vscode-activity-bar {
   background: #333333;
   border-right: 1px solid #252526;
@@ -1082,6 +1117,110 @@ pre code {
   background: #1e1e1e;
   min-height: 240px;
   overflow: hidden;
+}
+
+.graph-lens-reactflow-canvas {
+  position: relative;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node {
+  border: 1px solid #455266;
+  border-radius: 8px;
+  background: #213043;
+  color: #d7dde4;
+  font-size: 12px;
+  line-height: 1.3;
+  padding: 8px 10px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.selected {
+  border-color: #c9ac52;
+  background: #4b3f24;
+  color: #fff4d0;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.module {
+  border-style: dashed;
+  border-color: #5f728b;
+  background: #2f3f53;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.module.collapsed {
+  border-color: #8e7544;
+  background: #463a25;
+}
+
+.graph-lens-reactflow-canvas .react-flow__edge-path {
+  stroke: #5c7394;
+}
+
+.graph-lens-reactflow-canvas .react-flow__edge-text {
+  fill: #aeb8c6;
+  font-size: 10px;
+}
+
+.graph-lens-reactflow-canvas .react-flow__controls {
+  border: 1px solid #314257;
+  background: #1f2731;
+  box-shadow: none;
+}
+
+.graph-lens-reactflow-canvas .react-flow__controls button {
+  border-bottom: 1px solid #314257;
+  color: #d2d8e2;
+  background: #1f2731;
+}
+
+.graph-lens-reactflow-canvas .react-flow__controls button:hover {
+  background: #2a3644;
+}
+
+.graph-lens-reactflow-canvas .react-flow__minimap {
+  background: rgba(24, 31, 39, 0.9);
+  border: 1px solid #314257;
+}
+
+.graph-lens-edge-detail {
+  border: 1px solid #344457;
+  border-radius: 6px;
+  background: #1b2531;
+  padding: 8px 10px;
+}
+
+.graph-lens-edge-title {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #b0bece;
+  text-transform: uppercase;
+}
+
+.graph-lens-tooltip {
+  position: fixed;
+  z-index: 60;
+  max-width: 320px;
+  pointer-events: none;
+  border: 1px solid #4e6078;
+  border-radius: 6px;
+  background: rgba(19, 25, 32, 0.96);
+  color: #dbe5f2;
+  padding: 8px 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+
+.graph-lens-tooltip-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #ffffff;
+}
+
+.graph-lens-tooltip-line {
+  margin: 0;
+  font-size: 11px;
+  color: #bcc8d8;
 }
 
 .graph-lens-block {

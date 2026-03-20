@@ -63,8 +63,11 @@ impl LanguageMapper for CircomMapper {
                     fragment.symbol_graph.nodes.push(SymbolNode {
                         id: template_symbol_id.clone(),
                         name: template.name.clone(),
+                        qualified_name: Some(template.name.clone()),
                         file: file_path.clone(),
                         kind: "circom_template".to_string(),
+                        line: template.line,
+                        signature: None,
                     });
                     fragment.symbol_graph.edges.push(BasicEdge {
                         from: file_id.clone(),
@@ -86,8 +89,11 @@ impl LanguageMapper for CircomMapper {
                     fragment.symbol_graph.nodes.push(SymbolNode {
                         id: signal_symbol_id.clone(),
                         name: format!("{}::{}", signal.template, signal.name),
+                        qualified_name: Some(format!("{}::{}", signal.template, signal.name)),
                         file: file_path.clone(),
                         kind: format!("circom_signal_{}", signal.kind),
+                        line: signal.line,
+                        signature: None,
                     });
                     if let Some(template_symbol_id) = template_symbol_ids.get(&signal.template) {
                         // New relation for symbol-level Circom indexing.

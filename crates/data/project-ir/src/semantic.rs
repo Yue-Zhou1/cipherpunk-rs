@@ -26,7 +26,28 @@ static MACRO_RE: LazyLock<Regex> =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSymbol {
     pub name: String,
+    pub qualified_name: Option<String>,
     pub line: u32,
+    pub signature: Option<FunctionSignatureSymbol>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSignatureSymbol {
+    pub parameters: Vec<ParameterSymbol>,
+    pub return_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParameterSymbol {
+    pub name: String,
+    pub type_annotation: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariableSymbol {
+    pub name: String,
+    pub line: u32,
+    pub function: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +76,7 @@ pub struct CfgDivergence {
 pub struct SemanticFile {
     pub path: PathBuf,
     pub functions: Vec<FunctionSymbol>,
+    pub variables: Vec<VariableSymbol>,
     pub function_calls: Vec<FunctionCallSite>,
     pub cfg_features: Vec<String>,
     pub macro_sites: Vec<MacroSite>,
@@ -71,6 +93,35 @@ pub struct SemanticIndex {
 pub struct FunctionCallSite {
     pub caller: String,
     pub callee: String,
+}
+
+#[derive(Debug, Default)]
+struct SemanticScanState {
+    functions: Vec<FunctionSymbol>,
+    variables: Vec<VariableSymbol>,
+    function_calls: Vec<FunctionCallSite>,
+    cfg_features: Vec<String>,
+    cfg_divergences: Vec<CfgDivergence>,
+}
+
+impl SemanticScanState {
+    fn into_semantic_file(
+        self,
+        path: PathBuf,
+        macro_sites: Vec<MacroSite>,
+        trait_impls: Vec<TraitImplRef>,
+    ) -> SemanticFile {
+        SemanticFile {
+            path,
+            functions: self.functions,
+            variables: self.variables,
+            function_calls: self.function_calls,
+            cfg_features: self.cfg_features,
+            macro_sites,
+            trait_impls,
+            cfg_divergences: self.cfg_divergences,
+        }
+    }
 }
 
 pub fn build_rust_semantic_index(root: &Path) -> Result<SemanticIndex> {
@@ -93,79 +144,57 @@ pub fn build_rust_semantic_index(root: &Path) -> Result<SemanticIndex> {
 }
 
 fn scan_rust_file(path: PathBuf, content: &str) -> SemanticFile {
-    let mut functions = Vec::<FunctionSymbol>::new();
-    let mut function_calls = Vec::<FunctionCallSite>::new();
-    let mut cfg_features = Vec::<String>::new();
+    let mut scan_state = SemanticScanState::default();
     let mut macro_sites = Vec::<MacroSite>::new();
     let mut trait_impls = Vec::<TraitImplRef>::new();
-    let mut cfg_divergences = Vec::<CfgDivergence>::new();
 
     let mut parser = Parser::new();
     if parser.set_language(&tree_sitter_rust::language()).is_err() {
-        return SemanticFile {
-            path,
-            functions,
-            function_calls,
-            cfg_features,
-            macro_sites,
-            trait_impls,
-            cfg_divergences,
-        };
+        return scan_state.into_semantic_file(path, macro_sites, trait_impls);
     }
 
     let Some(tree) = parser.parse(content, None) else {
-        return SemanticFile {
-            path,
-            functions,
-            function_calls,
-            cfg_features,
-            macro_sites,
-            trait_impls,
-            cfg_divergences,
-        };
+        return scan_state.into_semantic_file(path, macro_sites, trait_impls);
     };
 
     walk_node(
         tree.root_node(),
         content.as_bytes(),
-        &mut functions,
-        &mut function_calls,
-        &mut cfg_features,
-        &mut cfg_divergences,
+        None,
+        &[],
+        &mut scan_state,
     );
     scan_line_level_rust_facts(content, &mut macro_sites, &mut trait_impls);
 
-    SemanticFile {
-        path,
-        functions,
-        function_calls,
-        cfg_features,
-        macro_sites,
-        trait_impls,
-        cfg_divergences,
-    }
+    scan_state.into_semantic_file(path, macro_sites, trait_impls)
 }
 
 fn walk_node(
     node: Node,
     source: &[u8],
-    functions: &mut Vec<FunctionSymbol>,
-    function_calls: &mut Vec<FunctionCallSite>,
-    cfg_features: &mut Vec<String>,
-    cfg_divergences: &mut Vec<CfgDivergence>,
+    current_function: Option<&str>,
+    module_scope: &[String],
+    scan_state: &mut SemanticScanState,
 ) {
     if node.kind() == "attribute_item"
         && let Some(feature) = parse_cfg_feature(node, source)
     {
         let line = node.start_position().row as u32 + 1;
-        if !cfg_features.iter().any(|existing| existing == &feature) {
-            cfg_features.push(feature.clone());
+        if !scan_state
+            .cfg_features
+            .iter()
+            .any(|existing| existing == &feature)
+        {
+            scan_state.cfg_features.push(feature.clone());
         }
-        if !cfg_divergences
+        if !scan_state
+            .cfg_divergences
             .iter()
             .any(|existing| existing.feature == feature && existing.line == line)
         {
-            cfg_divergences.push(CfgDivergence { feature, line });
+            scan_state
+                .cfg_divergences
+                .push(CfgDivergence { feature, line });
         }
     }
 
@@ -173,11 +202,73 @@ fn walk_node(
         && let Some(name_node) = node.child_by_field_name("name")
         && let Some(name) = node_text(name_node, source)
     {
-        functions.push(FunctionSymbol {
+        let function_name = name.to_string();
+        let qualified_name = if module_scope.is_empty() {
+            function_name.clone()
+        } else {
+            format!("{}::{function_name}", module_scope.join("::"))
+        };
+        scan_state.functions.push(FunctionSymbol {
+            name: function_name.clone(),
+            qualified_name: Some(qualified_name),
+            line: node.start_position().row as u32 + 1,
+            signature: extract_function_signature(node, source),
+        });
+        collect_calls_in_function(node, source, &function_name, &mut scan_state.function_calls);
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            walk_node(
+                child,
+                source,
+                Some(&function_name),
+                module_scope,
+                scan_state,
+            );
+        }
+        return;
+    }
+
+    if node.kind() == "let_declaration"
+        && let Some(pattern) = node.child_by_field_name("pattern")
+        && let Some(name) = first_pattern_identifier(pattern, source)
+    {
+        scan_state.variables.push(VariableSymbol {
             name: name.to_string(),
             line: node.start_position().row as u32 + 1,
+            function: current_function.map(str::to_string),
         });
-        collect_calls_in_function(node, source, name, function_calls);
+    }
+
+    if (node.kind() == "const_item" || node.kind() == "static_item")
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Some(name) = node_text(name_node, source)
+    {
+        scan_state.variables.push(VariableSymbol {
+            name: name.to_string(),
+            line: node.start_position().row as u32 + 1,
+            function: None,
+        });
+    }
+
+    if node.kind() == "mod_item"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Some(name) = node_text(name_node, source)
+    {
+        let mut nested_scope = module_scope.to_vec();
+        nested_scope.push(name.to_string());
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            walk_node(
+                child,
+                source,
+                current_function,
+                &nested_scope,
+                scan_state,
+            );
+        }
+        return;
     }
 
     let mut cursor = node.walk();
@@ -185,12 +276,60 @@ fn walk_node(
         walk_node(
             child,
             source,
-            functions,
-            function_calls,
-            cfg_features,
-            cfg_divergences,
+            current_function,
+            module_scope,
+            scan_state,
         );
     }
+}
+
+fn extract_function_signature(node: Node, source: &[u8]) -> Option<FunctionSignatureSymbol> {
+    let params_node = node.child_by_field_name("parameters")?;
+    let mut parameters = Vec::<ParameterSymbol>::new();
+
+    let mut cursor = params_node.walk();
+    for parameter_node in params_node.named_children(&mut cursor) {
+        if parameter_node.kind() == "self_parameter" {
+            parameters.push(ParameterSymbol {
+                name: "self".to_string(),
+                type_annotation: None,
+            });
+            continue;
+        }
+
+        if parameter_node.kind() != "parameter" {
+            continue;
+        }
+
+        let name = parameter_node
+            .child_by_field_name("pattern")
+            .and_then(|pattern| node_text(pattern, source))
+            .unwrap_or("_")
+            .trim()
+            .to_string();
+        let type_annotation = parameter_node
+            .child_by_field_name("type")
+            .and_then(|ty| node_text(ty, source))
+            .map(str::trim)
+            .map(str::to_string)
+            .filter(|value| !value.is_empty());
+        parameters.push(ParameterSymbol {
+            name,
+            type_annotation,
+        });
+    }
+
+    let return_type = node
+        .child_by_field_name("return_type")
+        .and_then(|ty| node_text(ty, source))
+        .map(str::trim)
+        .map(|value| value.trim_start_matches("->").trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Some(FunctionSignatureSymbol {
+        parameters,
+        return_type,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -448,6 +587,24 @@ fn parse_string_literal_value(text: &str) -> Option<String> {
     (last_quote > first_quote).then(|| text[first_quote + 1..last_quote].to_string())
 }
 
+fn first_pattern_identifier<'a>(node: Node, source: &'a [u8]) -> Option<&'a str> {
+    match node.kind() {
+        "identifier" | "field_identifier" | "shorthand_field_identifier" => {
+            return node_text(node, source);
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(name) = first_pattern_identifier(child, source) {
+            return Some(name);
+        }
+    }
+
+    None
+}
+
 fn node_text<'a>(node: Node, source: &'a [u8]) -> Option<&'a str> {
     node.utf8_text(source).ok()
 }
@@ -657,5 +814,59 @@ mod tests {
 
         let file = scan_rust_file(PathBuf::from("src/lib.rs"), source);
         assert!(file.cfg_features.is_empty());
+    }
+
+    #[test]
+    fn scanner_extracts_variable_symbols_with_function_context() {
+        let source = r#"
+            const LIMIT: usize = 32;
+            static ENABLED: bool = true;
+
+            fn run(input: usize) -> usize {
+                let local = input + 1;
+                local
+            }
+        "#;
+
+        let file = scan_rust_file(PathBuf::from("src/lib.rs"), source);
+        assert!(
+            file.variables.iter().any(|variable| {
+                variable.name == "LIMIT" && variable.line == 2 && variable.function.is_none()
+            }),
+            "const declarations should be surfaced as top-level variable symbols"
+        );
+        assert!(
+            file.variables.iter().any(|variable| {
+                variable.name == "ENABLED" && variable.line == 3 && variable.function.is_none()
+            }),
+            "static declarations should be surfaced as top-level variable symbols"
+        );
+        assert!(
+            file.variables.iter().any(|variable| {
+                variable.name == "local"
+                    && variable.line == 6
+                    && variable.function.as_deref() == Some("run")
+            }),
+            "let declarations should include the enclosing function name"
+        );
+    }
+
+    #[test]
+    fn scanner_builds_qualified_names_with_module_scope() {
+        let source = r#"
+            mod outer {
+                pub mod inner {
+                    pub fn run() {}
+                }
+            }
+        "#;
+
+        let file = scan_rust_file(PathBuf::from("src/lib.rs"), source);
+        let run = file
+            .functions
+            .iter()
+            .find(|function| function.name == "run")
+            .expect("run function");
+        assert_eq!(run.qualified_name.as_deref(), Some("outer::inner::run"));
     }
 }
