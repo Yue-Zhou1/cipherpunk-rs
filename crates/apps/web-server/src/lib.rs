@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CONTENT_TYPE, HeaderName};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, get_service, post};
@@ -275,9 +275,10 @@ pub fn build_app(
 }
 
 fn build_cors_layer(cors_origin: Option<&str>) -> Option<CorsLayer> {
+    const WIZARD_ID_HEADER: HeaderName = HeaderName::from_static("x-wizard-id");
     let base = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST])
-        .allow_headers([CONTENT_TYPE]);
+        .allow_headers([CONTENT_TYPE, WIZARD_ID_HEADER]);
 
     match cors_origin {
         Some(origin) => match origin.parse::<HeaderValue>() {
@@ -845,6 +846,44 @@ mod tests {
         .expect("json");
         assert_eq!(payload["error"]["status"], 400);
         assert_eq!(payload["error"]["code"], "BAD_REQUEST");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cors_preflight_allows_wizard_header() {
+        let app = build_app(
+            AppState {
+                manager: Arc::new(SessionManager::new(".audit-work".into())),
+                events_poll_interval: super::default_events_poll_interval(),
+            },
+            None,
+            Some("*".to_string()),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/source/resolve")
+                    .header("origin", "http://localhost:5173")
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type,x-wizard-id")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_headers = response
+            .headers()
+            .get("access-control-allow-headers")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        assert!(
+            allow_headers.contains("x-wizard-id"),
+            "expected access-control-allow-headers to contain x-wizard-id, got: {allow_headers}"
+        );
     }
 
     #[test]

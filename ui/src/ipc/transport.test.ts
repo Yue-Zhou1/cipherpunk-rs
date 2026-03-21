@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { HttpTransport, TauriTransport } from "./transport";
+import { HttpTransport, TauriTransport, createTransport } from "./transport";
 
 describe("ipc transport", () => {
   beforeEach(() => {
@@ -161,6 +161,30 @@ describe("ipc transport", () => {
     await expect(transport.invoke("unknown_command", {})).rejects.toThrow(
       "Unknown command: unknown_command"
     );
+  });
+
+  it("defaults to http transport in browser when VITE_TRANSPORT is unset", () => {
+    const transport = createTransport({ MODE: "development" });
+    expect(transport.kind).toBe("http");
+  });
+
+  it("defaults to tauri transport when bridge exists and VITE_TRANSPORT is unset", () => {
+    (window as typeof window & { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: vi.fn() },
+    };
+
+    const transport = createTransport({ MODE: "development" });
+    expect(transport.kind).toBe("tauri");
+  });
+
+  it("defaults to tauri transport in test mode when VITE_TRANSPORT is unset", () => {
+    const transport = createTransport({ MODE: "test" });
+    expect(transport.kind).toBe("tauri");
+  });
+
+  it("honors explicit VITE_TRANSPORT=tauri even without bridge", () => {
+    const transport = createTransport({ VITE_TRANSPORT: "tauri" });
+    expect(transport.kind).toBe("tauri");
   });
 
   it("invokes tauri command bridge when available", async () => {

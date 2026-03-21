@@ -340,6 +340,7 @@ export class HttpTransport implements Transport {
 type TransportEnv = {
   VITE_TRANSPORT?: string;
   VITE_API_URL?: string;
+  MODE?: string;
 };
 
 function readTransportEnv(): TransportEnv {
@@ -352,17 +353,44 @@ export function isTauriRuntime(): boolean {
 }
 
 export function createTransport(env: Partial<TransportEnv> = readTransportEnv()): Transport {
-  if (env.VITE_TRANSPORT === "http") {
-    return new HttpTransport(env.VITE_API_URL ?? "");
+  const mode =
+    env.MODE ??
+    (import.meta as unknown as { env?: { MODE?: string } }).env?.MODE;
+
+  if (env.VITE_TRANSPORT === "tauri") {
+    return new TauriTransport();
   }
+
+  if (env.VITE_TRANSPORT === "http") {
+    const configuredBase = env.VITE_API_URL?.trim();
+    const runtimeDefault =
+      typeof window !== "undefined"
+        ? `${window.location.protocol}//${window.location.hostname}:3000`
+        : "";
+    return new HttpTransport(configuredBase && configuredBase.length > 0 ? configuredBase : runtimeDefault);
+  }
+
+  if (mode === "test") {
+    return new TauriTransport();
+  }
+
+  // Safe default: in a regular browser session (including WSL web dev),
+  // use HTTP transport unless the Tauri bridge is actually present.
+  if (!isTauriRuntime()) {
+    const runtimeDefault =
+      typeof window !== "undefined"
+        ? `${window.location.protocol}//${window.location.hostname}:3000`
+        : "";
+    return new HttpTransport(runtimeDefault);
+  }
+
   return new TauriTransport();
 }
 
 let transportOverride: Transport | null = null;
-const defaultTransport = createTransport();
 
 export function getTransport(): Transport {
-  return transportOverride ?? defaultTransport;
+  return transportOverride ?? createTransport();
 }
 
 export function setTransportForTests(transport: Transport | null): void {

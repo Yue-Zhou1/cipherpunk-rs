@@ -79,34 +79,28 @@ function StepWorkspaceConfirmation({
           </thead>
           <tbody>
             {crates.map((crate) => {
-              const status =
-                crate.status === "ambiguous" ? decisions[crate.name] ?? "ambiguous" : crate.status;
+              const status = decisions[crate.name] ?? crate.status;
 
               return (
                 <tr key={crate.name}>
                   <td>{crate.name}</td>
                   <td className={statusClass(status)}>{statusLabel(status)}</td>
                   <td>
-                    {crate.status === "ambiguous" ? (
-                      <>
-                        <button
-                          type="button"
-                          className={`inline-action ${status === "in_scope" ? "active" : ""}`}
-                          onClick={() => onDecision(crate.name, "in_scope")}
-                        >
-                          Include
-                        </button>
-                        <button
-                          type="button"
-                          className={`inline-action ${status === "excluded" ? "active" : ""}`}
-                          onClick={() => onDecision(crate.name, "excluded")}
-                        >
-                          Exclude
-                        </button>
-                      </>
-                    ) : (
-                      crate.reason ?? "-"
-                    )}
+                    <button
+                      type="button"
+                      className={`inline-action ${status === "in_scope" ? "active" : ""}`}
+                      onClick={() => onDecision(crate.name, "in_scope")}
+                    >
+                      Include
+                    </button>
+                    <button
+                      type="button"
+                      className={`inline-action ${status === "excluded" ? "active" : ""}`}
+                      onClick={() => onDecision(crate.name, "excluded")}
+                    >
+                      Exclude
+                    </button>
+                    {crate.reason ? <span className="muted"> {crate.reason}</span> : null}
                   </td>
                 </tr>
               );

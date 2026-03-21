@@ -136,14 +136,22 @@ pub fn confirm_workspace(
     let mut excluded_crates = Vec::<String>::new();
     for decision in summary.crates {
         match decision {
-            CrateDecision::InScope { meta } => target_crates.push(meta.name),
-            CrateDecision::Excluded { meta, .. } => excluded_crates.push(meta.name),
+            CrateDecision::InScope { meta } => {
+                if explicit_include_override(&decisions, &meta.name) == Some(false) {
+                    excluded_crates.push(meta.name);
+                } else {
+                    target_crates.push(meta.name);
+                }
+            }
+            CrateDecision::Excluded { meta, .. } => {
+                if explicit_include_override(&decisions, &meta.name) == Some(true) {
+                    target_crates.push(meta.name);
+                } else {
+                    excluded_crates.push(meta.name);
+                }
+            }
             CrateDecision::Ambiguous { meta, .. } => {
-                let include = decisions
-                    .ambiguous_crates
-                    .get(&meta.name)
-                    .copied()
-                    .unwrap_or(false);
+                let include = explicit_include_override(&decisions, &meta.name).unwrap_or(false);
                 if include {
                     target_crates.push(meta.name);
                 } else {
@@ -190,6 +198,10 @@ pub fn confirm_workspace(
         },
         output_dir: validated.output_dir,
     })
+}
+
+fn explicit_include_override(decisions: &UserDecisions, crate_name: &str) -> Option<bool> {
+    decisions.ambiguous_crates.get(crate_name).copied()
 }
 
 pub fn export_audit_yaml(config: &AuditConfig, path: &Path) -> Result<()> {
