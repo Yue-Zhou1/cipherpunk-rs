@@ -52,7 +52,7 @@ export type ProjectTreeNode = {
   name: string;
   path: string;
   kind: "directory" | "file";
-  children: ProjectTreeNode[];
+  children?: ProjectTreeNode[];
 };
 
 export type GetProjectTreeResponse = {
@@ -263,7 +263,7 @@ async function loadCommandFixtures(): Promise<CommandFixturesModule> {
   return import("./commands.fixtures");
 }
 
-function tauriInvoke<T>(
+async function tauriInvoke<T>(
   command: string,
   args: Record<string, unknown>,
   fallback?: () => Promise<T>
@@ -275,7 +275,15 @@ function tauriInvoke<T>(
     }
     return Promise.reject(new Error("Tauri invoke bridge is unavailable"));
   }
-  return transport.invoke<T>(command, args);
+
+  try {
+    return await transport.invoke<T>(command, args);
+  } catch (error) {
+    if (fallback && import.meta.env.MODE === "test") {
+      return fallback();
+    }
+    throw error;
+  }
 }
 
 export function isTauriRuntime(): boolean {

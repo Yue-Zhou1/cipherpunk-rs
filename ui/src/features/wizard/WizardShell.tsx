@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import AppHeader from "../../components/layout/AppHeader";
 import FooterNav from "../../components/layout/FooterNav";
@@ -113,14 +113,6 @@ function WizardShell({ onSessionCreated }: WizardShellProps): JSX.Element {
   const canNext =
     currentStep < 4 && isStepValid(currentStep, sourceMode, sourceForm, configForm);
 
-  const ambiguousCrateNames = useMemo(
-    () =>
-      workspaceCrates.filter((entry) => entry.status === "ambiguous").map(
-        (entry) => entry.name
-      ),
-    [workspaceCrates]
-  );
-
   useEffect(() => {
     if (currentStep !== 4) {
       return;
@@ -159,9 +151,9 @@ function WizardShell({ onSessionCreated }: WizardShellProps): JSX.Element {
         }
       }
     )
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
-          setWorkspaceError("Unable to load workspace summary.");
+          setWorkspaceError(errorMessage(error, "Unable to load workspace summary."));
         }
       })
       .finally(() => {
@@ -223,10 +215,10 @@ function WizardShell({ onSessionCreated }: WizardShellProps): JSX.Element {
               );
 
               const ambiguousCrates = Object.fromEntries(
-                ambiguousCrateNames.map((crateName) => [
-                  crateName,
-                  crateDecisions[crateName] === "in_scope",
-                ])
+                workspaceCrates.map((entry) => {
+                  const status = crateDecisions[entry.name] ?? entry.status;
+                  return [entry.name, status === "in_scope"];
+                })
               );
 
               const response = await createSessionFromConfirmation({
@@ -235,8 +227,8 @@ function WizardShell({ onSessionCreated }: WizardShellProps): JSX.Element {
               });
               setAuditId(response.auditId);
               onSessionCreated(response.sessionId);
-            } catch {
-              setStartError("Unable to start audit. Please retry.");
+            } catch (error) {
+              setStartError(errorMessage(error, "Unable to start audit. Please retry."));
             } finally {
               setIsStartingAudit(false);
             }
@@ -501,6 +493,13 @@ function isStepValid(
 function isPositiveNumber(value: string): boolean {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return fallback;
 }
 
 function destinationPathFor(outputType: OutputType): string {

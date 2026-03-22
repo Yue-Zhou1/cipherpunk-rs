@@ -43,7 +43,7 @@ function collectFilePaths(nodes: ProjectTreeNode[]): string[] {
       files.push(node.path);
       continue;
     }
-    files.push(...collectFilePaths(node.children));
+    files.push(...collectFilePaths(node.children ?? []));
   }
   return files;
 }
@@ -115,7 +115,8 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const webMode = getTransport().kind === "http";
   const useSplitLayout =
     typeof navigator !== "undefined" &&
-    !navigator.userAgent.toLowerCase().includes("jsdom");
+    !navigator.userAgent.toLowerCase().includes("jsdom") &&
+    !webMode;
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
   const [focusedSymbolName, setFocusedSymbolName] = useState<string | null>(null);
@@ -209,6 +210,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                       content={fileContent}
                       isLoading={fileLoading}
                       error={fileError}
+                      preferPlainText={webMode}
                       focusedRecordId={selectedReviewRecordId}
                       focusedNodeCount={selectedGraphNodeIds.length}
                       onSymbolFocus={setFocusedSymbolName}
@@ -275,6 +277,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                   content={fileContent}
                   isLoading={fileLoading}
                   error={fileError}
+                  preferPlainText={webMode}
                   focusedRecordId={selectedReviewRecordId}
                   focusedNodeCount={selectedGraphNodeIds.length}
                   onSymbolFocus={setFocusedSymbolName}
