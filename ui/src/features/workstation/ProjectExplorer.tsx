@@ -22,13 +22,15 @@ function TreeNodes({
     <ul className="workstation-tree-list">
       {nodes.map((node) => {
         if (node.kind === "directory") {
+          const children = node.children ?? [];
+
           return (
             <li key={node.path} className="workstation-tree-node workstation-tree-directory">
               <details open>
                 <summary>{node.name}</summary>
-                {node.children.length > 0 ? (
+                {children.length > 0 ? (
                   <TreeNodes
-                    nodes={node.children}
+                    nodes={children}
                     selectedFilePath={selectedFilePath}
                     onSelectFile={onSelectFile}
                   />

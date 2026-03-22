@@ -52,7 +52,7 @@ export type ProjectTreeNode = {
   name: string;
   path: string;
   kind: "directory" | "file";
-  children: ProjectTreeNode[];
+  children?: ProjectTreeNode[];
 };
 
 export type GetProjectTreeResponse = {

@@ -26,7 +26,7 @@ function firstFilePath(nodes: ProjectTreeNode[]): string | null {
       return node.path;
     }
 
-    const nested = firstFilePath(node.children);
+    const nested = firstFilePath(node.children ?? []);
     if (nested) {
       return nested;
     }
@@ -41,7 +41,8 @@ function hasFile(nodes: ProjectTreeNode[], path: string): boolean {
       return true;
     }
 
-    if (node.children.length > 0 && hasFile(node.children, path)) {
+    const children = node.children ?? [];
+    if (children.length > 0 && hasFile(children, path)) {
       return true;
     }
   }

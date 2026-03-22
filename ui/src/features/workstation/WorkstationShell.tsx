@@ -43,7 +43,7 @@ function collectFilePaths(nodes: ProjectTreeNode[]): string[] {
       files.push(node.path);
       continue;
     }
-    files.push(...collectFilePaths(node.children));
+    files.push(...collectFilePaths(node.children ?? []));
   }
   return files;
 }
