@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 
@@ -62,10 +62,15 @@ function CodeEditorPane({
   onSymbolFocus,
 }: CodeEditorPaneProps): JSX.Element {
   const language = editorLanguage(filePath);
+  const [monacoMounted, setMonacoMounted] = useState(false);
 
   useEffect(() => {
     onSymbolFocus?.(null);
   }, [filePath, onSymbolFocus]);
+
+  useEffect(() => {
+    setMonacoMounted(false);
+  }, [filePath, language]);
 
   return (
     <section className="panel workstation-editor" aria-label="Code Editor">
@@ -90,9 +95,12 @@ function CodeEditorPane({
         shouldRenderMonaco() ? (
           <div className="workstation-monaco-wrap">
             <Editor
+              path={filePath ?? undefined}
               theme="vs-dark"
               language={language}
               value={content}
+              height="100%"
+              width="100%"
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
@@ -102,6 +110,7 @@ function CodeEditorPane({
                 fontSize: 13,
               }}
               onMount={(editorInstance: MonacoEditor.IStandaloneCodeEditor) => {
+                setMonacoMounted(true);
                 editorInstance.onMouseDown((event) => {
                   if (!event.target.position || !onSymbolFocus) {
                     return;
@@ -113,6 +122,15 @@ function CodeEditorPane({
                 });
               }}
             />
+            {!monacoMounted ? (
+              <pre
+                className="workstation-editor-fallback workstation-editor-fallback-overlay"
+                role="region"
+                aria-label="Code content"
+              >
+                <code>{content}</code>
+              </pre>
+            ) : null}
           </div>
         ) : (
           <pre className="workstation-editor-fallback" role="region" aria-label="Code content">

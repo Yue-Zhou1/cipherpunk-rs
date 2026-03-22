@@ -603,9 +603,11 @@ impl UiSessionState {
             .file_name()
             .map(|value| value.to_string_lossy().to_string())
             .unwrap_or_else(|| root_dir.display().to_string());
+        let scoped_roots = scoped_tree_roots(&session, &root_dir);
+        let scope = (!scoped_roots.is_empty()).then_some(scoped_roots.as_slice());
 
         let mut remaining = MAX_PROJECT_TREE_NODES;
-        let nodes = collect_tree_nodes(&root_dir, &root_dir, 0, &mut remaining)?;
+        let nodes = collect_tree_nodes(&root_dir, &root_dir, 0, &mut remaining, scope)?;
 
         Ok(GetProjectTreeResponse {
             session_id: session_id.to_string(),
@@ -1216,6 +1218,7 @@ fn collect_tree_nodes(
     dir: &Path,
     depth: usize,
     remaining: &mut usize,
+    scope_roots: Option<&[PathBuf]>,
 ) -> Result<Vec<ProjectTreeNode>> {
     if depth >= MAX_PROJECT_TREE_DEPTH || *remaining == 0 {
         return Ok(vec![]);
@@ -1239,6 +1242,10 @@ fn collect_tree_nodes(
 
         let file_type = entry.file_type()?;
         let path = entry.path();
+        if !tree_entry_in_scope(&path, scope_roots) {
+            continue;
+        }
+
         if file_type.is_dir() {
             dirs.push((name, path));
         } else if file_type.is_file() {
@@ -1258,7 +1265,7 @@ fn collect_tree_nodes(
         *remaining -= 1;
 
         let relative = path.strip_prefix(root_dir).unwrap_or(path.as_path());
-        let children = collect_tree_nodes(root_dir, &path, depth + 1, remaining)?;
+        let children = collect_tree_nodes(root_dir, &path, depth + 1, remaining, scope_roots)?;
 
         nodes.push(ProjectTreeNode {
             name,
@@ -1291,6 +1298,46 @@ fn should_skip_tree_entry(name: &str) -> bool {
         name,
         ".git" | "target" | "node_modules" | ".audit-work" | ".audit-sessions"
     )
+}
+
+fn scoped_tree_roots(session: &AuditSession, root_dir: &Path) -> Vec<PathBuf> {
+    if session.snapshot.target_crates.is_empty() {
+        return vec![];
+    }
+
+    let workspace = match WorkspaceAnalyzer::analyze(root_dir) {
+        Ok(workspace) => workspace,
+        Err(_) => return vec![],
+    };
+
+    let targets = session
+        .snapshot
+        .target_crates
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+
+    workspace
+        .members
+        .into_iter()
+        .filter_map(|member| {
+            if !targets.contains(member.name.as_str()) {
+                return None;
+            }
+            fs::canonicalize(member.path).ok()
+        })
+        .filter(|path| path.starts_with(root_dir))
+        .collect()
+}
+
+fn tree_entry_in_scope(path: &Path, scope_roots: Option<&[PathBuf]>) -> bool {
+    let Some(scope_roots) = scope_roots else {
+        return true;
+    };
+
+    scope_roots
+        .iter()
+        .any(|scope_root| path.starts_with(scope_root) || scope_root.starts_with(path))
 }
 
 fn normalized_relative_path(input: &str) -> Result<PathBuf> {
@@ -1980,6 +2027,9 @@ fn default_validated_config(source: &ResolvedSource) -> ValidatedConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -2062,5 +2112,68 @@ mod tests {
             ids_a, ids_b,
             "provenance seed ordering must be stable for identical edge sets"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_project_tree_respects_target_crate_scope() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\nresolver = \"2\"\n",
+        )
+        .expect("write workspace manifest");
+        fs::create_dir_all(workspace.path().join("crate-a/src")).expect("create crate-a src");
+        fs::create_dir_all(workspace.path().join("crate-b/src")).expect("create crate-b src");
+        fs::write(
+            workspace.path().join("crate-a/Cargo.toml"),
+            "[package]\nname = \"crate-a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("write crate-a manifest");
+        fs::write(
+            workspace.path().join("crate-b/Cargo.toml"),
+            "[package]\nname = \"crate-b\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("write crate-b manifest");
+        fs::write(workspace.path().join("crate-a/src/lib.rs"), "pub fn a() {}\n")
+            .expect("write crate-a source");
+        fs::write(workspace.path().join("crate-b/src/lib.rs"), "pub fn b() {}\n")
+            .expect("write crate-b source");
+
+        let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
+        let mut config = test_audit_config(workspace.path());
+        config.source.local_path = workspace.path().to_path_buf();
+        config.scope.target_crates = vec!["crate-a".to_string()];
+        config.scope.excluded_crates = vec!["crate-b".to_string()];
+
+        let session = AuditSession {
+            session_id: "sess-scope".to_string(),
+            snapshot: project_snapshot_from_config(&config, "snap-scope".to_string()),
+            selected_domains: vec![],
+            ui_state: SessionUiState::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        state.sessions.insert(session.session_id.clone(), session);
+
+        let tree = state
+            .get_project_tree("sess-scope")
+            .await
+            .expect("project tree");
+        let paths = all_tree_paths(&tree.nodes);
+
+        assert!(paths.contains("crate-a"), "expected crate-a in scoped tree");
+        assert!(
+            !paths.contains("crate-b"),
+            "excluded crate-b should not appear in project tree"
+        );
+    }
+
+    fn all_tree_paths(nodes: &[ProjectTreeNode]) -> HashSet<String> {
+        let mut paths = HashSet::<String>::new();
+        for node in nodes {
+            paths.insert(node.path.clone());
+            paths.extend(all_tree_paths(&node.children));
+        }
+        paths
     }
 }
