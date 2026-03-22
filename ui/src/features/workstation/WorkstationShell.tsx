@@ -115,7 +115,8 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const webMode = getTransport().kind === "http";
   const useSplitLayout =
     typeof navigator !== "undefined" &&
-    !navigator.userAgent.toLowerCase().includes("jsdom");
+    !navigator.userAgent.toLowerCase().includes("jsdom") &&
+    !webMode;
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
   const [focusedSymbolName, setFocusedSymbolName] = useState<string | null>(null);
