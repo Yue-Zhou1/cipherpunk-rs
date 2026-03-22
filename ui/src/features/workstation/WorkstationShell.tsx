@@ -209,6 +209,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                       content={fileContent}
                       isLoading={fileLoading}
                       error={fileError}
+                      preferPlainText={webMode}
                       focusedRecordId={selectedReviewRecordId}
                       focusedNodeCount={selectedGraphNodeIds.length}
                       onSymbolFocus={setFocusedSymbolName}
@@ -275,6 +276,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                   content={fileContent}
                   isLoading={fileLoading}
                   error={fileError}
+                  preferPlainText={webMode}
                   focusedRecordId={selectedReviewRecordId}
                   focusedNodeCount={selectedGraphNodeIds.length}
                   onSymbolFocus={setFocusedSymbolName}

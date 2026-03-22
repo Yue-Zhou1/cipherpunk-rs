@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 WEB_PORT="${WEB_PORT:-3000}"
 UI_PORT="${UI_PORT:-5173}"
 UI_HOST="${UI_HOST:-0.0.0.0}"
+UI_LOG_LEVEL="${UI_LOG_LEVEL:-warn}"
 WORK_DIR="${WORK_DIR:-$ROOT_DIR/.audit-work}"
 CORS_ORIGIN="${CORS_ORIGIN:-*}"
 
@@ -48,13 +49,18 @@ cargo run -p audit-agent-web -- \
   --cors-origin "$CORS_ORIGIN" &
 backend_pid=$!
 
-echo "[http-ui] Starting frontend: http://localhost:$UI_PORT (bind $UI_HOST)"
+echo "[http-ui] Starting frontend dev server (bind $UI_HOST)"
 (
   cd "$ROOT_DIR/ui"
   VITE_TRANSPORT=http \
-  npm run dev -- --host "$UI_HOST" --port "$UI_PORT" --strictPort
+  npm run dev -- \
+    --host "$UI_HOST" \
+    --port "$UI_PORT" \
+    --strictPort \
+    --logLevel "$UI_LOG_LEVEL"
 ) &
 frontend_pid=$!
 
-echo "[http-ui] Open in Windows browser: http://localhost:$UI_PORT/wizard"
+echo "[http-ui] UI:  http://localhost:$UI_PORT/wizard"
+echo "[http-ui] API: http://localhost:$WEB_PORT"
 wait -n "$backend_pid" "$frontend_pid"

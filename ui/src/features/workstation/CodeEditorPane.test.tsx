@@ -37,4 +37,19 @@ describe("CodeEditorPane", () => {
     expect(screen.getByTestId("mock-monaco-editor")).toBeInTheDocument();
     expect(screen.getByLabelText(/code content/i)).toHaveTextContent("members = [\"anchor\"]");
   });
+
+  it("uses plain-text viewer when preferPlainText is enabled", () => {
+    render(
+      <CodeEditorPane
+        filePath="README.md"
+        content={"# Anchor\n\nREADME content\n"}
+        isLoading={false}
+        error={null}
+        preferPlainText
+      />
+    );
+
+    expect(screen.queryByTestId("mock-monaco-editor")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/code content/i)).toHaveTextContent("README content");
+  });
 });

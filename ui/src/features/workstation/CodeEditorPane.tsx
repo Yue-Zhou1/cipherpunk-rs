@@ -7,6 +7,7 @@ type CodeEditorPaneProps = {
   content: string;
   isLoading: boolean;
   error: string | null;
+  preferPlainText?: boolean;
   focusedRecordId?: string | null;
   focusedNodeCount?: number;
   onSymbolFocus?: (symbol: string | null) => void;
@@ -57,12 +58,14 @@ function CodeEditorPane({
   content,
   isLoading,
   error,
+  preferPlainText = false,
   focusedRecordId,
   focusedNodeCount = 0,
   onSymbolFocus,
 }: CodeEditorPaneProps): JSX.Element {
   const language = editorLanguage(filePath);
   const [monacoMounted, setMonacoMounted] = useState(false);
+  const useMonaco = shouldRenderMonaco() && !preferPlainText;
 
   useEffect(() => {
     onSymbolFocus?.(null);
@@ -92,7 +95,7 @@ function CodeEditorPane({
       {error ? <p className="banner banner-error">{error}</p> : null}
 
       {!isLoading && !error && filePath ? (
-        shouldRenderMonaco() ? (
+        useMonaco ? (
           <div className="workstation-monaco-wrap">
             <Editor
               path={filePath ?? undefined}
