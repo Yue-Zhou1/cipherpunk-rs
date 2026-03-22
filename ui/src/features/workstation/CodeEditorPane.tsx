@@ -13,6 +13,11 @@ type CodeEditorPaneProps = {
   onSymbolFocus?: (symbol: string | null) => void;
 };
 
+type PlainTextCodeViewerProps = {
+  content: string;
+  className?: string;
+};
+
 function editorLanguage(filePath: string | null): string {
   if (!filePath) {
     return "plaintext";
@@ -51,6 +56,40 @@ function shouldRenderMonaco(): boolean {
   }
 
   return !/jsdom/i.test(navigator.userAgent);
+}
+
+function splitPlainTextLines(content: string): string[] {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  return lines.length > 0 ? lines : [""];
+}
+
+function PlainTextCodeViewer({
+  content,
+  className,
+}: PlainTextCodeViewerProps): JSX.Element {
+  const lines = splitPlainTextLines(content);
+  const classes = [
+    "workstation-editor-fallback",
+    "workstation-plain-text-viewer",
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={classes} role="region" aria-label="Code content">
+      <ol className="workstation-plain-text-lines">
+        {lines.map((line, index) => (
+          <li key={`${index}:${line.slice(0, 24)}`} className="workstation-plain-text-line">
+            <span className="workstation-plain-text-gutter" data-testid="code-line-number" aria-hidden="true">
+              {index + 1}
+            </span>
+            <code className="workstation-plain-text-code">{line.length === 0 ? " " : line}</code>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function CodeEditorPane({
@@ -126,19 +165,14 @@ function CodeEditorPane({
               }}
             />
             {!monacoMounted ? (
-              <pre
-                className="workstation-editor-fallback workstation-editor-fallback-overlay"
-                role="region"
-                aria-label="Code content"
-              >
-                <code>{content}</code>
-              </pre>
+              <PlainTextCodeViewer
+                content={content}
+                className="workstation-editor-fallback-overlay"
+              />
             ) : null}
           </div>
         ) : (
-          <pre className="workstation-editor-fallback" role="region" aria-label="Code content">
-            <code>{content}</code>
-          </pre>
+          <PlainTextCodeViewer content={content} />
         )
       ) : null}
 

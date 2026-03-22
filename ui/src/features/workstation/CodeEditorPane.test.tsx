@@ -52,4 +52,20 @@ describe("CodeEditorPane", () => {
     expect(screen.queryByTestId("mock-monaco-editor")).not.toBeInTheDocument();
     expect(screen.getByLabelText(/code content/i)).toHaveTextContent("README content");
   });
+
+  it("renders plain-text code with line numbers", () => {
+    render(
+      <CodeEditorPane
+        filePath="src/main.rs"
+        content={"fn main() {\n    println!(\"hello\");\n}\n"}
+        isLoading={false}
+        error={null}
+        preferPlainText
+      />
+    );
+
+    const lineNumbers = screen.getAllByTestId("code-line-number");
+    expect(lineNumbers.map((entry) => entry.textContent)).toEqual(["1", "2", "3", "4"]);
+    expect(screen.getByLabelText(/code content/i)).toHaveTextContent("println!(\"hello\");");
+  });
 });
