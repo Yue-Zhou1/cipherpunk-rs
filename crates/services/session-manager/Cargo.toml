@@ -11,6 +11,7 @@ chrono = { version = "0.4", features = ["clock"] }
 engine-crypto = { path = "../../engines/crypto" }
 intake = { path = "../intake" }
 knowledge = { path = "../knowledge", features = ["memory-block"] }
+llm = { path = "../llm" }
 orchestrator = { path = "../../apps/orchestrator" }
 project-ir = { path = "../../data/project-ir" }
 serde = { version = "1", features = ["derive"] }
@@ -19,6 +20,7 @@ serde_yaml = "0.9"
 session-store = { path = "../../data/session-store" }
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
 zip = "2"
 
 [dev-dependencies]

@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum LlmRole {
-    MechanicalScaffolding,
-    SearchSpaceGuidance,
+    #[serde(alias = "MechanicalScaffolding")]
+    Scaffolding,
+    #[serde(alias = "SearchSpaceGuidance")]
+    SearchHints,
     ProseRendering,
+    LeanScaffold,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

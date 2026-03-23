@@ -1,6 +1,6 @@
 use anyhow::Result;
 use llm::sanitize::sanitize_prompt_input;
-use llm::{CompletionOpts, LlmProvider, LlmRole, llm_call};
+use llm::{CompletionOpts, LlmProvider, LlmRole, llm_call_traced};
 
 const MAX_SNIPPET_CHARS: usize = 3_000;
 
@@ -26,7 +26,7 @@ pub async fn generate_lean_stub(
         "{LEAN_STUB_PROMPT}\n\nFunction name: {safe_name}\nRust source:\n{safe_snippet}\n\nLean 4 formalization:"
     );
 
-    llm_call(
+    let (response, provenance) = llm_call_traced(
         llm,
         LlmRole::LeanScaffold,
         &prompt,
@@ -35,5 +35,14 @@ pub async fn generate_lean_stub(
             max_tokens: 1024,
         },
     )
-    .await
+    .await?;
+    tracing::debug!(
+        provider = %provenance.provider,
+        model = ?provenance.model,
+        role = %provenance.role,
+        duration_ms = provenance.duration_ms,
+        attempt = provenance.attempt,
+        "captured lean-scaffold LLM provenance"
+    );
+    Ok(response)
 }

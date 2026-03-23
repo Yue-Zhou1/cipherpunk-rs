@@ -6,7 +6,9 @@ use anyhow::Result;
 use audit_agent_core::audit_config::{AuditConfig, ParsedPreviousAudit};
 use audit_agent_core::engine::{AuditContext, AuditEngine, EvidenceWriter, SandboxRunner};
 use audit_agent_core::finding::Finding;
-use audit_agent_core::output::{AuditManifest, AuditOutputs, FindingCounts};
+use audit_agent_core::output::{
+    AuditManifest, AuditOutputs, CoverageReport, EngineOutcome, EngineStatus, FindingCounts,
+};
 use audit_agent_core::session::AuditSession;
 use audit_agent_core::tooling::ToolActionStatus;
 use chrono::Utc;
@@ -148,6 +150,15 @@ impl AuditOrchestrator {
             AuditJobKind::PlanChecklists,
             jobs.len(),
         ));
+        for engine in &self.engines {
+            jobs.push(AuditJob::queued(
+                &session.session_id,
+                AuditJobKind::RunEngine {
+                    engine_name: engine.name().to_string(),
+                },
+                jobs.len(),
+            ));
+        }
         for domain_id in &session.selected_domains {
             jobs.push(AuditJob::queued(
                 &session.session_id,
@@ -243,8 +254,8 @@ impl AuditOrchestrator {
 
     pub async fn run(&self, config: &AuditConfig) -> Result<AuditOutputs> {
         let dag = self.build_dag(config);
-        let findings = self.execute_dag(&dag, config).await?;
-        self.produce_outputs(&findings, config).await
+        let (findings, outcomes) = self.execute_dag(&dag, config).await?;
+        self.produce_outputs(&findings, &outcomes, config).await
     }
 
     pub fn build_dag(&self, _config: &AuditConfig) -> AuditDag {
@@ -257,7 +268,11 @@ impl AuditOrchestrator {
         AuditDag { nodes }
     }
 
-    pub async fn execute_dag(&self, _dag: &AuditDag, config: &AuditConfig) -> Result<Vec<Finding>> {
+    pub async fn execute_dag(
+        &self,
+        _dag: &AuditDag,
+        config: &AuditConfig,
+    ) -> Result<(Vec<Finding>, Vec<EngineOutcome>)> {
         let workspace = Arc::new(WorkspaceAnalyzer::analyze(&config.source.local_path)?);
         let ctx = AuditContext {
             config: Arc::new(config.clone()),
@@ -268,17 +283,72 @@ impl AuditOrchestrator {
         };
 
         let mut findings = Vec::<Finding>::new();
+        let mut outcomes = Vec::<EngineOutcome>::new();
         for engine in &self.engines {
-            if engine.supports(&ctx).await {
-                findings.extend(engine.analyze(&ctx).await?);
+            let engine_name = engine.name().to_string();
+            let started_at = std::time::Instant::now();
+
+            if !engine.supports(&ctx).await {
+                outcomes.push(EngineOutcome {
+                    engine: engine_name,
+                    status: EngineStatus::Skipped {
+                        reason: "engine reported unsupported for this context".to_string(),
+                    },
+                    findings_count: 0,
+                    duration_ms: started_at.elapsed().as_millis() as u64,
+                });
+                continue;
+            }
+
+            match engine.analyze(&ctx).await {
+                Ok(engine_findings) => {
+                    let count = engine_findings.len();
+                    let duration_ms = started_at.elapsed().as_millis() as u64;
+                    findings.extend(engine_findings);
+
+                    if let Some(sink) = &self.event_sink {
+                        sink.emit(AuditEvent::EngineCompleted {
+                            engine: engine_name.clone(),
+                            findings_count: count,
+                            duration_ms,
+                        });
+                    }
+
+                    outcomes.push(EngineOutcome {
+                        engine: engine_name,
+                        status: EngineStatus::Completed,
+                        findings_count: count,
+                        duration_ms,
+                    });
+                }
+                Err(err) => {
+                    let duration_ms = started_at.elapsed().as_millis() as u64;
+
+                    if let Some(sink) = &self.event_sink {
+                        sink.emit(AuditEvent::EngineFailed {
+                            engine: engine_name.clone(),
+                            reason: err.to_string(),
+                        });
+                    }
+
+                    outcomes.push(EngineOutcome {
+                        engine: engine_name,
+                        status: EngineStatus::Failed {
+                            reason: err.to_string(),
+                        },
+                        findings_count: 0,
+                        duration_ms,
+                    });
+                }
             }
         }
-        Ok(findings)
+        Ok((findings, outcomes))
     }
 
     pub async fn produce_outputs(
         &self,
         findings: &[Finding],
+        outcomes: &[EngineOutcome],
         config: &AuditConfig,
     ) -> Result<AuditOutputs> {
         let mut deduplicated = self.findings_db.deduplicate(findings);
@@ -288,6 +358,12 @@ impl AuditOrchestrator {
         );
 
         let finding_counts = FindingCounts::from(&deduplicated);
+        let coverage = CoverageReport::from_outcomes(outcomes);
+        let engine_outcomes = outcomes.to_vec();
+        let engines_run = outcomes
+            .iter()
+            .map(|outcome| outcome.engine.clone())
+            .collect::<Vec<_>>();
         let (tool_versions, container_digests) = aggregate_manifest_metadata(&deduplicated);
         let now = Utc::now();
         let manifest = AuditManifest {
@@ -301,11 +377,9 @@ impl AuditOrchestrator {
             container_digests: container_digests.clone(),
             finding_counts: finding_counts.clone(),
             risk_score: finding_counts.risk_score(),
-            engines_run: self
-                .engines
-                .iter()
-                .map(|engine| engine.name().to_string())
-                .collect(),
+            engines_run: engines_run.clone(),
+            engine_outcomes: engine_outcomes.clone(),
+            coverage: Some(coverage.clone()),
             optional_inputs_used: summarize_optional_inputs(config),
         };
 
@@ -332,11 +406,9 @@ impl AuditOrchestrator {
             container_digests,
             finding_counts: finding_counts.clone(),
             risk_score: finding_counts.risk_score(),
-            engines_run: self
-                .engines
-                .iter()
-                .map(|engine| engine.name().to_string())
-                .collect(),
+            engines_run,
+            engine_outcomes,
+            coverage: Some(coverage),
             optional_inputs_used: summarize_optional_inputs(config),
         });
 

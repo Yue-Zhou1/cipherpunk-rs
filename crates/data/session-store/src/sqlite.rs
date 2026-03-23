@@ -7,6 +7,7 @@ use audit_agent_core::session::{AuditRecord, AuditSession};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::schema;
 use crate::search::RecordSearchHit;
@@ -17,6 +18,18 @@ pub struct SessionEvent {
     pub event_type: String,
     pub payload: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmInteractionEvent {
+    pub provider: String,
+    pub model: Option<String>,
+    pub role: String,
+    pub duration_ms: u64,
+    pub prompt_chars: usize,
+    pub response_chars: usize,
+    pub attempt: u8,
+    pub succeeded: bool,
 }
 
 pub struct SessionStore {
@@ -261,6 +274,21 @@ impl SessionStore {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn append_llm_interaction_event(
+        &self,
+        session_id: &str,
+        interaction: &LlmInteractionEvent,
+    ) -> Result<()> {
+        let event = SessionEvent {
+            event_id: format!("llm-interaction:{}:{}", session_id, Uuid::new_v4()),
+            event_type: "llm.interaction".to_string(),
+            payload: serde_json::to_string(interaction)
+                .context("serialize llm interaction event payload")?,
+            created_at: Utc::now(),
+        };
+        self.append_event(session_id, &event)
     }
 
     pub fn list_events(&self, session_id: &str) -> Result<Vec<SessionEvent>> {

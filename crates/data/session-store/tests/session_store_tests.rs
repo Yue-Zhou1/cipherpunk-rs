@@ -2,7 +2,7 @@ use audit_agent_core::finding::VerificationStatus;
 use audit_agent_core::session::{AuditRecord, AuditSession};
 use chrono::Utc;
 use rusqlite::Connection;
-use session_store::{SessionEvent, SessionStore};
+use session_store::{LlmInteractionEvent, SessionEvent, SessionStore};
 
 #[test]
 fn create_and_reload_session_round_trips() {
@@ -182,4 +182,35 @@ fn legacy_record_json_without_ir_node_ids_deserializes_as_empty_vec() {
         loaded.ir_node_ids.is_empty(),
         "legacy rows should load with empty provenance vec"
     );
+}
+
+#[test]
+fn append_llm_interaction_event_persists_event_with_payload() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = SessionStore::open(dir.path().join("sessions.sqlite")).expect("open store");
+    store
+        .create_session(&AuditSession::sample("sess-llm"))
+        .expect("create session");
+
+    store
+        .append_llm_interaction_event(
+            "sess-llm",
+            &LlmInteractionEvent {
+                provider: "openai".to_string(),
+                model: Some("gpt-4.1-mini".to_string()),
+                role: "SearchHints".to_string(),
+                duration_ms: 22,
+                prompt_chars: 80,
+                response_chars: 120,
+                attempt: 1,
+                succeeded: true,
+            },
+        )
+        .expect("append llm interaction event");
+
+    let events = store.list_events("sess-llm").expect("list events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "llm.interaction");
+    assert!(events[0].payload.contains("\"provider\":\"openai\""));
+    assert!(events[0].payload.contains("\"succeeded\":true"));
 }

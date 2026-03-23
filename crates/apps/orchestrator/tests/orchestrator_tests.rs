@@ -12,6 +12,7 @@ use audit_agent_core::finding::{
     CodeLocation, Evidence, Finding, FindingCategory, FindingId, FindingStatus, Framework,
     Severity, VerificationStatus,
 };
+use audit_agent_core::output::{EngineOutcome, EngineStatus};
 use orchestrator::{AuditEvent, AuditEventSink, AuditOrchestrator};
 use tempfile::tempdir;
 
@@ -145,6 +146,23 @@ impl AuditEngine for StaticEngine {
     }
 }
 
+struct FailingEngine;
+
+#[async_trait]
+impl AuditEngine for FailingEngine {
+    fn name(&self) -> &str {
+        "failing-engine"
+    }
+
+    async fn analyze(&self, _ctx: &AuditContext) -> anyhow::Result<Vec<Finding>> {
+        anyhow::bail!("simulated failure")
+    }
+
+    async fn supports(&self, _ctx: &AuditContext) -> bool {
+        true
+    }
+}
+
 #[tokio::test]
 async fn produce_outputs_deduplicates_marks_regression_and_writes_reports() {
     let dir = tempdir().expect("tempdir");
@@ -179,7 +197,16 @@ async fn produce_outputs_deduplicates_marks_regression_and_writes_reports() {
 
     let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip);
     let outputs = orchestrator
-        .produce_outputs(&[cached, fresh], &config)
+        .produce_outputs(
+            &[cached, fresh],
+            &[EngineOutcome {
+                engine: "static-engine".to_string(),
+                status: EngineStatus::Completed,
+                findings_count: 1,
+                duration_ms: 10,
+            }],
+            &config,
+        )
         .await
         .expect("produce outputs");
 
@@ -204,7 +231,16 @@ async fn produce_outputs_emits_audit_completed_event() {
         AuditOrchestrator::new(output_dir.clone(), evidence_zip).with_event_sink(sink_trait);
     let config = sample_config(dir.path(), &output_dir);
     orchestrator
-        .produce_outputs(&[sample_finding()], &config)
+        .produce_outputs(
+            &[sample_finding()],
+            &[EngineOutcome {
+                engine: "static-engine".to_string(),
+                status: EngineStatus::Completed,
+                findings_count: 1,
+                duration_ms: 10,
+            }],
+            &config,
+        )
         .await
         .expect("produce outputs");
 
@@ -235,6 +271,80 @@ async fn run_executes_engines_and_returns_outputs() {
 
     assert_eq!(outputs.findings.len(), 1);
     assert_eq!(outputs.manifest.audit_id, "audit-orchestrator-test");
+    assert_eq!(outputs.manifest.engine_outcomes.len(), 1);
+    assert!(outputs.manifest.coverage.is_some());
+}
+
+#[tokio::test]
+async fn execute_dag_continues_after_engine_failure_and_records_outcomes() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip).with_engines(vec![
+        Box::new(FailingEngine),
+        Box::new(StaticEngine {
+            findings: vec![sample_finding()],
+        }),
+    ]);
+    let config = sample_config(dir.path(), &output_dir);
+    let dag = orchestrator.build_dag(&config);
+    let (findings, outcomes) = orchestrator
+        .execute_dag(&dag, &config)
+        .await
+        .expect("execute dag");
+
+    assert_eq!(findings.len(), 1, "healthy engines should still contribute");
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes.iter().any(|outcome| {
+        outcome.engine == "failing-engine" && matches!(outcome.status, EngineStatus::Failed { .. })
+    }));
+    assert!(outcomes.iter().any(|outcome| {
+        outcome.engine == "static-engine" && matches!(outcome.status, EngineStatus::Completed)
+    }));
+}
+
+#[tokio::test]
+async fn run_emits_engine_lifecycle_events_for_success_and_failure() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let sink = Arc::new(RecordingSink::default());
+    let sink_trait: Arc<dyn AuditEventSink> = sink.clone();
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip)
+        .with_event_sink(sink_trait)
+        .with_engines(vec![
+            Box::new(FailingEngine),
+            Box::new(StaticEngine {
+                findings: vec![sample_finding()],
+            }),
+        ]);
+    let config = sample_config(dir.path(), &output_dir);
+    orchestrator.run(&config).await.expect("run orchestrator");
+
+    let events = sink.events.lock().expect("event lock");
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AuditEvent::EngineFailed { engine, .. } if engine == "failing-engine"
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AuditEvent::EngineCompleted { engine, .. } if engine == "static-engine"
+        )
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| { matches!(event, AuditEvent::AuditCompleted { .. }) })
+    );
 }
 
 #[tokio::test]
@@ -260,7 +370,16 @@ async fn produce_outputs_aggregates_manifest_tool_versions_and_container_digests
     let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip);
     let config = sample_config(dir.path(), &output_dir);
     let outputs = orchestrator
-        .produce_outputs(&[finding], &config)
+        .produce_outputs(
+            &[finding],
+            &[EngineOutcome {
+                engine: "static-engine".to_string(),
+                status: EngineStatus::Completed,
+                findings_count: 1,
+                duration_ms: 10,
+            }],
+            &config,
+        )
         .await
         .expect("produce outputs");
 
@@ -275,5 +394,51 @@ async fn produce_outputs_aggregates_manifest_tool_versions_and_container_digests
     assert_eq!(
         outputs.manifest.container_digests.get("F-CRYPTO-999"),
         Some(&"sha256:deadbeef".to_string())
+    );
+}
+
+#[tokio::test]
+async fn produce_outputs_records_engine_outcomes_and_partial_coverage() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip);
+    let config = sample_config(dir.path(), &output_dir);
+    let outcomes = vec![
+        EngineOutcome {
+            engine: "static-engine".to_string(),
+            status: EngineStatus::Completed,
+            findings_count: 1,
+            duration_ms: 10,
+        },
+        EngineOutcome {
+            engine: "failing-engine".to_string(),
+            status: EngineStatus::Failed {
+                reason: "simulated".to_string(),
+            },
+            findings_count: 0,
+            duration_ms: 3,
+        },
+    ];
+
+    let outputs = orchestrator
+        .produce_outputs(&[sample_finding()], &outcomes, &config)
+        .await
+        .expect("produce outputs");
+
+    assert_eq!(outputs.manifest.engine_outcomes, outcomes);
+    let coverage = outputs
+        .manifest
+        .coverage
+        .as_ref()
+        .expect("coverage should be present");
+    assert!(!coverage.coverage_complete);
+    assert_eq!(coverage.engines_failed, 1);
+    assert_eq!(
+        outputs.manifest.engines_run,
+        vec!["static-engine".to_string(), "failing-engine".to_string()]
     );
 }

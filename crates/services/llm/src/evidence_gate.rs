@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use regex::Regex;
 use sandbox::SandboxExecutor;
+use serde::{Deserialize, Serialize};
 
-use crate::provider::{CompletionOpts, LlmProvider, LlmRole, llm_call};
+use crate::provider::{CompletionOpts, LlmProvenance, LlmProvider, LlmRole, llm_call_traced};
 
 static ASSERTION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:kani\s*::\s*assert!?|assert!)\s*\(").expect("assertion regex compiles")
@@ -20,7 +21,7 @@ pub struct HarnessCode {
     pub source: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateResult {
     pub level_reached: u8,
     pub passed: bool,
@@ -28,6 +29,8 @@ pub struct GateResult {
     pub failure_reason: Option<String>,
     pub attempts: u8,
     pub llm_fixed_syntax: bool,
+    #[serde(default)]
+    pub provenance: Option<LlmProvenance>,
 }
 
 pub struct EvidenceGate {
@@ -55,6 +58,7 @@ impl EvidenceGate {
                 failure_reason: Some("missing harness function".to_string()),
                 attempts: 1,
                 llm_fixed_syntax: false,
+                provenance: None,
             };
         }
 
@@ -66,6 +70,7 @@ impl EvidenceGate {
                 failure_reason: Some("required assertion missing from harness".to_string()),
                 attempts: 1,
                 llm_fixed_syntax: false,
+                provenance: None,
             };
         }
 
@@ -80,6 +85,7 @@ impl EvidenceGate {
                     failure_reason: Some(error),
                     attempts: 1,
                     llm_fixed_syntax: false,
+                    provenance: None,
                 };
             }
         };
@@ -95,6 +101,7 @@ impl EvidenceGate {
                     failure_reason: Some(error),
                     attempts: 1,
                     llm_fixed_syntax: false,
+                    provenance: None,
                 };
             }
         };
@@ -110,6 +117,7 @@ impl EvidenceGate {
                     failure_reason: Some(error),
                     attempts: 1,
                     llm_fixed_syntax: false,
+                    provenance: None,
                 };
             }
         };
@@ -122,6 +130,7 @@ impl EvidenceGate {
                 failure_reason: Some("reproduction mismatch between runs".to_string()),
                 attempts: 1,
                 llm_fixed_syntax: false,
+                provenance: None,
             };
         }
 
@@ -143,6 +152,7 @@ impl EvidenceGate {
             },
             attempts: 1,
             llm_fixed_syntax: false,
+            provenance: None,
         }
     }
 
@@ -161,12 +171,14 @@ impl EvidenceGate {
                 failure_reason: Some("required assertion missing from harness".to_string()),
                 attempts: 1,
                 llm_fixed_syntax: false,
+                provenance: None,
             };
         };
         let original_assertions = count_assertions(&harness.source);
+        let mut last_provenance = None;
         for attempt in 1..=max_retries.max(1) {
             let prompt = Self::fix_loop_prompt(&required_assertion, compile_error);
-            let candidate = match llm_call(
+            let (candidate, mut provenance) = match llm_call_traced(
                 llm,
                 LlmRole::Scaffolding,
                 &prompt,
@@ -174,8 +186,17 @@ impl EvidenceGate {
             )
             .await
             {
-                Ok(text) => text,
+                Ok(result) => result,
                 Err(error) => {
+                    let provenance = LlmProvenance {
+                        provider: llm.name().to_string(),
+                        model: llm.model().map(|value| value.to_string()),
+                        role: "Scaffolding".to_string(),
+                        duration_ms: 0,
+                        prompt_chars: prompt.len(),
+                        response_chars: 0,
+                        attempt,
+                    };
                     return GateResult {
                         level_reached: 0,
                         passed: false,
@@ -183,9 +204,12 @@ impl EvidenceGate {
                         failure_reason: Some(format!("llm fix call failed: {error}")),
                         attempts: attempt,
                         llm_fixed_syntax: false,
+                        provenance: Some(provenance),
                     };
                 }
             };
+            provenance.attempt = attempt;
+            last_provenance = Some(provenance.clone());
 
             if count_assertions(&candidate) > original_assertions {
                 return GateResult {
@@ -195,6 +219,7 @@ impl EvidenceGate {
                     failure_reason: Some("assertion mutation blocked in fix loop".to_string()),
                     attempts: attempt,
                     llm_fixed_syntax: true,
+                    provenance: last_provenance,
                 };
             }
 
@@ -205,6 +230,7 @@ impl EvidenceGate {
             let mut result = self.validate(&candidate_harness, &required_assertion).await;
             result.attempts = attempt;
             result.llm_fixed_syntax = true;
+            result.provenance = last_provenance.clone();
             if result.passed {
                 return result;
             }
@@ -217,6 +243,7 @@ impl EvidenceGate {
             failure_reason: Some("syntax fix retries exhausted".to_string()),
             attempts: max_retries,
             llm_fixed_syntax: true,
+            provenance: last_provenance,
         }
     }
 

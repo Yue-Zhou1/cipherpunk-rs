@@ -6,6 +6,15 @@ use crate::jobs::{AuditJob, AuditJobStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditEvent {
+    EngineCompleted {
+        engine: String,
+        findings_count: usize,
+        duration_ms: u64,
+    },
+    EngineFailed {
+        engine: String,
+        reason: String,
+    },
     AuditCompleted {
         audit_id: String,
         output_dir: PathBuf,

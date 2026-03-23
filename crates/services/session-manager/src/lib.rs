@@ -138,7 +138,9 @@ impl SessionManager {
         state.parse_config(&path)
     }
 
-    pub async fn detect_workspace(&self) -> SessionResult<intake::confirmation::ConfirmationSummary> {
+    pub async fn detect_workspace(
+        &self,
+    ) -> SessionResult<intake::confirmation::ConfirmationSummary> {
         self.detect_workspace_with_wizard(None).await
     }
 
@@ -191,12 +193,21 @@ impl SessionManager {
         session_id: &str,
     ) -> SessionResult<Option<OpenAuditSessionResponse>> {
         let mut state = self.inner.lock().await;
-        state.open_audit_session(session_id).await.map_err(map_state_error)
+        state
+            .open_audit_session(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
-    pub async fn get_project_tree(&self, session_id: &str) -> SessionResult<GetProjectTreeResponse> {
+    pub async fn get_project_tree(
+        &self,
+        session_id: &str,
+    ) -> SessionResult<GetProjectTreeResponse> {
         let mut state = self.inner.lock().await;
-        state.get_project_tree(session_id).await.map_err(map_state_error)
+        state
+            .get_project_tree(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
     pub async fn read_source_file(
@@ -213,10 +224,16 @@ impl SessionManager {
 
     pub async fn load_file_graph(&self, session_id: &str) -> SessionResult<ProjectGraphResponse> {
         let mut state = self.inner.lock().await;
-        state.load_file_graph(session_id).await.map_err(map_state_error)
+        state
+            .load_file_graph(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
-    pub async fn load_feature_graph(&self, session_id: &str) -> SessionResult<ProjectGraphResponse> {
+    pub async fn load_feature_graph(
+        &self,
+        session_id: &str,
+    ) -> SessionResult<ProjectGraphResponse> {
         let mut state = self.inner.lock().await;
         state
             .load_feature_graph(session_id)
@@ -252,7 +269,10 @@ impl SessionManager {
         session_id: &str,
     ) -> SessionResult<LoadChecklistPlanResponse> {
         let mut state = self.inner.lock().await;
-        state.load_checklist_plan(session_id).await.map_err(map_state_error)
+        state
+            .load_checklist_plan(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
     pub async fn load_toolbench_context(
@@ -267,9 +287,15 @@ impl SessionManager {
             .map_err(map_state_error)
     }
 
-    pub async fn load_review_queue(&self, session_id: &str) -> SessionResult<LoadReviewQueueResponse> {
+    pub async fn load_review_queue(
+        &self,
+        session_id: &str,
+    ) -> SessionResult<LoadReviewQueueResponse> {
         let mut state = self.inner.lock().await;
-        state.load_review_queue(session_id).await.map_err(map_state_error)
+        state
+            .load_review_queue(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
     pub async fn apply_review_decision(
@@ -295,7 +321,9 @@ impl SessionManager {
             .map_err(map_state_error)
     }
 
-    pub async fn get_audit_manifest(&self) -> SessionResult<audit_agent_core::output::AuditManifest> {
+    pub async fn get_audit_manifest(
+        &self,
+    ) -> SessionResult<audit_agent_core::output::AuditManifest> {
         let state = self.inner.lock().await;
         state.get_audit_manifest().map_err(map_state_error)
     }

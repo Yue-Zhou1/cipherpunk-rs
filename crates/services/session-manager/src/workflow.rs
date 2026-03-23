@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use zip::CompressionMethod;
 use zip::write::FileOptions;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedSourceView {
     pub source: ResolvedSource,

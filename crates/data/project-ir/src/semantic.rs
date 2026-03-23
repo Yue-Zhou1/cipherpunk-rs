@@ -260,26 +260,14 @@ fn walk_node(
 
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            walk_node(
-                child,
-                source,
-                current_function,
-                &nested_scope,
-                scan_state,
-            );
+            walk_node(child, source, current_function, &nested_scope, scan_state);
         }
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        walk_node(
-            child,
-            source,
-            current_function,
-            module_scope,
-            scan_state,
-        );
+        walk_node(child, source, current_function, module_scope, scan_state);
     }
 }
 

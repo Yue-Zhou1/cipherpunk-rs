@@ -6,6 +6,7 @@ pub enum AuditJobKind {
     BuildProjectIr,
     GenerateAiOverview,
     PlanChecklists,
+    RunEngine { engine_name: String },
     RunDomainChecklist { domain_id: String },
     RunToolAction { action_id: String },
     ExportReports,

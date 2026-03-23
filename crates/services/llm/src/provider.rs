@@ -2,16 +2,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+pub use audit_agent_core::llm::LlmRole;
 use reqwest::Client;
-use serde::Deserialize;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum LlmRole {
-    Scaffolding,
-    SearchHints,
-    ProseRendering,
-    LeanScaffold,
-}
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionOpts {
@@ -33,6 +26,20 @@ pub trait LlmProvider: Send + Sync {
     async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String>;
     fn name(&self) -> &str;
     fn is_available(&self) -> bool;
+    fn model(&self) -> Option<&str> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmProvenance {
+    pub provider: String,
+    pub model: Option<String>,
+    pub role: String,
+    pub duration_ms: u64,
+    pub prompt_chars: usize,
+    pub response_chars: usize,
+    pub attempt: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +104,10 @@ impl LlmProvider for OpenAiProvider {
     fn is_available(&self) -> bool {
         !self.api_key.trim().is_empty()
     }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
 }
 
 #[async_trait]
@@ -133,6 +144,10 @@ impl LlmProvider for AnthropicProvider {
     fn is_available(&self) -> bool {
         !self.api_key.trim().is_empty()
     }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
 }
 
 #[async_trait]
@@ -163,6 +178,10 @@ impl LlmProvider for OllamaProvider {
 
     fn is_available(&self) -> bool {
         !self.base_url.trim().is_empty()
+    }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
     }
 }
 
@@ -251,16 +270,45 @@ fn ollama_provider() -> Option<OllamaProvider> {
     .ok()
 }
 
+#[deprecated(note = "Use llm_call_traced to capture response provenance.")]
 pub async fn llm_call(
     provider: &dyn LlmProvider,
     role: LlmRole,
     prompt: &str,
     opts: &CompletionOpts,
 ) -> Result<String> {
+    let (response, _provenance) = llm_call_traced(provider, role, prompt, opts).await?;
+    Ok(response)
+}
+
+pub async fn llm_call_traced(
+    provider: &dyn LlmProvider,
+    role: LlmRole,
+    prompt: &str,
+    opts: &CompletionOpts,
+) -> Result<(String, LlmProvenance)> {
+    let started_at = std::time::Instant::now();
     tracing::debug!(role = ?role, provider = provider.name(), "LLM call");
     let response = provider.complete(prompt, opts).await?;
-    tracing::trace!(role = ?role, chars = response.len(), "LLM response");
-    Ok(response)
+    let duration_ms = started_at.elapsed().as_millis() as u64;
+    tracing::info!(
+        role = ?role,
+        provider = provider.name(),
+        model = provider.model().unwrap_or("unknown"),
+        duration_ms,
+        response_chars = response.len(),
+        "LLM call completed"
+    );
+    let provenance = LlmProvenance {
+        provider: provider.name().to_string(),
+        model: provider.model().map(|value| value.to_string()),
+        role: format!("{role:?}"),
+        duration_ms,
+        prompt_chars: prompt.len(),
+        response_chars: response.len(),
+        attempt: 1,
+    };
+    Ok((response, provenance))
 }
 
 pub fn json_only_prompt(contract_name: &str, task: &str) -> String {

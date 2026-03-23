@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use audit_agent_core::audit_config::{AuditConfig, BudgetConfig, ResolvedSource, SourceOrigin};
 use audit_agent_core::finding::{Severity, VerificationStatus};
-use audit_agent_core::output::AuditManifest;
+use audit_agent_core::output::{AuditManifest, CoverageReport};
 use audit_agent_core::session::{AuditRecord, AuditRecordKind, AuditSession, SessionUiState};
 use chrono::Utc;
 use engine_crypto::intake_bridge::{CryptoEngineContext, EnvironmentManifest};
@@ -20,13 +20,14 @@ use knowledge::KnowledgeBase;
 use knowledge::memory_block::MemoryBlock;
 use knowledge::memory_block::embedder::resolved_config_and_provider_from_env;
 use knowledge::models::AdjudicatedCase;
+use llm::{LlmInteractionHook, LlmProvenance};
 use orchestrator::{AuditJob, AuditJobKind, AuditOrchestrator};
 use project_ir::{
     ChecklistPlan as IrChecklistPlan, ProjectIr, ProjectIrBuilder,
     SecurityOverview as IrSecurityOverview,
 };
 use serde::{Deserialize, Serialize};
-use session_store::SessionStore;
+use session_store::{LlmInteractionEvent, SessionStore};
 
 use crate::{
     ConfigParseResponse, OutputType, ResolvedSourceView, confirm_workspace, detect_workspace,
@@ -719,10 +720,17 @@ impl UiSessionState {
         session_id: &str,
     ) -> Result<LoadSecurityOverviewResponse> {
         let ir = self.load_or_build_project_ir(session_id, false).await?;
-        Ok(security_overview_response(
-            session_id,
-            ir.security_overview(),
-        ))
+        let mut response = security_overview_response(session_id, ir.security_overview());
+        let output_dir = self
+            .audit_config
+            .as_ref()
+            .map(|config| config.output_dir.clone())
+            .unwrap_or_else(|| self.work_dir.join("audit-output"));
+        let coverage = get_audit_manifest(&output_dir)
+            .ok()
+            .and_then(|manifest| manifest.coverage);
+        response.review_notes = prepend_coverage_warnings(response.review_notes, coverage.as_ref());
+        Ok(response)
     }
 
     pub async fn load_checklist_plan(
@@ -928,6 +936,57 @@ impl UiSessionState {
                 .or_default();
         }
         Ok(())
+    }
+
+    pub fn append_llm_interaction_event(
+        &self,
+        session_id: &str,
+        provenance: &LlmProvenance,
+        succeeded: bool,
+    ) -> Result<()> {
+        let Some(store) = &self.session_store else {
+            return Ok(());
+        };
+        store.append_llm_interaction_event(
+            session_id,
+            &LlmInteractionEvent {
+                provider: provenance.provider.clone(),
+                model: provenance.model.clone(),
+                role: provenance.role.clone(),
+                duration_ms: provenance.duration_ms,
+                prompt_chars: provenance.prompt_chars,
+                response_chars: provenance.response_chars,
+                attempt: provenance.attempt,
+                succeeded,
+            },
+        )
+    }
+
+    pub fn llm_interaction_hook_for_session(&self, session_id: &str) -> LlmInteractionHook {
+        let store = self.session_store.clone();
+        let session_id = session_id.to_string();
+        Arc::new(move |provenance: &LlmProvenance, succeeded: bool| {
+            let Some(store) = &store else {
+                return;
+            };
+            let interaction = LlmInteractionEvent {
+                provider: provenance.provider.clone(),
+                model: provenance.model.clone(),
+                role: provenance.role.clone(),
+                duration_ms: provenance.duration_ms,
+                prompt_chars: provenance.prompt_chars,
+                response_chars: provenance.response_chars,
+                attempt: provenance.attempt,
+                succeeded,
+            };
+            if let Err(err) = store.append_llm_interaction_event(&session_id, &interaction) {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "failed to append llm interaction session event"
+                );
+            }
+        })
     }
 
     fn ingest_review_feedback(&self, record: &AuditRecord, request: &ApplyReviewDecisionRequest) {
@@ -1170,6 +1229,7 @@ fn job_kind(kind: &AuditJobKind) -> String {
         AuditJobKind::BuildProjectIr => "build_project_ir".to_string(),
         AuditJobKind::GenerateAiOverview => "generate_ai_overview".to_string(),
         AuditJobKind::PlanChecklists => "plan_checklists".to_string(),
+        AuditJobKind::RunEngine { engine_name } => format!("run_engine:{engine_name}"),
         AuditJobKind::RunDomainChecklist { domain_id } => {
             format!("run_domain_checklist:{domain_id}")
         }
@@ -1515,6 +1575,26 @@ fn security_overview_response(
         hotspots: overview.hotspots,
         review_notes: overview.review_notes,
     }
+}
+
+fn prepend_coverage_warnings(
+    review_notes: Vec<String>,
+    coverage: Option<&CoverageReport>,
+) -> Vec<String> {
+    let mut prefixed = coverage
+        .map(|coverage| {
+            coverage
+                .warnings
+                .iter()
+                .map(|warning| format!("[COVERAGE] {warning}"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if prefixed.is_empty() {
+        return review_notes;
+    }
+    prefixed.extend(review_notes);
+    prefixed
 }
 
 fn checklist_plan_response(session_id: &str, plan: IrChecklistPlan) -> LoadChecklistPlanResponse {
@@ -2134,10 +2214,16 @@ mod tests {
             "[package]\nname = \"crate-b\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .expect("write crate-b manifest");
-        fs::write(workspace.path().join("crate-a/src/lib.rs"), "pub fn a() {}\n")
-            .expect("write crate-a source");
-        fs::write(workspace.path().join("crate-b/src/lib.rs"), "pub fn b() {}\n")
-            .expect("write crate-b source");
+        fs::write(
+            workspace.path().join("crate-a/src/lib.rs"),
+            "pub fn a() {}\n",
+        )
+        .expect("write crate-a source");
+        fs::write(
+            workspace.path().join("crate-b/src/lib.rs"),
+            "pub fn b() {}\n",
+        )
+        .expect("write crate-b source");
 
         let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
         let mut config = test_audit_config(workspace.path());
@@ -2175,5 +2261,29 @@ mod tests {
             paths.extend(all_tree_paths(&node.children));
         }
         paths
+    }
+
+    #[test]
+    fn coverage_warnings_are_prefixed_and_prepended_to_review_notes() {
+        let existing = vec![
+            "AI-generated overview material must remain unverified until analyst review"
+                .to_string(),
+        ];
+        let coverage = audit_agent_core::output::CoverageReport {
+            engines_requested: 2,
+            engines_completed: 1,
+            engines_failed: 1,
+            engines_skipped: 0,
+            coverage_complete: false,
+            warnings: vec!["Engine 'crypto_zk' failed: timeout".to_string()],
+        };
+
+        let merged = prepend_coverage_warnings(existing.clone(), Some(&coverage));
+
+        assert_eq!(
+            merged.first(),
+            Some(&"[COVERAGE] Engine 'crypto_zk' failed: timeout".to_string())
+        );
+        assert_eq!(merged[1], existing[0]);
     }
 }

@@ -4,7 +4,7 @@ use anyhow::Result;
 use audit_agent_core::finding::CodeLocation;
 use llm::sanitize::{GraphContextEntry, pack_graph_aware_context};
 use llm::semantic_memory::format_semantic_signatures;
-use llm::{CompletionOpts, EvidenceGate, HarnessCode, LlmProvider, LlmRole, llm_call};
+use llm::{CompletionOpts, EvidenceGate, HarnessCode, LlmProvider, LlmRole, llm_call_traced};
 use num_bigint::BigUint;
 use sandbox::SandboxExecutor;
 
@@ -156,13 +156,21 @@ impl KaniHarnessScaffolder {
             context = packed_context,
             signatures = format_semantic_signatures(&req.semantic_signatures),
         );
-        let raw = llm_call(
+        let (raw, provenance) = llm_call_traced(
             llm,
             LlmRole::SearchHints,
             &prompt,
             &CompletionOpts::default(),
         )
         .await?;
+        tracing::debug!(
+            provider = %provenance.provider,
+            model = ?provenance.model,
+            role = %provenance.role,
+            duration_ms = provenance.duration_ms,
+            attempt = provenance.attempt,
+            "captured assume-hint LLM provenance"
+        );
         Ok(parse_assume_lines(&raw))
     }
 

@@ -8,7 +8,7 @@ use audit_agent_core::finding::{
     CodeLocation, Evidence, Finding, FindingCategory, FindingId, FindingStatus, Framework,
     Severity, VerificationStatus,
 };
-use audit_agent_core::output::{AuditManifest, FindingCounts};
+use audit_agent_core::output::{AuditManifest, CoverageReport, FindingCounts};
 use chrono::Utc;
 use report::executive::render_executive_report;
 use report::technical::render_technical_report;
@@ -38,6 +38,8 @@ fn sample_manifest() -> AuditManifest {
         finding_counts: FindingCounts::default(),
         risk_score: 55,
         engines_run: vec!["crypto_zk".to_string()],
+        engine_outcomes: vec![],
+        coverage: None,
         optional_inputs_used: OptionalInputsSummary {
             spec_provided: true,
             prev_audit_provided: false,
@@ -130,6 +132,25 @@ fn executive_report_includes_score_counts_and_top_findings() {
             || report.contains("Fix before deploy")
             || report.contains("Do not deploy")
     );
+}
+
+#[test]
+fn executive_report_includes_coverage_section_when_analysis_is_partial() {
+    let mut manifest = sample_manifest();
+    manifest.coverage = Some(CoverageReport {
+        engines_requested: 2,
+        engines_completed: 1,
+        engines_failed: 1,
+        engines_skipped: 0,
+        coverage_complete: false,
+        warnings: vec!["Engine 'crypto_zk' failed: timeout".to_string()],
+    });
+    let findings = vec![sample_finding()];
+
+    let report = render_executive_report(&findings, &manifest);
+    assert!(report.contains("## Coverage"));
+    assert!(report.contains("This report reflects partial analysis"));
+    assert!(report.contains("Engine 'crypto_zk' failed: timeout"));
 }
 
 #[test]

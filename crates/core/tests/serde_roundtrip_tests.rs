@@ -183,6 +183,8 @@ fn audit_config_and_manifest_round_trip() {
         finding_counts: FindingCounts::default(),
         risk_score: 100,
         engines_run: vec!["crypto_zk".to_string()],
+        engine_outcomes: vec![],
+        coverage: None,
         optional_inputs_used: OptionalInputsSummary {
             spec_provided: true,
             prev_audit_provided: false,

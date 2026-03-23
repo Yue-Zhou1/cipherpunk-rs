@@ -1,0 +1,426 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans)}
+.tabs{display:flex;gap:6px;padding:1rem 0 0.75rem;flex-wrap:wrap}
+.tab{padding:5px 12px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);font-size:12px;cursor:pointer;background:transparent;color:var(--color-text-secondary);transition:all .15s}
+.tab.active{background:var(--color-background-secondary);color:var(--color-text-primary);font-weight:500;border-color:var(--color-border-primary)}
+.tab:hover:not(.active){background:var(--color-background-secondary)}
+.pane{display:none}.pane.active{display:block}
+.section{margin-bottom:1rem}
+.sec-hd{display:flex;align-items:center;gap:8px;padding:0.6rem 0.875rem;border-radius:var(--border-radius-md) var(--border-radius-md) 0 0;border:0.5px solid var(--color-border-tertiary);border-bottom:none;user-select:none}
+.sec-title{font-size:13px;font-weight:500;color:var(--color-text-primary);flex:1}
+.sec-body{border:0.5px solid var(--color-border-tertiary);border-radius:0 0 var(--border-radius-md) var(--border-radius-md);overflow:hidden}
+.item{display:flex;align-items:flex-start;gap:10px;padding:0.55rem 0.875rem;border-bottom:0.5px solid var(--color-border-tertiary);cursor:pointer;transition:background .1s}
+.item:last-child{border-bottom:none}
+.item:hover{background:var(--color-background-secondary)}
+.item.checked .item-text{text-decoration:line-through;color:var(--color-text-tertiary)}
+.item.checked .cb{background:#1D9E75;border-color:#1D9E75}
+.item.checked .cb::after{opacity:1}
+.cb{width:14px;height:14px;border-radius:3px;border:0.5px solid var(--color-border-secondary);background:transparent;flex-shrink:0;margin-top:2px;position:relative;transition:all .15s}
+.cb::after{content:'';position:absolute;left:3px;top:1px;width:5px;height:8px;border:1.5px solid #fff;border-top:none;border-left:none;transform:rotate(40deg);opacity:0;transition:opacity .15s}
+.item-text{font-size:12px;color:var(--color-text-primary);line-height:1.5;flex:1}
+.item-text code{font-family:var(--font-mono);font-size:11px;background:var(--color-background-secondary);padding:1px 4px;border-radius:3px;border:0.5px solid var(--color-border-tertiary)}
+.sev{font-size:10px;padding:1px 6px;border-radius:999px;white-space:nowrap;flex-shrink:0;margin-top:3px}
+.s-c{background:#FCEBEB;color:#791F1F;border:0.5px solid #F09595}
+.s-h{background:#FAEEDA;color:#633806;border:0.5px solid #EF9F27}
+.s-m{background:#E6F1FB;color:#0C447C;border:0.5px solid #85B7EB}
+.s-l{background:#F1EFE8;color:#444441;border:0.5px solid #B4B2A9}
+.progress-bar{height:3px;background:var(--color-border-tertiary);border-radius:2px;margin-bottom:1rem;overflow:hidden}
+.progress-fill{height:100%;background:#1D9E75;border-radius:2px;transition:width .3s}
+.stats{display:flex;gap:10px;margin-bottom:0.75rem;flex-wrap:wrap}
+.stat{font-size:12px;color:var(--color-text-secondary)}
+.stat span{font-weight:500;color:var(--color-text-primary)}
+.reset-btn{font-size:11px;padding:3px 8px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);cursor:pointer;background:transparent;color:var(--color-text-secondary);float:right}
+.reset-btn:hover{background:var(--color-background-secondary)}
+.note-box{padding:0.6rem 0.875rem;border-left:3px solid;font-size:12px;line-height:1.6;margin-bottom:0.75rem}
+.nb-red{border-color:#E24B4A;background:#FCEBEB;color:#A32D2D}
+.nb-amber{border-color:#EF9F27;background:#FAEEDA;color:#854F0B}
+.nb-blue{border-color:#378ADD;background:#E6F1FB;color:#185FA5}
+.nb-teal{border-color:#1D9E75;background:#E1F5EE;color:#085041}
+pre{margin:0.5rem 0;padding:0.75rem;font-family:var(--font-mono);font-size:11px;line-height:1.6;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);overflow-x:auto;color:var(--color-text-primary)}
+.kw{color:#534AB7;font-weight:500}.cm{color:#3B6D11}.bug{color:#A32D2D;font-weight:500}.fix{color:#0F6E56;font-weight:500}.hi{color:#185FA5}
+</style>
+
+<div class="tabs">
+  <button class="tab active" onclick="sw('checklist',this)">Audit checklist</button>
+  <button class="tab" onclick="sw('patterns',this)">Vulnerability patterns</button>
+  <button class="tab" onclick="sw('tools',this)">Toolchain</button>
+</div>
+
+<div id="checklist" class="pane active">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+    <div class="stats">
+      <span class="stat">Done <span id="done-count">0</span> / <span id="total-count">0</span></span>
+      <span class="stat">· Critical <span id="c-count" style="color:#A32D2D">0</span></span>
+      <span class="stat">· High <span id="h-count" style="color:#854F0B">0</span></span>
+    </div>
+    <button class="reset-btn" onclick="resetAll()">Reset</button>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="prog" style="width:0%"></div></div>
+  <div id="sections"></div>
+</div>
+
+<div id="patterns" class="pane">
+  <div class="note-box nb-red">Each pattern below represents a real vulnerability class observed in production cryptographic library audits.</div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#FCEBEB;border-color:#F09595"><span class="sec-title">1. Timing side-channel — secret-dependent branches</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: branch depends on secret bit → timing side-channel</span>
+<span class="kw">fn</span> bad_scalar_mul(secret_bit: u8, point: &G1) -> G1 {
+    <span class="bug">if secret_bit == 1 {     // attacker measures execution time → recovers bit</span>
+        add(accumulator, point)
+    } else {
+        accumulator
+    }
+}
+
+<span class="fix">// FIX: constant-time conditional select — no branch</span>
+<span class="kw">use</span> subtle::ConditionallySelectable;
+<span class="kw">fn</span> ct_select(secret_bit: Choice, a: &G1, b: &G1) -> G1 {
+    G1::conditional_select(b, a, secret_bit)  <span class="fix">// branchless, same clock cycles</span>
+}
+
+<span class="cm">// BUG: variable-length loop leaks Hamming weight of secret</span>
+<span class="bug">for bit in secret.bits() { if bit { ops += 1; } }  // loop count reveals bit count</span>
+<span class="fix">// FIX: fixed iteration count — Montgomery ladder or double-and-add-always</span></pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#FCEBEB;border-color:#F09595"><span class="sec-title">2. Missing point validation — small subgroup attack</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: accepting external G1/G2 points without subgroup check</span>
+<span class="kw">fn</span> bad_verify(pk: G1Affine, msg: &[u8], sig: G2Affine) -> bool {
+    <span class="bug">// no check that pk is in the correct r-torsion subgroup</span>
+    <span class="bug">// attacker supplies small-subgroup point → pairing result is predictable → forgery</span>
+    pairing(pk, hash_to_g2(msg)) == pairing(g1_gen(), sig)
+}
+
+<span class="fix">// FIX: explicit subgroup membership check before use</span>
+<span class="kw">fn</span> good_verify(pk: G1Affine, msg: &[u8], sig: G2Affine) -> bool {
+    <span class="fix">assert!(pk.is_on_curve() && pk.is_in_correct_subgroup_assuming_on_curve());</span>
+    <span class="fix">assert!(sig.is_on_curve() && sig.is_in_correct_subgroup_assuming_on_curve());</span>
+    pairing(pk, hash_to_g2(msg)) == pairing(g1_gen(), sig)
+}
+<span class="cm">// BLS12-381 G2 cofactor h ≈ 2^382 — a point on the curve may NOT be in the subgroup</span></pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#FCEBEB;border-color:#F09595"><span class="sec-title">3. Nonce reuse — private key recovery</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: deterministic nonce not bound to the message</span>
+<span class="kw">fn</span> bad_sign(sk: &Scalar, msg: &[u8]) -> Signature {
+    <span class="bug">let k = hash_to_scalar(sk.to_bytes());  // nonce independent of msg</span>
+    <span class="bug">// two different messages → same k → two equations, two unknowns → sk recovered</span>
+    schnorr_sign_with_nonce(sk, msg, k)
+}
+
+<span class="fix">// FIX: RFC 6979 / BIP340 — nonce must bind both sk AND msg</span>
+<span class="kw">fn</span> good_sign(sk: &Scalar, msg: &[u8]) -> Signature {
+    <span class="fix">let k = rfc6979_nonce(sk, msg);  // HMAC-DRBG(sk || msg)</span>
+    schnorr_sign_with_nonce(sk, msg, k)
+}
+
+<span class="cm">// FROST context: each signing session MUST use a fresh nonce pair</span>
+<span class="cm">// Reusing a nonce pair across two sessions → Wagner's attack → sk extracted</span></pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#FAEEDA;border-color:#EF9F27"><span class="sec-title">4. Field arithmetic errors — overflow and missed reduction</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: native integer arithmetic instead of field arithmetic</span>
+<span class="bug">let c = (a as u64) * (b as u64);  // may overflow or produce value outside field</span>
+
+<span class="fix">// FIX: use field element types from ark-ff / ff crate</span>
+<span class="kw">use</span> ark_ff::Field;
+<span class="kw">let</span> c = a * b;  <span class="fix">// automatic mod-p reduction via operator overload</span>
+
+<span class="cm">// BUG: lazy reduction — accumulating without reducing</span>
+<span class="kw">let mut</span> acc: u64 = 0;
+<span class="kw">for</span> x in values {
+    <span class="bug">acc += x;  // acc may exceed p before multiplication → wrong result</span>
+}
+<span class="fix">acc %= MODULUS;  // must reduce before use</span>
+
+<span class="cm">// BUG: field mismatch — embedded field vs native field</span>
+<span class="cm">// BLS12-381 scalar field r ≠ BN254 scalar field r</span>
+<span class="cm">// Cross-curve operations frequently cause type confusion bugs</span></pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#FAEEDA;border-color:#EF9F27"><span class="sec-title">5. Hash-to-curve — unsafe try-and-increment</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: try-and-increment is NOT constant-time</span>
+<span class="kw">fn</span> bad_hash_to_g1(msg: &[u8]) -> G1 {
+    <span class="kw">let mut</span> x = hash_to_field(msg);
+    <span class="bug">loop {  // iteration count depends on message → timing leaks info</span>
+        <span class="bug">if let Some(p) = G1::from_x(x) { return p; }</span>
+        x += Scalar::ONE;
+    }
+}
+
+<span class="fix">// FIX: RFC 9380 hash_to_curve — constant-time, uniform distribution</span>
+<span class="kw">use</span> bls12_381::hash_to_curve::HashToCurve;
+<span class="fix">let p = G1::hash_to_curve(msg, DST);</span>
+
+<span class="cm">// Domain Separation Tag (DST) audit points:</span>
+<span class="bug">const DST: &[u8] = b"BLS_SIG";  // too short, no version, no suite ID</span>
+<span class="fix">const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";  // RFC 9380</span>
+<span class="cm">// Different protocols reusing the same DST → cross-protocol attacks</span></pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#E6F1FB;border-color:#85B7EB"><span class="sec-title">6. Fiat-Shamir transcript incompleteness</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: commitment message omitted from transcript before challenge</span>
+<span class="kw">fn</span> bad_prove(x: Scalar, r: Scalar) -> (G1, Scalar) {
+    <span class="kw">let</span> R = r * G;
+    <span class="bug">let c = hash(G, x*G);  // R omitted! prover can choose r after seeing c</span>
+    (R, r + c * x)        <span class="bug">// → "frozen heart" class vulnerability</span>
+}
+
+<span class="fix">// FIX: ALL prior prover messages must be absorbed before challenge generation</span>
+<span class="kw">fn</span> good_prove(x: Scalar, r: Scalar) -> (G1, Scalar) {
+    <span class="kw">let</span> R = r * G;
+    <span class="fix">let c = hash(G, x*G, R);  // R committed before c is derived</span>
+    (R, r + c * x)
+}
+
+<span class="cm">// BUG: missing domain separation between protocol instances</span>
+<span class="cm">// same hash function used at multiple points → transcript confusion</span>
+<span class="fix">// FIX: use Merlin transcript — absorb domain tags at every step</span>
+<span class="kw">use</span> merlin::Transcript;
+<span class="kw">let mut</span> t = Transcript::new(b"my-protocol-v1");
+t.append_message(b"commitment-R", &R.to_bytes());</pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#E6F1FB;border-color:#85B7EB"><span class="sec-title">7. Zeroize — secret material persisting in memory</span></div>
+    <div class="sec-body"><pre><span class="cm">// BUG: private key struct dropped without zeroing heap allocation</span>
+<span class="kw">struct</span> BadKey { secret: Vec&lt;u8&gt; }
+<span class="bug">// Vec::drop frees memory but does NOT clear it
+// subsequent allocator reuse can read the secret bytes</span>
+
+<span class="fix">// FIX: zeroize crate — volatile memset on drop</span>
+<span class="kw">use</span> zeroize::Zeroizing;
+<span class="kw">let</span> secret = Zeroizing::new(vec![0u8; 32]);  <span class="fix">// auto-zeroed on drop</span>
+
+<span class="cm">// Stronger: derive ZeroizeOnDrop on the containing struct</span>
+<span class="kw">use</span> zeroize::{Zeroize, ZeroizeOnDrop};
+<span class="kw">#[derive(Zeroize, ZeroizeOnDrop)]</span>
+<span class="kw">struct</span> SecretKey { bytes: [u8; 32] }
+
+<span class="cm">// CRITICAL subtlety: compiler may optimise away a "dead" memset</span>
+<span class="cm">// zeroize internally uses ptr::write_volatile to prevent this</span>
+<span class="cm">// a hand-rolled memset(0) loop is NOT safe — LLVM will elide it</span></pre></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-hd" style="background:#F1EFE8;border-color:#B4B2A9"><span class="sec-title">8. unsafe Rust — dangerous patterns in crypto code</span></div>
+    <div class="sec-body"><pre><span class="cm">// Pattern 1: transmute for type conversion</span>
+<span class="bug">let scalar: Scalar = unsafe { std::mem::transmute(bytes) };</span>
+<span class="cm">// Dangerous: no byte-order guarantee, no alignment, no field membership check</span>
+<span class="fix">let scalar = Scalar::from_bytes(&bytes).expect("invalid scalar");</span>
+
+<span class="cm">// Pattern 2: from_raw_parts with unvalidated length</span>
+<span class="bug">let pts = unsafe { slice::from_raw_parts(ptr as *const G1, n) };</span>
+<span class="cm">// Dangerous: n unvalidated → out-of-bounds read, uninitialized memory</span>
+
+<span class="cm">// Pattern 3: unchecked deserialization bypasses curve validation</span>
+<span class="kw">fn</span> bad_deserialize(bytes: &[u8]) -> G1Affine {
+    <span class="bug">unsafe { G1Affine::from_uncompressed_unchecked(bytes) }</span>
+    <span class="cm">// skips is_on_curve + subgroup check → accepts arbitrary malformed points</span>
+}
+<span class="fix">fn good_deserialize(bytes: &[u8]) -> Option&lt;G1Affine&gt; {</span>
+    <span class="fix">G1Affine::from_uncompressed(bytes).into()  // validates point on every call</span>
+}</pre></div>
+  </div>
+</div>
+
+<div id="tools" class="pane">
+  <div class="note-box nb-teal">Use these tools in combination — no single tool covers all categories.</div>
+  <div class="section">
+    <div class="sec-hd" style="background:var(--color-background-secondary);border-color:var(--color-border-tertiary)"><span class="sec-title">Static analysis</span></div>
+    <div class="sec-body">
+      <div class="item"><div class="item-text"><code>cargo audit</code> — checks all dependencies against the RustSec CVE advisory database</div></div>
+      <div class="item"><div class="item-text"><code>cargo clippy -- -D warnings</code> — lint with focus on <code>clippy::integer_arithmetic</code>, <code>clippy::as_conversions</code>, <code>clippy::unwrap_used</code></div></div>
+      <div class="item"><div class="item-text"><code>cargo geiger</code> — counts unsafe usage per crate, generates an unsafe density report across the dependency tree</div></div>
+      <div class="item"><div class="item-text"><code>cargo deny</code> — license audit + dependency tree inspection, surfaces hidden transitive dependencies</div></div>
+      <div class="item"><div class="item-text"><code>rudra</code> — static unsafe memory safety analyser, detects panic safety violations and unsound Send/Sync impls</div></div>
+      <div class="item"><div class="item-text"><code>mirai</code> (Meta) — abstract interpretation framework, detects integer overflow and reachable unwrap panics</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="sec-hd" style="background:var(--color-background-secondary);border-color:var(--color-border-tertiary)"><span class="sec-title">Dynamic analysis and fuzzing</span></div>
+    <div class="sec-body">
+      <div class="item"><div class="item-text"><code>cargo-fuzz</code> (libFuzzer) — fuzz deserialization entrypoints, point decompression, and proof verification paths</div></div>
+      <div class="item"><div class="item-text"><code>honggfuzz-rs</code> — coverage-guided fuzzing, often faster than libFuzzer on certain input shapes</div></div>
+      <div class="item"><div class="item-text"><code>proptest</code> / <code>bolero</code> — property-based testing to verify algebraic laws (associativity, inverses, homomorphism)</div></div>
+      <div class="item"><div class="item-text">Differential fuzzing: feed identical inputs to two implementations (e.g. two SHA-256 precompiles) and compare outputs byte-for-byte</div></div>
+      <div class="item"><div class="item-text"><code>cargo-valgrind</code> / Miri — detect reads from uninitialised memory and memory leaks in unsafe code paths</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="sec-hd" style="background:var(--color-background-secondary);border-color:var(--color-border-tertiary)"><span class="sec-title">Side-channel detection</span></div>
+    <div class="sec-body">
+      <div class="item"><div class="item-text"><code>dudect</code> (Rust port) — statistical timing analysis using Welch's t-test to verify constant-time properties empirically</div></div>
+      <div class="item"><div class="item-text"><code>ctgrind</code> / Valgrind memcheck — mark secret bytes as "uninitialised", then track whether any conditional branch or memory address depends on them</div></div>
+      <div class="item"><div class="item-text">LLVM IR inspection — compile with <code>--emit=llvm-ir</code> and grep for secret-dependent <code>br</code> instructions or variable-address memory accesses</div></div>
+      <div class="item"><div class="item-text"><code>subtle</code> crate audit — confirm all secret-value comparisons use <code>ct_eq()</code> not <code>==</code>, and all conditional selections use <code>ConditionallySelectable</code></div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="sec-hd" style="background:var(--color-background-secondary);border-color:var(--color-border-tertiary)"><span class="sec-title">Supply chain and dependencies</span></div>
+    <div class="sec-body">
+      <div class="item"><div class="item-text"><code>cargo tree</code> — full dependency tree; identify cryptographic library versions in transitive deps that differ from direct deps</div></div>
+      <div class="item"><div class="item-text">Check whether <code>Cargo.lock</code> is committed — an uncommitted lock file means builds are not reproducible</div></div>
+      <div class="item"><div class="item-text">Identify <code>git = "..."</code> dependencies — these bypass crates.io auditing and may point to unreviewed forks</div></div>
+      <div class="item"><div class="item-text">Inspect feature flags for hidden unsafe entrypoints: <code>cfg(feature = "unsafe_internals")</code>, <code>cfg(test)</code>, debug-only code paths that expose internals</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const data = [
+  {
+    id:'ecc', label:'Elliptic curve arithmetic and point operations', color:'#FCEBEB', border:'#F09595',
+    items:[
+      {t:'Point validity on deserialization: verify every externally-supplied point is on the curve <code>is_on_curve()</code> before any operation', s:'c'},
+      {t:'Subgroup membership check: verify point is in the correct r-torsion subgroup <code>is_in_correct_subgroup_assuming_on_curve()</code> — distinct from on-curve check', s:'c'},
+      {t:'Cofactor clearing on G2: BLS12-381 G2 has a large non-trivial cofactor; clear it before use or use <code>clear_cofactor()</code>', s:'c'},
+      {t:'Point at infinity / identity handling: all group operations correctly handle the identity element without branching on secret data', s:'h'},
+      {t:'Coordinate system consistency: conversions between Affine, Projective, and Jacobian coordinates are correct; mixed-model additions are explicitly handled', s:'h'},
+      {t:'Scalar range validation: scalar inputs to scalar multiplication are in [0, r) — values ≥ r are silently reduced in some libraries and panic in others', s:'h'},
+      {t:'Point compression sign bit: compressed point encoding uses the correct sign convention for the curve (BLS12-381 uses MSB of first byte)', s:'m'},
+      {t:'Rejection of (0,0): some libraries treat the affine point (0,0) as a valid non-identity point instead of the point at infinity', s:'h'},
+      {t:'Batch inversion safety: <code>batch_invert()</code> on a slice containing zero causes division by zero — check inputs or use checked variant', s:'m'},
+    ]
+  },
+  {
+    id:'pairing', label:'Pairing-based cryptography and BLS signatures', color:'#FCEBEB', border:'#F09595',
+    items:[
+      {t:'Rogue key / key cancellation attack: BLS aggregate signatures MUST enforce Proof of Possession or use message-augmentation to prevent key cancellation', s:'c'},
+      {t:'Pairing equation direction: verify the pairing check matches the protocol spec exactly — swapping sides or negating a point in one input silently changes semantics', s:'c'},
+      {t:'G1/G2 assignment consistency: public keys and signatures must live in the same groups throughout the entire protocol; mixing G1 and G2 roles degrades security', s:'h'},
+      {t:'Final exponentiation: the result of a Miller loop must undergo final exponentiation before use — a raw Miller loop result is not a valid GT element', s:'h'},
+      {t:'BLS domain separation (DST): <code>hash_to_curve</code> DST must be unique per protocol, suite, and version — reusing a DST across contexts enables cross-protocol attacks', s:'h'},
+      {t:'Batch verification randomness: the random scalars used in batched pairing verification must be truly random and uninfluenceable by the prover', s:'h'},
+      {t:'Multi-Miller loop batching: multi-signature batch verification should use a single multi-Miller loop call, not multiple individual pairings — correctness equivalence must be verified', s:'m'},
+      {t:'Signature aggregation order independence: aggregation must be commutative — verify the aggregate is the same regardless of the order signers are processed', s:'m'},
+    ]
+  },
+  {
+    id:'dkg', label:'DKG and threshold signature schemes (FROST)', color:'#FAEEDA', border:'#EF9F27',
+    items:[
+      {t:'Rogue key attack (MuSig2 / FROST): multi-party key aggregation requires a key aggregation commitment (KAC) — without it, a malicious party can cancel out other keys', s:'c'},
+      {t:'FROST nonce binding: nonce derivation MUST commit to the message, the aggregate public key, and fresh randomness — omitting any of these enables Wagner\'s generalized birthday attack', s:'c'},
+      {t:'VSS share verification: each participant must verify their received Feldman/Pedersen VSS share against the public polynomial commitments before accepting it', s:'c'},
+      {t:'Share verification equation: <code>f(i)·G == Σ aⱼ·iʲ·G</code> must be checked over the correct group and field — off-by-one in the exponent is a real implementation bug', s:'c'},
+      {t:'Threshold reconstruction correctness: exactly t shares reconstruct the secret; t-1 shares reveal nothing — verify the Lagrange interpolation polynomial has degree t-1', s:'h'},
+      {t:'Protocol abort information leakage: when a signing or DKG round is aborted, verify that partial messages already broadcast do not leak the secret or individual key shares', s:'h'},
+      {t:'Participant identity binding: each participant\'s share is bound to their index/identity — a share from participant i cannot be substituted for participant j\'s share', s:'h'},
+      {t:'Concurrent session isolation: multiple concurrent DKG or signing sessions must use independent state — cross-session nonce or share reuse can leak private keys', s:'h'},
+      {t:'Lagrange interpolation denominator check: if two shares have the same index, the denominator is zero — missing this check causes a panic or incorrect reconstruction', s:'m'},
+      {t:'Identifier space validation: participant indices must be non-zero (FROST spec requires indices in [1, n]), distinct, and within the field — validate before use', s:'m'},
+    ]
+  },
+  {
+    id:'zk', label:'Zero-knowledge proof systems', color:'#FAEEDA', border:'#EF9F27',
+    items:[
+      {t:'Under-constrained signals: every intermediate witness signal must be fully constrained — an assigned-but-unconstrained signal can be set to any value by a malicious prover', s:'c'},
+      {t:'Fiat-Shamir transcript completeness: the challenge must be derived from a hash of ALL prior prover messages — any message omitted allows the prover to grind the challenge', s:'c'},
+      {t:'Verifier equation correctness: the pairing check (Groth16) or polynomial identity (PLONK/KZG) must exactly match the scheme\'s specification — a sign flip or missing term breaks soundness', s:'c'},
+      {t:'Public input encoding consistency: public inputs must be encoded identically in the circuit and in the verifier — endianness, padding, and field representation must match', s:'h'},
+      {t:'Non-native field arithmetic bit-width: when emulating one field inside another (e.g. secp256k1 ops inside BN254), the limb decomposition and range checks must be fully verified', s:'h'},
+      {t:'KZG trusted setup provenance: the SRS must come from a verifiable ceremony; verify the SRS is not reused across circuits with different public input structures', s:'h'},
+      {t:'Lookup table multiplicity overflow: logUp / Plookup multiplicity counters must be range-checked to the full field — an overflow to zero allows a row to be "used" without being counted', s:'h'},
+      {t:'Zero-knowledge property: verify the proof does not leak witness information beyond the statement — check that all witness polynomials are blinded with random terms', s:'h'},
+      {t:'KZG opening point soundness: the verifier must supply the evaluation point — if the prover can choose the opening point, they can open any polynomial at any value', s:'h'},
+      {t:'Batch verification random challenge: the random challenge for batching multiple proof checks must be derived from a transcript that commits to all proofs being batched', s:'m'},
+      {t:'Recursion public input threading: in recursive proof systems, the inner proof\'s verifying key digest must be correctly threaded as a public input to the outer proof', s:'h'},
+    ]
+  },
+  {
+    id:'rust', label:'Rust implementation safety', color:'#E6F1FB', border:'#85B7EB',
+    items:[
+      {t:'Constant-time throughout: all operations on secret data use <code>subtle</code> crate primitives — no secret-dependent <code>if</code>, <code>match</code>, array indexing, or early return', s:'c'},
+      {t:'Zeroize all secret material: private keys, nonces, intermediate scalars, and session state implement <code>ZeroizeOnDrop</code> — verify with <code>cargo geiger</code> + manual review', s:'h'},
+      {t:'<code>unwrap()</code> and <code>expect()</code> on cryptographic paths: a panic in a verifier can mean "accepts invalid proof" depending on how the caller handles panics', s:'h'},
+      {t:'Integer overflow in field arithmetic: use <code>checked_add</code> / <code>checked_mul</code> or explicitly-chosen wrapping semantics — do not rely on debug-mode overflow detection', s:'h'},
+      {t:'All <code>unsafe</code> blocks audited individually: review every <code>transmute</code>, <code>from_raw_parts</code>, and <code>_unchecked</code> call for soundness invariants', s:'h'},
+      {t:'<code>as</code> numeric casts: <code>u64 as u32</code> silently truncates — in field arithmetic context this can produce values outside the field without any error', s:'h'},
+      {t:'<code>Clone</code> on secret-containing types: <code>#[derive(Clone)]</code> on a key struct creates copies that may not be zeroized — audit all clone call sites', s:'m'},
+      {t:'Manual <code>Send</code>/<code>Sync</code> impls: hand-written <code>unsafe impl Send</code> on cryptographic state must be verified for thread safety — especially for types using raw pointers', s:'m'},
+      {t:'Feature flag hidden paths: <code>cfg(feature = "unsafe_internals")</code> or <code>cfg(test)</code> gates that expose internal state or skip validation must be audited', s:'m'},
+      {t:'Dependency version pinning: <code>Cargo.lock</code> committed to the repository; no wildcard versions on cryptographic crates; <code>git</code> dependencies identified and reviewed', s:'l'},
+      {t:'Error type information leakage: custom error types that reveal internal state (e.g. which check failed, how many iterations ran) create oracle attack surfaces', s:'m'},
+    ]
+  },
+  {
+    id:'proto', label:'Protocol design and threat model', color:'#E1F5EE', border:'#5DCAA5',
+    items:[
+      {t:'Threat model documented: the protocol explicitly states which participants are trusted, to what degree, and under what corruption model (honest-but-curious, malicious, t-of-n)', s:'h'},
+      {t:'Replay attack prevention: messages and signatures are bound to a nonce, session ID, chain ID, and contract address — an old valid signature cannot be replayed in a new context', s:'h'},
+      {t:'Forward secrecy: compromise of a long-term key does not retroactively expose past sessions — verify ephemeral keys are used and zeroized after each session', s:'h'},
+      {t:'Key authentication chain: public keys are authenticated from a root of trust — missing binding allows MITM to substitute keys', s:'h'},
+      {t:'Downgrade attack prevention: protocol version negotiation cannot be manipulated by an adversary to force weaker parameters or an older protocol variant', s:'h'},
+      {t:'Key derivation domain separation: keys derived for different purposes (signing, encryption, MAC) use distinct domain labels — reusing a derived key across purposes breaks separation', s:'m'},
+      {t:'CSPRNG usage: key generation and nonce generation use <code>OsRng</code> or a seeded DRBG — not <code>rand::thread_rng()</code> alone, which is not cryptographically specified', s:'m'},
+      {t:'Error message oracle surface: error responses must not reveal which specific validation check failed — a padding oracle or timing oracle on error paths enables chosen-ciphertext attacks', s:'m'},
+      {t:'Security parameter adequacy: key lengths, hash output sizes, and proof security parameters meet current standards (≥ 128-bit security level)', s:'l'},
+      {t:'Specification / implementation delta: identify every place the implementation deviates from the reference specification or paper — deviations are the highest-probability bug locations', s:'h'},
+    ]
+  },
+  {
+    id:'testing', label:'Test coverage and verification', color:'#F1EFE8', border:'#B4B2A9',
+    items:[
+      {t:'Known-answer tests (KAT): all core operations verified against RFC or standards test vectors — not just "it runs" but byte-exact output matching', s:'h'},
+      {t:'Boundary condition coverage: empty input, maximum-length input, field boundary values (0, p-1, r-1, r, r+1) all tested explicitly', s:'h'},
+      {t:'Negative tests: invalid points, malformed signatures, tampered proofs — confirm the library returns an error or <code>None</code>, not a silent wrong result', s:'h'},
+      {t:'Algebraic property tests: group law (associativity, identity, inverses), signature correctness (sign then verify succeeds), homomorphism properties', s:'m'},
+      {t:'Differential testing against a reference: compare output byte-for-byte against a known-good reference implementation (e.g. <code>blst</code>, <code>libsecp256k1</code>)', s:'m'},
+      {t:'Fuzz target coverage: at minimum one fuzz target each for deserialization, hash-to-curve, and proof verification — check with <code>cargo-fuzz list</code>', s:'m'},
+      {t:'Code coverage measurement: <code>cargo-tarpaulin</code> or <code>cargo-llvm-cov</code> — cryptographic core paths should exceed 90% line coverage', s:'l'},
+      {t:'Wycheproof test suite: run Google\'s Wycheproof test vectors for the relevant primitive (ECDSA, BLS, AES-GCM) — covers edge cases not in standard RFCs', s:'m'},
+    ]
+  },
+];
+
+let checked = new Set();
+const container = document.getElementById('sections');
+
+function render() {
+  container.innerHTML = '';
+  let total=0,done=0,critDone=0,highDone=0,critTotal=0,highTotal=0;
+  data.forEach(sec => {
+    total += sec.items.length;
+    critTotal += sec.items.filter(i=>i.s==='c').length;
+    highTotal += sec.items.filter(i=>i.s==='h').length;
+    const doneCount = sec.items.filter((_,idx)=>checked.has(sec.id+'-'+idx)).length;
+    const div = document.createElement('div');
+    div.className='section';
+    div.innerHTML=`<div class="sec-hd" style="background:${sec.color};border-color:${sec.border}">
+      <span class="sec-title">${sec.label}</span>
+      <span style="font-size:11px;color:var(--color-text-secondary)">${doneCount}/${sec.items.length}</span>
+    </div><div class="sec-body">${sec.items.map((item,idx)=>{
+      const key=sec.id+'-'+idx;
+      const isChecked=checked.has(key);
+      if(isChecked){done++;if(item.s==='c')critDone++;if(item.s==='h')highDone++;}
+      const sev=item.s==='c'?'<span class="sev s-c">Critical</span>':item.s==='h'?'<span class="sev s-h">High</span>':item.s==='m'?'<span class="sev s-m">Med</span>':'<span class="sev s-l">Low</span>';
+      return `<div class="item${isChecked?' checked':''}" onclick="toggle('${key}')">
+        <div class="cb"></div>
+        <div class="item-text">${item.t}</div>${sev}</div>`;
+    }).join('')}</div>`;
+    container.appendChild(div);
+  });
+  document.getElementById('done-count').textContent=done;
+  document.getElementById('total-count').textContent=total;
+  document.getElementById('c-count').textContent=critDone+'/'+critTotal;
+  document.getElementById('h-count').textContent=highDone+'/'+highTotal;
+  document.getElementById('prog').style.width=(done/total*100).toFixed(1)+'%';
+}
+function toggle(key){if(checked.has(key))checked.delete(key);else checked.add(key);render();}
+function resetAll(){checked.clear();render();}
+function sw(id,btn){
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+render();
+</script>

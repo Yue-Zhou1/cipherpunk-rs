@@ -1,6 +1,11 @@
+#![allow(deprecated)]
+
 use anyhow::Result;
 use async_trait::async_trait;
-use llm::{CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, provider_from_env};
+use llm::{
+    CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, llm_call_traced,
+    provider_from_env,
+};
 use mockito::Matcher;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +29,10 @@ impl LlmProvider for EchoProvider {
 
     fn is_available(&self) -> bool {
         true
+    }
+
+    fn model(&self) -> Option<&str> {
+        Some("echo-v1")
     }
 }
 
@@ -87,6 +96,26 @@ async fn llm_call_routes_through_provider() {
     .await
     .expect("llm call");
     assert_eq!(output, "echo:hello");
+}
+
+#[tokio::test]
+async fn llm_call_traced_returns_response_with_provenance() {
+    let provider = EchoProvider;
+    let (output, provenance) = llm_call_traced(
+        &provider,
+        LlmRole::SearchHints,
+        "hello",
+        &CompletionOpts::default(),
+    )
+    .await
+    .expect("llm traced call");
+    assert_eq!(output, "echo:hello");
+    assert_eq!(provenance.provider, "echo");
+    assert_eq!(provenance.model.as_deref(), Some("echo-v1"));
+    assert_eq!(provenance.role, "SearchHints");
+    assert_eq!(provenance.prompt_chars, 5);
+    assert_eq!(provenance.response_chars, "echo:hello".len());
+    assert_eq!(provenance.attempt, 1);
 }
 
 #[tokio::test]

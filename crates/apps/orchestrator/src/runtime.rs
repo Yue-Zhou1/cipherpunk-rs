@@ -107,8 +107,9 @@ impl LlmProvider for TestContextLlmProvider {
 
 fn role_label(role: &LlmRole) -> &'static str {
     match role {
-        LlmRole::MechanicalScaffolding => "scaffolding",
-        LlmRole::SearchSpaceGuidance => "search",
+        LlmRole::Scaffolding => "scaffolding",
+        LlmRole::SearchHints => "search",
         LlmRole::ProseRendering => "prose",
+        LlmRole::LeanScaffold => "lean",
     }
 }

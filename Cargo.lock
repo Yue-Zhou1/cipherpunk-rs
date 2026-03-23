@@ -764,6 +764,7 @@ dependencies = [
  "smt2parser",
  "tempfile",
  "tokio",
+ "tracing",
  "tree-sitter",
  "tree-sitter-rust",
  "walkdir",
@@ -785,6 +786,7 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "tokio",
+ "tracing",
  "tree-sitter",
  "tree-sitter-rust",
  "walkdir",
@@ -805,6 +807,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1803,6 +1806,7 @@ dependencies = [
  "sandbox",
  "serde",
  "serde_json",
+ "syn 2.0.117",
  "tempfile",
  "tokio",
  "tracing",
@@ -2815,6 +2819,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3232,6 +3237,7 @@ dependencies = [
  "engine-crypto",
  "intake",
  "knowledge",
+ "llm",
  "orchestrator",
  "project-ir",
  "serde",
@@ -3241,6 +3247,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "zip 2.4.2",
 ]
 
@@ -3255,6 +3262,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
