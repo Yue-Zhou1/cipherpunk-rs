@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -309,6 +310,61 @@ impl SessionStore {
             events.push(serde_json::from_str(&json).context("deserialize session event")?);
         }
         Ok(events)
+    }
+
+    /// List events filtered by type.
+    pub fn list_events_by_type(
+        &self,
+        session_id: &str,
+        event_type: &str,
+    ) -> Result<Vec<SessionEvent>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT event_json
+            FROM session_events
+            WHERE session_id = ?1
+              AND json_extract(event_json, '$.event_type') = ?2
+            ORDER BY created_at ASC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![session_id, event_type], |row| {
+            row.get::<_, String>(0)
+        })?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            let json = row?;
+            events.push(serde_json::from_str(&json).context("deserialize session event")?);
+        }
+        Ok(events)
+    }
+
+    /// Count events by type for a session.
+    pub fn count_events_by_type(&self, session_id: &str) -> Result<HashMap<String, usize>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                CAST(json_extract(event_json, '$.event_type') AS TEXT) AS event_type,
+                COUNT(*) AS event_count
+            FROM session_events
+            WHERE session_id = ?1
+            GROUP BY CAST(json_extract(event_json, '$.event_type') AS TEXT)
+            "#,
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            let event_type: String = row.get(0)?;
+            let event_count: usize = row.get(1)?;
+            Ok((event_type, event_count))
+        })?;
+
+        let mut counts = HashMap::<String, usize>::new();
+        for row in rows {
+            let (event_type, event_count) = row?;
+            counts.insert(event_type, event_count);
+        }
+        Ok(counts)
     }
 
     pub fn search_records(&self, query: &str) -> Result<Vec<RecordSearchHit>> {

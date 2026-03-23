@@ -1,6 +1,8 @@
 import type {
+  ActivitySummary,
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
+  AuditPlanResponse,
   AuditManifestResponse,
   AuditSessionSummary,
   ChecklistDomainPlan,
@@ -88,6 +90,61 @@ const FALLBACK_CONSOLE_ENTRIES: SessionConsoleEntry[] = [
     message: "LLM key missing. Running deterministic-only mode.",
   },
 ];
+
+const FALLBACK_ACTIVITY_SUMMARY: Omit<ActivitySummary, "sessionId"> = {
+  llmCalls: [
+    {
+      role: "SearchHints",
+      count: 2,
+      avgDurationMs: 85,
+      totalPromptChars: 510,
+      totalResponseChars: 930,
+      providersUsed: ["openai"],
+      succeeded: 2,
+      failed: 0,
+    },
+  ],
+  toolActions: [
+    {
+      toolFamily: "kani",
+      count: 1,
+      succeeded: 1,
+      failed: 0,
+      avgDurationMs: 42,
+    },
+  ],
+  reviewDecisions: [{ action: "confirm", count: 1 }],
+  engineOutcomes: [
+    { engine: "crypto_zk", status: "completed", findingsCount: 2, durationMs: 133 },
+    { engine: "distributed", status: "failed", findingsCount: 0, durationMs: 0 },
+  ],
+  totalEvents: 5,
+  totalDurationMs: 303,
+};
+
+const FALLBACK_AUDIT_PLAN: Omit<AuditPlanResponse, "sessionId"> = {
+  planId: "plan-fallback-1",
+  overview: {
+    assets: ["Session store", "IR pipeline", "Workstation API"],
+    trustBoundaries: ["Source intake boundary", "Analyst decision boundary"],
+    hotspots: ["Persistence writes", "Graph rendering bridge"],
+  },
+  domains: [
+    { id: "crypto", rationale: "workspace includes crypto-related crates and symbols" },
+    { id: "zk", rationale: "IR features include zk-adjacent patterns" },
+  ],
+  recommendedTools: [
+    { tool: "Kani", rationale: "deterministic baseline for symbol-level invariants" },
+    { tool: "Z3", rationale: "constraint solving for arithmetic/path invariants" },
+  ],
+  engines: {
+    cryptoZk: true,
+    distributed: false,
+  },
+  rationale:
+    "Generated from deterministic workspace analysis and checklist/tool recommendation synthesis.",
+  createdAt: new Date("2026-03-23T10:00:00Z").toISOString(),
+};
 
 const FALLBACK_FILE_GRAPH: ProjectGraphResponse = {
   sessionId: "sess-fallback",
@@ -515,6 +572,14 @@ export function tailSessionConsoleFallback(
   limit = 80
 ): TailSessionConsoleResponse {
   return { sessionId, entries: FALLBACK_CONSOLE_ENTRIES.slice(-Math.max(1, limit)) };
+}
+
+export function loadActivitySummaryFallback(sessionId: string): ActivitySummary {
+  return { sessionId, ...FALLBACK_ACTIVITY_SUMMARY };
+}
+
+export function loadAuditPlanFallback(sessionId: string): AuditPlanResponse {
+  return { sessionId, ...FALLBACK_AUDIT_PLAN };
 }
 
 export function loadFileGraphFallback(sessionId: string): ProjectGraphResponse {

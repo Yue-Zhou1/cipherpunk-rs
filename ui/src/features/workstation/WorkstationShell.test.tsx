@@ -81,6 +81,10 @@ vi.mock("./ChecklistPanel", () => ({
   default: () => <div>Checklist Plan</div>,
 }));
 
+vi.mock("./AuditPlanPanel", () => ({
+  default: () => <div>Audit Plan</div>,
+}));
+
 vi.mock("./ToolbenchPanel", () => ({
   default: () => (
     <section>
@@ -169,6 +173,7 @@ describe("WorkstationShell", () => {
     expect(screen.getByRole("tab", { name: /^code$/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^graph$/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^security$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /audit plan/i })).toBeInTheDocument();
 
     expect(screen.queryByTestId("graph-selection-state")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));

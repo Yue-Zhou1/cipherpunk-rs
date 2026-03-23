@@ -60,6 +60,99 @@ pub struct EvidencePreview {
     pub copyable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivitySummary {
+    pub session_id: String,
+    pub llm_calls: Vec<LlmCallSummary>,
+    pub tool_actions: Vec<ToolActionSummary>,
+    pub review_decisions: Vec<ReviewDecisionSummary>,
+    pub engine_outcomes: Vec<EngineOutcomeView>,
+    pub total_events: usize,
+    pub total_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmCallSummary {
+    pub role: String,
+    pub count: usize,
+    pub avg_duration_ms: u64,
+    pub total_prompt_chars: usize,
+    pub total_response_chars: usize,
+    pub providers_used: Vec<String>,
+    pub succeeded: usize,
+    pub failed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolActionSummary {
+    pub tool_family: String,
+    pub count: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub avg_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDecisionSummary {
+    pub action: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineOutcomeView {
+    pub engine: String,
+    pub status: String,
+    pub findings_count: usize,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditPlanResponse {
+    pub session_id: String,
+    pub plan_id: String,
+    pub overview: AuditPlanOverviewView,
+    pub domains: Vec<AuditPlanDomainView>,
+    pub recommended_tools: Vec<ToolRecommendationView>,
+    pub engines: EngineSelectionView,
+    pub rationale: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditPlanOverviewView {
+    pub assets: Vec<String>,
+    pub trust_boundaries: Vec<String>,
+    pub hotspots: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditPlanDomainView {
+    pub id: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRecommendationView {
+    pub tool: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineSelectionView {
+    pub crypto_zk: bool,
+    pub distributed: bool,
+}
+
 pub async fn resolve_source(input: SourceInput, work_dir: &Path) -> Result<ResolvedSourceView> {
     let resolved = SourceResolver::resolve(&input, work_dir).await?;
     Ok(ResolvedSourceView {

@@ -15,6 +15,9 @@ use audit_agent_core::finding::{
     Severity, VerificationStatus,
 };
 use audit_agent_core::output::{AuditManifest, FindingCounts};
+use audit_agent_core::session::{
+    AuditPlan, AuditPlanDomain, AuditPlanEngines, AuditPlanOverview, AuditPlanTool,
+};
 use chrono::Utc;
 use llm::{CompletionOpts, LlmProvider};
 use report::generator::{ReportGenerator, ReportGeneratorOptions};
@@ -91,6 +94,32 @@ fn sample_finding() -> Finding {
         status: FindingStatus::Open,
         regression_check: false,
         verification_status: VerificationStatus::Verified,
+    }
+}
+
+fn sample_audit_plan() -> AuditPlan {
+    AuditPlan {
+        plan_id: "plan-1".to_string(),
+        session_id: "sess-1".to_string(),
+        overview: AuditPlanOverview {
+            assets: vec!["Asset A".to_string(), "Asset B".to_string()],
+            trust_boundaries: vec!["Boundary A".to_string()],
+            hotspots: vec!["Hotspot A".to_string()],
+        },
+        domains: vec![AuditPlanDomain {
+            id: "crypto".to_string(),
+            rationale: "cryptographic surfaces detected".to_string(),
+        }],
+        recommended_tools: vec![AuditPlanTool {
+            tool: "Kani".to_string(),
+            rationale: "deterministic symbolic checks".to_string(),
+        }],
+        engines: AuditPlanEngines {
+            crypto_zk: true,
+            distributed: false,
+        },
+        rationale: "Generated from deterministic workspace analysis.".to_string(),
+        created_at: Utc::now(),
     }
 }
 
@@ -182,6 +211,43 @@ async fn generate_all_without_llm_writes_outputs_and_marks_manifest_false() {
         std::fs::read_to_string(dir.path().join("audit-manifest.json")).expect("read manifest");
     let manifest: AuditManifest = serde_json::from_str(&manifest_text).expect("parse manifest");
     assert!(!manifest.optional_inputs_used.llm_prose_used);
+}
+
+#[tokio::test]
+async fn executive_report_includes_methodology_when_audit_plan_artifact_exists() {
+    let dir = tempdir().expect("tempdir");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip-bytes").expect("write evidence zip");
+    let plan_path = dir.path().join("audit-plan.json");
+    std::fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&sample_audit_plan()).expect("serialize plan"),
+    )
+    .expect("write audit plan");
+
+    let generator = ReportGenerator::new(
+        vec![sample_finding()],
+        sample_manifest(),
+        ReportGeneratorOptions {
+            llm: None,
+            no_llm_prose: false,
+            evidence_pack_zip: evidence_zip,
+            previous_audit: None,
+        },
+    );
+
+    generator
+        .generate_all(dir.path())
+        .await
+        .expect("generate outputs");
+
+    let executive =
+        std::fs::read_to_string(dir.path().join("report-executive.md")).expect("read executive");
+    assert!(executive.contains("## Methodology"));
+    assert!(executive.contains("**Analysis Domains:**"));
+    assert!(executive.contains("- **crypto**: cryptographic surfaces detected"));
+    assert!(executive.contains("- Crypto/ZK: enabled"));
+    assert!(executive.contains("- Distributed: disabled"));
 }
 
 #[tokio::test]

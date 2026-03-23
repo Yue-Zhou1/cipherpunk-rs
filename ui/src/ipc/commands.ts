@@ -81,6 +81,79 @@ export type TailSessionConsoleResponse = {
   entries: SessionConsoleEntry[];
 };
 
+export type LlmCallSummary = {
+  role: string;
+  count: number;
+  avgDurationMs: number;
+  totalPromptChars: number;
+  totalResponseChars: number;
+  providersUsed: string[];
+  succeeded: number;
+  failed: number;
+};
+
+export type ToolActionSummary = {
+  toolFamily: string;
+  count: number;
+  succeeded: number;
+  failed: number;
+  avgDurationMs: number;
+};
+
+export type ReviewDecisionSummary = {
+  action: string;
+  count: number;
+};
+
+export type EngineOutcomeView = {
+  engine: string;
+  status: string;
+  findingsCount: number;
+  durationMs: number;
+};
+
+export type ActivitySummary = {
+  sessionId: string;
+  llmCalls: LlmCallSummary[];
+  toolActions: ToolActionSummary[];
+  reviewDecisions: ReviewDecisionSummary[];
+  engineOutcomes: EngineOutcomeView[];
+  totalEvents: number;
+  totalDurationMs: number;
+};
+
+export type AuditPlanOverviewView = {
+  assets: string[];
+  trustBoundaries: string[];
+  hotspots: string[];
+};
+
+export type AuditPlanDomainView = {
+  id: string;
+  rationale: string;
+};
+
+export type ToolRecommendationView = {
+  tool: string;
+  rationale: string;
+};
+
+export type EngineSelectionView = {
+  cryptoZk: boolean;
+  distributed: boolean;
+};
+
+export type AuditPlanResponse = {
+  sessionId: string;
+  planId: string;
+  overview: AuditPlanOverviewView;
+  domains: AuditPlanDomainView[];
+  recommendedTools: ToolRecommendationView[];
+  engines: EngineSelectionView;
+  rationale: string;
+  createdAt: string;
+};
+
 export type GraphLensKind = "file" | "feature" | "dataflow" | "symbol";
 
 export type ProjectGraphNode = {
@@ -386,6 +459,20 @@ export async function tailSessionConsole(
 ): Promise<TailSessionConsoleResponse> {
   return tauriInvoke("tail_session_console", { session_id: sessionId, limit }, async () =>
     (await loadCommandFixtures()).tailSessionConsoleFallback(sessionId, limit)
+  );
+}
+
+export async function loadActivitySummary(
+  sessionId: string
+): Promise<ActivitySummary> {
+  return tauriInvoke("load_activity_summary", { session_id: sessionId }, async () =>
+    (await loadCommandFixtures()).loadActivitySummaryFallback(sessionId)
+  );
+}
+
+export async function loadAuditPlan(sessionId: string): Promise<AuditPlanResponse> {
+  return tauriInvoke("load_audit_plan", { session_id: sessionId }, async () =>
+    (await loadCommandFixtures()).loadAuditPlanFallback(sessionId)
   );
 }
 

@@ -214,3 +214,53 @@ fn append_llm_interaction_event_persists_event_with_payload() {
     assert!(events[0].payload.contains("\"provider\":\"openai\""));
     assert!(events[0].payload.contains("\"succeeded\":true"));
 }
+
+#[test]
+fn list_events_by_type_and_count_events_by_type_return_expected_results() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = SessionStore::open(dir.path().join("sessions.sqlite")).expect("open store");
+    store
+        .create_session(&AuditSession::sample("sess-typed-events"))
+        .expect("create session");
+
+    let now = Utc::now();
+    let events = vec![
+        SessionEvent {
+            event_id: "evt-llm-1".to_string(),
+            event_type: "llm.interaction".to_string(),
+            payload: r#"{"role":"SearchHints"}"#.to_string(),
+            created_at: now,
+        },
+        SessionEvent {
+            event_id: "evt-tool-1".to_string(),
+            event_type: "tool.action.completed".to_string(),
+            payload: r#"{"tool_family":"kani"}"#.to_string(),
+            created_at: now + chrono::TimeDelta::seconds(1),
+        },
+        SessionEvent {
+            event_id: "evt-llm-2".to_string(),
+            event_type: "llm.interaction".to_string(),
+            payload: r#"{"role":"ProseRendering"}"#.to_string(),
+            created_at: now + chrono::TimeDelta::seconds(2),
+        },
+    ];
+
+    for event in &events {
+        store
+            .append_event("sess-typed-events", event)
+            .expect("append event");
+    }
+
+    let llm_events = store
+        .list_events_by_type("sess-typed-events", "llm.interaction")
+        .expect("list events by type");
+    assert_eq!(llm_events.len(), 2);
+    assert_eq!(llm_events[0].event_id, "evt-llm-1");
+    assert_eq!(llm_events[1].event_id, "evt-llm-2");
+
+    let counts = store
+        .count_events_by_type("sess-typed-events")
+        .expect("count events by type");
+    assert_eq!(counts.get("llm.interaction"), Some(&2usize));
+    assert_eq!(counts.get("tool.action.completed"), Some(&1usize));
+}

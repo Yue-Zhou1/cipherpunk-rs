@@ -7,7 +7,9 @@ use audit_agent_core::finding::VerificationStatus;
 use audit_agent_core::session::{AuditRecord, AuditRecordKind};
 use serde::de::DeserializeOwned;
 
-use crate::enforcement::{ContractEnforcer, EnforcedResponse, retry_policy_for_role};
+use crate::enforcement::{
+    ContractEnforcer, EnforcedResponse, LlmInteractionHook, retry_policy_for_role,
+};
 use crate::provider::{CompletionOpts, LlmProvider, LlmRole};
 use crate::sanitize::{GraphContextEntry, pack_graph_aware_context, sanitize_prompt_input};
 use crate::semantic_memory::format_semantic_signatures;
@@ -21,17 +23,26 @@ const DEFAULT_PROMPT_CONTEXT_BUDGET: usize = 2_000;
 
 pub struct CopilotService {
     provider: Arc<dyn LlmProvider>,
+    interaction_hook: Option<LlmInteractionHook>,
 }
 
 impl CopilotService {
     pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            interaction_hook: None,
+        }
     }
 
     pub fn with_mock_json(mock_json: &str) -> Self {
         Self::new(Arc::new(MockJsonProvider {
             json: mock_json.to_string(),
         }))
+    }
+
+    pub fn with_interaction_hook(mut self, hook: LlmInteractionHook) -> Self {
+        self.interaction_hook = Some(hook);
+        self
     }
 
     pub async fn plan_checklists(&self, workspace_summary: &str) -> Result<ChecklistPlan> {
@@ -137,7 +148,7 @@ impl CopilotService {
                 &*self.provider,
                 &task_description,
                 &CompletionOpts::default(),
-                None,
+                self.interaction_hook.as_ref(),
             )
             .await?
             .value;
@@ -183,7 +194,7 @@ impl CopilotService {
                 &*self.provider,
                 task_description,
                 &CompletionOpts::default(),
-                None,
+                self.interaction_hook.as_ref(),
             )
             .await
     }

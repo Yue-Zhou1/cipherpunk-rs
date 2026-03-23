@@ -7,6 +7,7 @@ use tauri::State;
 use tauri_ui::ConfigParseResponse;
 use tauri_ui::OutputType;
 use tauri_ui::ipc::{
+    ActivitySummary, AuditPlanResponse,
     ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditSessionSummary,
     ConfirmWorkspaceRequest, ConfirmWorkspaceResponse, CreateAuditSessionResponse,
     DownloadOutputResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
@@ -252,6 +253,30 @@ pub async fn tail_session_console(
     let mut session = state.session.lock().await;
     session
         .tail_session_console(&session_id, limit.unwrap_or(80))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_activity_summary(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<ActivitySummary, String> {
+    let session = state.session.lock().await;
+    session
+        .load_activity_summary(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_audit_plan(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<AuditPlanResponse, String> {
+    let session = state.session.lock().await;
+    session
+        .load_audit_plan(&session_id)
+        .await
         .map_err(|err| err.to_string())
 }
 

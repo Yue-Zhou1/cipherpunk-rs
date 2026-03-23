@@ -7,6 +7,7 @@ import type { ProjectTreeNode, ReviewQueueItem } from "../../ipc/commands";
 import { getTransport } from "../../ipc/transport";
 import "allotment/dist/style.css";
 import ActivityConsole from "./ActivityConsole";
+import AuditPlanPanel from "./AuditPlanPanel";
 import ChecklistPanel from "./ChecklistPanel";
 import CodeEditorPane from "./CodeEditorPane";
 import GraphLens from "./GraphLens";
@@ -20,7 +21,7 @@ type WorkstationShellProps = {
   sessionId: string;
 };
 
-type WorkstationMainTab = "code" | "graph" | "security";
+type WorkstationMainTab = "code" | "graph" | "security" | "plan";
 
 const ACTIVITY_ITEMS = [
   { id: "files", label: "Explorer", icon: Files },
@@ -264,6 +265,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                 {webMode ? null : (
                   <>
                     <ChecklistPanel sessionId={sessionId} />
+                    <AuditPlanPanel sessionId={sessionId} />
                     <ToolbenchPanel
                       sessionId={sessionId}
                       selection={
@@ -305,7 +307,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     role="tablist"
                     aria-label="Workstation primary views"
                   >
-                    {(["code", "graph", "security"] as const).map((tab) => (
+                    {(["code", "graph", "security", "plan"] as const).map((tab) => (
                       <button
                         key={tab}
                         type="button"
@@ -318,7 +320,9 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                           ? "Code"
                           : tab === "graph"
                             ? "Graph"
-                            : "Security"}
+                            : tab === "security"
+                              ? "Security"
+                              : "Audit Plan"}
                       </button>
                     ))}
                   </div>
@@ -348,6 +352,9 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     ) : null}
                     {activeMainTab === "security" ? (
                       <SecurityOverviewPanel sessionId={sessionId} />
+                    ) : null}
+                    {activeMainTab === "plan" ? (
+                      <AuditPlanPanel sessionId={sessionId} />
                     ) : null}
                   </div>
                 </>
@@ -379,6 +386,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                 {webMode ? null : (
                   <>
                     <ChecklistPanel sessionId={sessionId} />
+                    <AuditPlanPanel sessionId={sessionId} />
                     <ToolbenchPanel
                       sessionId={sessionId}
                       selection={
@@ -400,7 +408,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
         )}
       </main>
 
-      <ActivityConsole entries={consoleEntries} />
+      <ActivityConsole sessionId={sessionId} entries={consoleEntries} />
     </div>
   );
 }

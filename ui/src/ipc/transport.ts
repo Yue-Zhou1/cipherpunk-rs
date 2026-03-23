@@ -165,6 +165,16 @@ const COMMAND_ROUTES: Record<string, RouteDef> = {
     path: (args) =>
       `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/console?limit=${encodeURIComponent(String(args.limit ?? 80))}`,
   },
+  load_activity_summary: {
+    method: "GET",
+    path: (args) =>
+      `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/activity`,
+  },
+  load_audit_plan: {
+    method: "GET",
+    path: (args) =>
+      `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/plan`,
+  },
   load_checklist_plan: {
     method: "GET",
     path: (args) =>

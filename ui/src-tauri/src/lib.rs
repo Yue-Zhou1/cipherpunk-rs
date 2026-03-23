@@ -42,6 +42,8 @@ pub fn run() {
             commands::get_project_tree,
             commands::read_source_file,
             commands::tail_session_console,
+            commands::load_activity_summary,
+            commands::load_audit_plan,
             commands::load_file_graph,
             commands::load_feature_graph,
             commands::load_dataflow_graph,

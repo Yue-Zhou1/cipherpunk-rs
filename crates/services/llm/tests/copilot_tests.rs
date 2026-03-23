@@ -55,6 +55,35 @@ async fn candidate_generation_never_returns_verified_status() {
 }
 
 #[tokio::test]
+async fn copilot_forwards_interaction_hook_to_contract_enforcer_calls() {
+    let captured = Arc::new(Mutex::new(Vec::<(String, bool, u8)>::new()));
+    let captured_hook = Arc::clone(&captured);
+    let hook: llm::LlmInteractionHook =
+        Arc::new(move |provenance: &llm::LlmProvenance, succeeded: bool| {
+            captured_hook.lock().expect("capture lock").push((
+                provenance.provider.clone(),
+                succeeded,
+                provenance.attempt,
+            ));
+        });
+
+    let service = CopilotService::with_mock_json(
+        r#"{"domains":[{"id":"crypto","rationale":"key material present"}]}"#,
+    )
+    .with_interaction_hook(hook);
+    let _plan = service
+        .plan_checklists("rust crypto workspace")
+        .await
+        .expect("checklist plan");
+
+    let events = captured.lock().expect("capture lock");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "mock-json");
+    assert!(events[0].1);
+    assert_eq!(events[0].2, 1);
+}
+
+#[tokio::test]
 async fn candidate_generation_prefers_graph_context_when_available() {
     let captured_prompt = Arc::new(Mutex::new(String::new()));
     let provider = Arc::new(CapturePromptProvider {

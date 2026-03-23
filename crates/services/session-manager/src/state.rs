@@ -8,7 +8,11 @@ use anyhow::{Context, Result, anyhow, bail};
 use audit_agent_core::audit_config::{AuditConfig, BudgetConfig, ResolvedSource, SourceOrigin};
 use audit_agent_core::finding::{Severity, VerificationStatus};
 use audit_agent_core::output::{AuditManifest, CoverageReport};
-use audit_agent_core::session::{AuditRecord, AuditRecordKind, AuditSession, SessionUiState};
+use audit_agent_core::session::{
+    AuditPlan, AuditPlanDomain, AuditPlanEngines, AuditPlanOverview, AuditPlanTool, AuditRecord,
+    AuditRecordKind, AuditSession, SessionUiState,
+};
+use audit_agent_core::tooling::{ToolActionResult, ToolActionStatus, ToolFamily};
 use chrono::Utc;
 use engine_crypto::intake_bridge::{CryptoEngineContext, EnvironmentManifest};
 use engine_crypto::rules::RuleEvaluator;
@@ -33,8 +37,11 @@ use serde::{Deserialize, Serialize};
 use session_store::{LlmInteractionEvent, SessionStore};
 
 use crate::{
-    ConfigParseResponse, OutputType, ResolvedSourceView, confirm_workspace, detect_workspace,
-    download_output, export_audit_yaml, get_audit_manifest, resolve_source,
+    ActivitySummary, AuditPlanDomainView, AuditPlanOverviewView, AuditPlanResponse,
+    ConfigParseResponse, EngineOutcomeView, EngineSelectionView, LlmCallSummary, OutputType,
+    ResolvedSourceView, ReviewDecisionSummary, ToolActionSummary, ToolRecommendationView,
+    confirm_workspace, detect_workspace, download_output, export_audit_yaml, get_audit_manifest,
+    resolve_source,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,6 +720,159 @@ impl UiSessionState {
         })
     }
 
+    pub fn load_activity_summary(&self, session_id: &str) -> Result<ActivitySummary> {
+        self.ensure_session_exists(session_id)?;
+        let store = self
+            .session_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("no session store"))?;
+        let events = store.list_events(session_id)?;
+
+        let mut llm_by_role = HashMap::<String, LlmRoleAggregate>::new();
+        let mut tool_by_family = HashMap::<String, ToolFamilyAggregate>::new();
+        let mut review_by_action = HashMap::<String, usize>::new();
+        let mut engine_outcomes = Vec::<EngineOutcomeView>::new();
+        let mut total_duration_ms = 0_u64;
+
+        for event in &events {
+            match event.event_type.as_str() {
+                "llm.interaction" => {
+                    if let Ok(data) =
+                        serde_json::from_str::<LlmInteractionSummaryEvent>(&event.payload)
+                    {
+                        let aggregate = llm_by_role.entry(data.role).or_default();
+                        aggregate.count += 1;
+                        aggregate.total_duration_ms += data.duration_ms;
+                        aggregate.total_prompt_chars += data.prompt_chars;
+                        aggregate.total_response_chars += data.response_chars;
+                        aggregate.providers_used.insert(data.provider);
+                        if data.succeeded {
+                            aggregate.succeeded += 1;
+                        } else {
+                            aggregate.failed += 1;
+                        }
+                        total_duration_ms += data.duration_ms;
+                    }
+                }
+                "tool.action.completed" => {
+                    if let Ok(data) =
+                        serde_json::from_str::<ToolActionCompletedEvent>(&event.payload)
+                    {
+                        let aggregate = tool_by_family.entry(data.tool_family).or_default();
+                        aggregate.count += 1;
+                        aggregate.total_duration_ms += data.duration_ms;
+                        if data.status.eq_ignore_ascii_case("completed") {
+                            aggregate.succeeded += 1;
+                        } else {
+                            aggregate.failed += 1;
+                        }
+                        total_duration_ms += data.duration_ms;
+                    }
+                }
+                "tool.action" => {
+                    if let Ok(data) = serde_json::from_str::<ToolActionResult>(&event.payload) {
+                        let tool_family = tool_family_name(&data.tool_family).to_string();
+                        let aggregate = tool_by_family.entry(tool_family).or_default();
+                        aggregate.count += 1;
+                        if matches!(data.status, ToolActionStatus::Completed) {
+                            aggregate.succeeded += 1;
+                        } else {
+                            aggregate.failed += 1;
+                        }
+                    }
+                }
+                "review.decision" | "review.action" => {
+                    if let Ok(data) = serde_json::from_str::<ReviewDecisionEvent>(&event.payload) {
+                        *review_by_action.entry(data.action).or_default() += 1;
+                    }
+                }
+                "engine.completed" => {
+                    if let Ok(data) = serde_json::from_str::<EngineCompletedEvent>(&event.payload) {
+                        total_duration_ms += data.duration_ms;
+                        engine_outcomes.push(EngineOutcomeView {
+                            engine: data.engine,
+                            status: "completed".to_string(),
+                            findings_count: data.findings_count,
+                            duration_ms: data.duration_ms,
+                        });
+                    }
+                }
+                "engine.failed" => {
+                    if let Ok(data) = serde_json::from_str::<EngineFailedEvent>(&event.payload) {
+                        engine_outcomes.push(EngineOutcomeView {
+                            engine: data.engine,
+                            status: "failed".to_string(),
+                            findings_count: 0,
+                            duration_ms: 0,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut llm_calls = llm_by_role
+            .into_iter()
+            .map(|(role, aggregate)| {
+                let mut providers_used = aggregate.providers_used.into_iter().collect::<Vec<_>>();
+                providers_used.sort();
+                let avg_duration_ms = if aggregate.count == 0 {
+                    0
+                } else {
+                    aggregate.total_duration_ms / aggregate.count as u64
+                };
+                LlmCallSummary {
+                    role,
+                    count: aggregate.count,
+                    avg_duration_ms,
+                    total_prompt_chars: aggregate.total_prompt_chars,
+                    total_response_chars: aggregate.total_response_chars,
+                    providers_used,
+                    succeeded: aggregate.succeeded,
+                    failed: aggregate.failed,
+                }
+            })
+            .collect::<Vec<_>>();
+        llm_calls.sort_by(|a, b| a.role.cmp(&b.role));
+
+        let mut tool_actions = tool_by_family
+            .into_iter()
+            .map(|(tool_family, aggregate)| {
+                let avg_duration_ms = if aggregate.count == 0 {
+                    0
+                } else {
+                    aggregate.total_duration_ms / aggregate.count as u64
+                };
+                ToolActionSummary {
+                    tool_family,
+                    count: aggregate.count,
+                    succeeded: aggregate.succeeded,
+                    failed: aggregate.failed,
+                    avg_duration_ms,
+                }
+            })
+            .collect::<Vec<_>>();
+        tool_actions.sort_by(|a, b| a.tool_family.cmp(&b.tool_family));
+
+        let mut review_decisions = review_by_action
+            .into_iter()
+            .map(|(action, count)| ReviewDecisionSummary { action, count })
+            .collect::<Vec<_>>();
+        review_decisions.sort_by(|a, b| a.action.cmp(&b.action));
+
+        engine_outcomes.sort_by(|a, b| a.engine.cmp(&b.engine));
+
+        Ok(ActivitySummary {
+            session_id: session_id.to_string(),
+            llm_calls,
+            tool_actions,
+            review_decisions,
+            engine_outcomes,
+            total_events: events.len(),
+            total_duration_ms,
+        })
+    }
+
     pub async fn load_file_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
         let source_root = self
             .ensure_session_loaded(session_id)?
@@ -811,11 +971,58 @@ impl UiSessionState {
         Ok(checklist_plan_response(session_id, ir.checklist_plan()))
     }
 
+    pub fn load_audit_plan(&mut self, session_id: &str) -> Result<AuditPlanResponse> {
+        let _session = self.ensure_session_loaded(session_id)?;
+        let store = self
+            .session_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("no session store"))?;
+        let events = store.list_events_by_type(session_id, "audit.plan.generated")?;
+        let plan_event = events
+            .last()
+            .ok_or_else(|| anyhow!("audit plan not found for session `{session_id}`"))?;
+        let plan: AuditPlan = serde_json::from_str(&plan_event.payload)
+            .context("deserialize audit plan event payload")?;
+
+        Ok(AuditPlanResponse {
+            session_id: session_id.to_string(),
+            plan_id: plan.plan_id,
+            overview: AuditPlanOverviewView {
+                assets: plan.overview.assets,
+                trust_boundaries: plan.overview.trust_boundaries,
+                hotspots: plan.overview.hotspots,
+            },
+            domains: plan
+                .domains
+                .into_iter()
+                .map(|domain| AuditPlanDomainView {
+                    id: domain.id,
+                    rationale: domain.rationale,
+                })
+                .collect(),
+            recommended_tools: plan
+                .recommended_tools
+                .into_iter()
+                .map(|tool| ToolRecommendationView {
+                    tool: tool.tool,
+                    rationale: tool.rationale,
+                })
+                .collect(),
+            engines: EngineSelectionView {
+                crypto_zk: plan.engines.crypto_zk,
+                distributed: plan.engines.distributed,
+            },
+            rationale: plan.rationale,
+            created_at: plan.created_at.to_rfc3339(),
+        })
+    }
+
     pub async fn load_toolbench_context(
         &mut self,
         session_id: &str,
         selection: ToolbenchSelectionRequest,
     ) -> Result<LoadToolbenchContextResponse> {
+        let session = self.ensure_session_loaded(session_id)?;
         let ir = self.load_or_build_project_ir(session_id, false).await?;
         let overview = ir.security_overview();
         let checklist = ir.checklist_plan();
@@ -848,6 +1055,26 @@ impl UiSessionState {
             recommended_tools = fallback_tool_recommendations(&checklist);
         }
 
+        if let Some(config) = self.audit_config.as_ref() {
+            let should_persist_plan = if let Some(store) = &self.session_store {
+                store
+                    .list_events_by_type(&session.session_id, "audit.plan.generated")?
+                    .is_empty()
+            } else {
+                !config.output_dir.join("audit-plan.json").exists()
+            };
+            if should_persist_plan {
+                let plan = generate_audit_plan(
+                    &session,
+                    &overview,
+                    &checklist,
+                    &recommended_tools,
+                    config,
+                );
+                self.persist_audit_plan(&session.session_id, &plan, &config.output_dir)?;
+            }
+        }
+
         Ok(LoadToolbenchContextResponse {
             session_id: session_id.to_string(),
             selection: ToolbenchSelectionResponse {
@@ -859,6 +1086,32 @@ impl UiSessionState {
             overview_notes: overview.review_notes,
             similar_cases,
         })
+    }
+
+    fn persist_audit_plan(
+        &self,
+        session_id: &str,
+        plan: &AuditPlan,
+        output_dir: &Path,
+    ) -> Result<()> {
+        if let Some(store) = &self.session_store {
+            let plan_event = session_store::SessionEvent {
+                event_id: format!("audit-plan:{}", plan.plan_id),
+                event_type: "audit.plan.generated".to_string(),
+                payload: serde_json::to_string(plan)?,
+                created_at: Utc::now(),
+            };
+            store.append_event(session_id, &plan_event)?;
+        }
+
+        fs::create_dir_all(output_dir)
+            .with_context(|| format!("create output directory {}", output_dir.display()))?;
+        fs::write(
+            output_dir.join("audit-plan.json"),
+            serde_json::to_string_pretty(plan)?,
+        )
+        .with_context(|| format!("write {}", output_dir.join("audit-plan.json").display()))?;
+        Ok(())
     }
 
     pub async fn load_review_queue(&mut self, session_id: &str) -> Result<LoadReviewQueueResponse> {
@@ -1234,6 +1487,23 @@ impl UiSessionState {
         .into())
     }
 
+    fn ensure_session_exists(&self, session_id: &str) -> Result<()> {
+        if self.sessions.contains_key(session_id) {
+            return Ok(());
+        }
+
+        if let Some(store) = &self.session_store {
+            if store.load_session(session_id)?.is_some() {
+                return Ok(());
+            }
+        }
+
+        Err(crate::UnknownSessionError {
+            session_id: session_id.to_string(),
+        }
+        .into())
+    }
+
     fn knowledge_feedback_store_path(&self) -> PathBuf {
         self.work_dir.join("knowledge-feedback.yaml")
     }
@@ -1358,6 +1628,72 @@ fn session_jobs_from_events(events: &[session_store::SessionEvent]) -> Vec<Sessi
         }
     }
     jobs
+}
+
+#[derive(Debug, Deserialize)]
+struct LlmInteractionSummaryEvent {
+    provider: String,
+    role: String,
+    duration_ms: u64,
+    prompt_chars: usize,
+    response_chars: usize,
+    succeeded: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolActionCompletedEvent {
+    tool_family: String,
+    status: String,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReviewDecisionEvent {
+    action: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EngineCompletedEvent {
+    engine: String,
+    findings_count: usize,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct EngineFailedEvent {
+    engine: String,
+}
+
+#[derive(Debug, Default)]
+struct LlmRoleAggregate {
+    count: usize,
+    total_duration_ms: u64,
+    total_prompt_chars: usize,
+    total_response_chars: usize,
+    providers_used: HashSet<String>,
+    succeeded: usize,
+    failed: usize,
+}
+
+#[derive(Debug, Default)]
+struct ToolFamilyAggregate {
+    count: usize,
+    total_duration_ms: u64,
+    succeeded: usize,
+    failed: usize,
+}
+
+fn tool_family_name(tool_family: &ToolFamily) -> &'static str {
+    match tool_family {
+        ToolFamily::Kani => "kani",
+        ToolFamily::Z3 => "z3",
+        ToolFamily::CargoFuzz => "cargo_fuzz",
+        ToolFamily::MadSim => "madsim",
+        ToolFamily::Chaos => "chaos",
+        ToolFamily::CircomZ3 => "circom_z3",
+        ToolFamily::CairoExternal => "cairo_external",
+        ToolFamily::LeanExternal => "lean_external",
+    }
 }
 
 const MAX_PROJECT_TREE_DEPTH: usize = 7;
@@ -2142,6 +2478,49 @@ fn fallback_tool_recommendations(plan: &IrChecklistPlan) -> Vec<ToolbenchRecomme
     recommendations
 }
 
+fn generate_audit_plan(
+    session: &AuditSession,
+    overview: &IrSecurityOverview,
+    checklist_plan: &IrChecklistPlan,
+    tool_recommendations: &[ToolbenchRecommendationResponse],
+    config: &AuditConfig,
+) -> AuditPlan {
+    AuditPlan {
+        plan_id: format!("plan-{}", Utc::now().timestamp_micros()),
+        session_id: session.session_id.clone(),
+        overview: AuditPlanOverview {
+            assets: overview.assets.clone(),
+            trust_boundaries: overview.trust_boundaries.clone(),
+            hotspots: overview.hotspots.clone(),
+        },
+        domains: checklist_plan
+            .domains
+            .iter()
+            .map(|domain| AuditPlanDomain {
+                id: domain.id.clone(),
+                rationale: domain.rationale.clone(),
+            })
+            .collect(),
+        recommended_tools: tool_recommendations
+            .iter()
+            .map(|tool| AuditPlanTool {
+                tool: tool.tool_id.clone(),
+                rationale: tool.rationale.clone(),
+            })
+            .collect(),
+        engines: AuditPlanEngines {
+            crypto_zk: config.engines.crypto_zk,
+            distributed: config.engines.distributed,
+        },
+        rationale: format!(
+            "Generated from workspace analysis of {} target crates with {} detected frameworks.",
+            config.scope.target_crates.len(),
+            config.scope.detected_frameworks.len(),
+        ),
+        created_at: Utc::now(),
+    }
+}
+
 fn default_review_ir_node_ids(ir: &ProjectIr) -> Vec<String> {
     let mut ids = Vec::<String>::new();
     let mut seen = HashSet::<String>::new();
@@ -2705,5 +3084,250 @@ mod tests {
 
         assert_eq!(nodes[0].finding_count, None);
         assert_eq!(nodes[0].max_severity, None);
+    }
+
+    #[test]
+    fn load_activity_summary_aggregates_llm_tool_review_and_engine_events() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
+        let session = AuditSession {
+            session_id: "sess-activity".to_string(),
+            snapshot: project_snapshot_from_config(
+                &test_audit_config(workspace.path()),
+                "snap-activity".to_string(),
+            ),
+            selected_domains: vec![],
+            ui_state: SessionUiState::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        state
+            .session_store
+            .as_ref()
+            .expect("session store")
+            .create_session(&session)
+            .expect("create session");
+        state
+            .sessions
+            .insert(session.session_id.clone(), session.clone());
+
+        let store = state.session_store.as_ref().expect("session store");
+        let now = Utc::now();
+        let events = vec![
+            session_store::SessionEvent {
+                event_id: "evt-llm".to_string(),
+                event_type: "llm.interaction".to_string(),
+                payload: serde_json::json!({
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini",
+                    "role": "SearchHints",
+                    "duration_ms": 120,
+                    "prompt_chars": 300,
+                    "response_chars": 600,
+                    "attempt": 1,
+                    "succeeded": true
+                })
+                .to_string(),
+                created_at: now,
+            },
+            session_store::SessionEvent {
+                event_id: "evt-tool".to_string(),
+                event_type: "tool.action.completed".to_string(),
+                payload: serde_json::json!({
+                    "action_id": "action-1",
+                    "tool_family": "kani",
+                    "target": "crate-a",
+                    "status": "Completed",
+                    "duration_ms": 8
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(1),
+            },
+            session_store::SessionEvent {
+                event_id: "evt-review".to_string(),
+                event_type: "review.decision".to_string(),
+                payload: serde_json::json!({
+                    "record_id": "cand-1",
+                    "action": "confirm",
+                    "analyst_note": "validated"
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(2),
+            },
+            session_store::SessionEvent {
+                event_id: "evt-engine-ok".to_string(),
+                event_type: "engine.completed".to_string(),
+                payload: serde_json::json!({
+                    "engine": "crypto_zk",
+                    "findings_count": 2,
+                    "duration_ms": 33
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(3),
+            },
+            session_store::SessionEvent {
+                event_id: "evt-engine-fail".to_string(),
+                event_type: "engine.failed".to_string(),
+                payload: serde_json::json!({
+                    "engine": "distributed",
+                    "reason": "timeout"
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(4),
+            },
+        ];
+
+        for event in &events {
+            store
+                .append_event(&session.session_id, event)
+                .expect("append event");
+        }
+
+        let summary = state
+            .load_activity_summary(&session.session_id)
+            .expect("load activity summary");
+        assert_eq!(summary.session_id, session.session_id);
+        assert_eq!(summary.total_events, 5);
+        assert_eq!(summary.total_duration_ms, 161);
+
+        assert_eq!(summary.llm_calls.len(), 1);
+        let llm = &summary.llm_calls[0];
+        assert_eq!(llm.role, "SearchHints");
+        assert_eq!(llm.count, 1);
+        assert_eq!(llm.avg_duration_ms, 120);
+        assert_eq!(llm.total_prompt_chars, 300);
+        assert_eq!(llm.total_response_chars, 600);
+        assert_eq!(llm.providers_used, vec!["openai".to_string()]);
+        assert_eq!(llm.succeeded, 1);
+        assert_eq!(llm.failed, 0);
+
+        assert_eq!(summary.tool_actions.len(), 1);
+        let tool = &summary.tool_actions[0];
+        assert_eq!(tool.tool_family, "kani");
+        assert_eq!(tool.count, 1);
+        assert_eq!(tool.succeeded, 1);
+        assert_eq!(tool.failed, 0);
+        assert_eq!(tool.avg_duration_ms, 8);
+
+        assert_eq!(summary.review_decisions.len(), 1);
+        assert_eq!(summary.review_decisions[0].action, "confirm");
+        assert_eq!(summary.review_decisions[0].count, 1);
+
+        assert_eq!(summary.engine_outcomes.len(), 2);
+        assert!(
+            summary
+                .engine_outcomes
+                .iter()
+                .any(|item| item.engine == "crypto_zk"
+                    && item.status == "completed"
+                    && item.findings_count == 2
+                    && item.duration_ms == 33)
+        );
+        assert!(
+            summary
+                .engine_outcomes
+                .iter()
+                .any(|item| item.engine == "distributed"
+                    && item.status == "failed"
+                    && item.findings_count == 0
+                    && item.duration_ms == 0)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_audit_plan_returns_generated_plan_after_toolbench_context() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"demo\"]\nresolver = \"2\"\n",
+        )
+        .expect("write workspace manifest");
+        fs::create_dir_all(workspace.path().join("demo/src")).expect("create src");
+        fs::write(
+            workspace.path().join("demo/Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write member manifest");
+        fs::write(
+            workspace.path().join("demo/src/lib.rs"),
+            "pub fn demo() {}\n",
+        )
+        .expect("write source");
+
+        let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
+        let mut config = test_audit_config(workspace.path());
+        config.output_dir = workspace.path().join("audit-output");
+        config.scope.target_crates = vec!["demo".to_string()];
+        state.audit_config = Some(config.clone());
+
+        let session = AuditSession {
+            session_id: "sess-plan".to_string(),
+            snapshot: project_snapshot_from_config(&config, "snap-plan".to_string()),
+            selected_domains: vec!["crypto".to_string()],
+            ui_state: SessionUiState::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        state
+            .session_store
+            .as_ref()
+            .expect("session store")
+            .create_session(&session)
+            .expect("create session");
+        state
+            .sessions
+            .insert(session.session_id.clone(), session.clone());
+
+        state
+            .load_toolbench_context(
+                &session.session_id,
+                ToolbenchSelectionRequest {
+                    kind: "session".to_string(),
+                    id: session.session_id.clone(),
+                },
+            )
+            .await
+            .expect("load toolbench context");
+
+        let plan = state
+            .load_audit_plan(&session.session_id)
+            .expect("load audit plan");
+        assert_eq!(plan.session_id, session.session_id);
+        assert!(!plan.plan_id.is_empty());
+        assert!(
+            !plan.recommended_tools.is_empty(),
+            "generated plan should include tool recommendations"
+        );
+
+        state
+            .load_toolbench_context(
+                &session.session_id,
+                ToolbenchSelectionRequest {
+                    kind: "session".to_string(),
+                    id: session.session_id.clone(),
+                },
+            )
+            .await
+            .expect("load toolbench context twice");
+
+        let events = state
+            .session_store
+            .as_ref()
+            .expect("session store")
+            .list_events_by_type(&session.session_id, "audit.plan.generated")
+            .expect("list plan events");
+        assert_eq!(
+            events.len(),
+            1,
+            "load_toolbench_context should not append duplicate audit plans"
+        );
+
+        let reloaded = state
+            .load_audit_plan(&session.session_id)
+            .expect("reload audit plan");
+        assert_eq!(
+            reloaded.plan_id, plan.plan_id,
+            "plan id should remain stable after repeated context loads"
+        );
     }
 }

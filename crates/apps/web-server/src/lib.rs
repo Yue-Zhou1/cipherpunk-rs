@@ -12,9 +12,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use session_manager::{
-    ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditSessionSummary,
-    ConfigParseResponse, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse, CrateDecision,
-    CreateAuditSessionResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
+    ActivitySummary, ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditPlanResponse,
+    AuditSessionSummary, ConfigParseResponse, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
+    CrateDecision, CreateAuditSessionResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
     LoadReviewQueueResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
     OpenAuditSessionResponse, OutputType, ProjectGraphResponse, ReadSourceFileResponse,
     SessionConsoleEntry, SessionConsoleLevel, SessionManager, SessionManagerError, SourceInputIpc,
@@ -248,6 +248,11 @@ pub fn build_app(
             "/api/sessions/:session_id/console",
             get(tail_session_console),
         )
+        .route(
+            "/api/sessions/:session_id/activity",
+            get(load_activity_summary),
+        )
+        .route("/api/sessions/:session_id/plan", get(load_audit_plan))
         .route(
             "/api/sessions/:session_id/checklist",
             get(load_checklist_plan),
@@ -594,6 +599,30 @@ async fn tail_session_console(
     Ok(Json(response))
 }
 
+async fn load_activity_summary(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<ActivitySummary>, AppError> {
+    let response = state
+        .manager
+        .load_activity_summary(&session_id)
+        .await
+        .map_err(map_session_error)?;
+    Ok(Json(response))
+}
+
+async fn load_audit_plan(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<AuditPlanResponse>, AppError> {
+    let response = state
+        .manager
+        .load_audit_plan(&session_id)
+        .await
+        .map_err(map_session_error)?;
+    Ok(Json(response))
+}
+
 async fn load_checklist_plan(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -819,6 +848,66 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn load_activity_summary_unknown_session_returns_error_envelope() {
+        let app = build_app(
+            AppState {
+                manager: Arc::new(SessionManager::new(".audit-work".into())),
+                events_poll_interval: super::default_events_poll_interval(),
+            },
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/sess-missing/activity")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), 1024 * 32)
+            .await
+            .expect("body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["error"]["code"], "SESSION_NOT_FOUND");
+        assert_eq!(payload["error"]["status"], 404);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_audit_plan_unknown_session_returns_error_envelope() {
+        let app = build_app(
+            AppState {
+                manager: Arc::new(SessionManager::new(".audit-work".into())),
+                events_poll_interval: super::default_events_poll_interval(),
+            },
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/sess-missing/plan")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), 1024 * 32)
+            .await
+            .expect("body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["error"]["code"], "SESSION_NOT_FOUND");
+        assert_eq!(payload["error"]["status"], 404);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn resolve_source_validation_error_uses_error_envelope() {
         let app = build_app(
             AppState {
@@ -935,5 +1024,4 @@ mod tests {
         assert_eq!(payload["error"]["code"], "PROJECT_IR_NOT_BUILT");
         assert_eq!(payload["error"]["status"], 404);
     }
-
 }

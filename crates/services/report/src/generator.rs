@@ -7,6 +7,7 @@ use anyhow::Result;
 use audit_agent_core::audit_config::ParsedPreviousAudit;
 use audit_agent_core::finding::Finding;
 use audit_agent_core::output::AuditManifest;
+use audit_agent_core::session::AuditPlan;
 use audit_agent_core::session::AuditRecord;
 use findings::json_export::to_findings_json;
 use findings::pipeline::{deduplicate_findings, mark_regression_checks};
@@ -194,7 +195,10 @@ impl ReportGenerator {
         manifest.optional_inputs_used.llm_prose_used = llm_prose_used;
 
         let v3_bundle = build_v3_report_bundle(&manifest, &render_findings);
-        let report_executive_markdown = render_executive_report(&render_findings, &manifest);
+        let executive_report = render_executive_report(&render_findings, &manifest);
+        let report_executive_markdown = load_audit_plan_artifact(output_dir)
+            .map(|plan| inject_methodology_section(&executive_report, &plan))
+            .unwrap_or(executive_report);
         let report_technical_markdown = render_v3_report(v3_bundle.clone());
         let findings_json = to_findings_json(&render_findings)?;
         let findings_sarif = serde_json::to_string_pretty(&to_sarif(&render_findings, &manifest))?;
@@ -260,6 +264,79 @@ impl ReportGenerator {
 
         (polished, used)
     }
+}
+
+fn load_audit_plan_artifact(output_dir: &Path) -> Option<AuditPlan> {
+    let path = output_dir.join("audit-plan.json");
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<AuditPlan>(&content).ok()
+}
+
+fn inject_methodology_section(executive_report: &str, plan: &AuditPlan) -> String {
+    let methodology = render_methodology_section(plan);
+    let marker = "## Finding Summary\n\n";
+    if let Some((head, tail)) = executive_report.split_once(marker) {
+        return format!("{head}{methodology}\n\n{marker}{tail}");
+    }
+    format!("{executive_report}\n\n{methodology}")
+}
+
+fn render_methodology_section(plan: &AuditPlan) -> String {
+    let mut out = String::new();
+    out.push_str("## Methodology\n\n");
+    out.push_str("The following analysis plan was generated based on workspace analysis.\n\n");
+    out.push_str("**Architecture Overview:**\n");
+    out.push_str(&format!(
+        "- Assets: {} identified\n",
+        plan.overview.assets.len()
+    ));
+    out.push_str(&format!(
+        "- Trust Boundaries: {} identified\n",
+        plan.overview.trust_boundaries.len()
+    ));
+    out.push_str(&format!(
+        "- Hotspots: {} identified\n\n",
+        plan.overview.hotspots.len()
+    ));
+
+    out.push_str("**Analysis Domains:**\n");
+    if plan.domains.is_empty() {
+        out.push_str("- None captured\n");
+    } else {
+        for domain in &plan.domains {
+            out.push_str(&format!("- **{}**: {}\n", domain.id, domain.rationale));
+        }
+    }
+    out.push('\n');
+
+    out.push_str("**Tools Used:**\n");
+    if plan.recommended_tools.is_empty() {
+        out.push_str("- None captured\n");
+    } else {
+        for tool in &plan.recommended_tools {
+            out.push_str(&format!("- **{}**: {}\n", tool.tool, tool.rationale));
+        }
+    }
+    out.push('\n');
+
+    out.push_str("**Engines:**\n");
+    out.push_str(&format!(
+        "- Crypto/ZK: {}\n",
+        if plan.engines.crypto_zk {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    ));
+    out.push_str(&format!(
+        "- Distributed: {}\n",
+        if plan.engines.distributed {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    ));
+    out
 }
 
 async fn polish_text(llm: &dyn LlmProvider, text: &str) -> (String, bool) {

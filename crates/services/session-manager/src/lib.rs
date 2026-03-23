@@ -332,6 +332,18 @@ impl SessionManager {
             .map_err(map_state_error)
     }
 
+    pub async fn load_activity_summary(&self, session_id: &str) -> SessionResult<ActivitySummary> {
+        let state = self.inner.lock().await;
+        state
+            .load_activity_summary(session_id)
+            .map_err(map_state_error)
+    }
+
+    pub async fn load_audit_plan(&self, session_id: &str) -> SessionResult<AuditPlanResponse> {
+        let mut state = self.inner.lock().await;
+        state.load_audit_plan(session_id).map_err(map_state_error)
+    }
+
     pub async fn get_audit_manifest(
         &self,
     ) -> SessionResult<audit_agent_core::output::AuditManifest> {
