@@ -945,6 +945,44 @@ pre code {
   grid-template-rows: minmax(0, 1fr) minmax(210px, 0.42fr);
 }
 
+.workstation-view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #252526;
+  background: #252526;
+}
+
+.workstation-view-tab {
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #bcbcbc;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workstation-view-tab.active,
+.workstation-view-tab:hover {
+  border-color: #0e639c;
+  color: #ffffff;
+  background: #094771;
+}
+
+.workstation-view-panel {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+}
+
+.workstation-graph-tab-panel {
+  min-height: 400px;
+  min-width: min(500px, 100%);
+  width: 100%;
+}
+
 .vscode-editor-tabs {
   display: flex;
   align-items: center;
@@ -1080,6 +1118,60 @@ pre code {
   gap: 6px;
 }
 
+.graph-lens-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid #323232;
+  border-radius: 4px;
+  background: #1e1e1e;
+  padding: 6px 8px;
+}
+
+.graph-lens-select,
+.graph-lens-search {
+  height: 28px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #d4d4d4;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.graph-lens-select {
+  min-width: 140px;
+}
+
+.graph-lens-search {
+  min-width: 160px;
+  flex: 1;
+  max-width: 320px;
+}
+
+.graph-lens-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #bcbcbc;
+  font-size: 12px;
+}
+
+.graph-lens-fit-button {
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #2d2d30;
+  color: #d4d4d4;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-lens-fit-button:hover {
+  background: #3a3a3f;
+}
+
 .graph-lens-tab {
   border: 1px solid #3c3c3c;
   border-radius: 4px;
@@ -1132,6 +1224,59 @@ pre code {
   line-height: 1.3;
   padding: 8px 10px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.search-dimmed {
+  opacity: 0.15;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.severity-critical {
+  border-color: #dc2626;
+  border-width: 3px;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.severity-high {
+  border-color: #ea580c;
+  border-width: 3px;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.severity-medium {
+  border-color: #ca8a04;
+  border-width: 2px;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.severity-low {
+  border-color: #2563eb;
+  border-width: 2px;
+}
+
+.graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.has-findings {
+  background: rgba(56, 90, 128, 0.92);
+}
+
+.graph-flow-node-content {
+  position: relative;
+}
+
+.graph-flow-node-label {
+  display: block;
+  padding-right: 14px;
+}
+
+.graph-flow-node-badge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
 }
 
 .graph-lens-reactflow-canvas .react-flow__node.graph-flow-node.selected {
@@ -1258,6 +1403,37 @@ pre code {
   color: #ffffff;
 }
 
+.graph-lens-block li.search-dimmed {
+  opacity: 0.2;
+}
+
+.graph-node-link {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.graph-node-link:hover {
+  text-decoration: underline;
+}
+
+.graph-node-finding-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
 .workstation-tree-list ul {
   list-style: none;
   margin: 6px 0 0 12px;
@@ -1340,6 +1516,15 @@ pre code {
 .workstation-plain-text-line {
   display: grid;
   grid-template-columns: minmax(42px, auto) minmax(0, 1fr);
+}
+
+.workstation-plain-text-line.target-line .workstation-plain-text-gutter {
+  color: #ffd166;
+  background: #2a2317;
+}
+
+.workstation-plain-text-line.target-line .workstation-plain-text-code {
+  background: rgba(255, 209, 102, 0.12);
 }
 
 .workstation-plain-text-gutter {

@@ -168,6 +168,47 @@ const FALLBACK_DATAFLOW_GRAPH_VALUES: ProjectGraphResponse = {
   ],
 };
 
+const FALLBACK_SYMBOL_GRAPH: ProjectGraphResponse = {
+  sessionId: "sess-fallback",
+  lens: "symbol",
+  redactedValues: true,
+  nodes: [
+    {
+      id: "symbol:crates/core/src/session.rs::create_session",
+      label: "create_session",
+      kind: "function",
+      filePath: "crates/core/src/session.rs",
+      line: 18,
+    },
+    {
+      id: "symbol:crates/core/src/session.rs::persist_session",
+      label: "persist_session",
+      kind: "function",
+      filePath: "crates/core/src/session.rs",
+      line: 47,
+    },
+    {
+      id: "symbol:crates/apps/tauri-ui/src/ipc.rs::load_file_graph",
+      label: "load_file_graph",
+      kind: "function",
+      filePath: "crates/apps/tauri-ui/src/ipc.rs",
+      line: 22,
+    },
+  ],
+  edges: [
+    {
+      from: "symbol:crates/apps/tauri-ui/src/ipc.rs::load_file_graph",
+      to: "symbol:crates/core/src/session.rs::create_session",
+      relation: "calls",
+    },
+    {
+      from: "symbol:crates/core/src/session.rs::create_session",
+      to: "symbol:crates/core/src/session.rs::persist_session",
+      relation: "calls",
+    },
+  ],
+};
+
 const FALLBACK_SECURITY_OVERVIEW: Omit<SecurityOverviewResponse, "sessionId"> = {
   assets: ["Session store", "Project IR graph pipeline", "Audit records and evidence links"],
   trustBoundaries: [
@@ -492,6 +533,10 @@ export function loadDataflowGraphFallback(
     ...(includeValues ? FALLBACK_DATAFLOW_GRAPH_VALUES : FALLBACK_DATAFLOW_GRAPH_REDACTED),
     sessionId,
   };
+}
+
+export function loadSymbolGraphFallback(sessionId: string): ProjectGraphResponse {
+  return { ...FALLBACK_SYMBOL_GRAPH, sessionId };
 }
 
 export function loadSecurityOverviewFallback(sessionId: string): SecurityOverviewResponse {

@@ -7,13 +7,12 @@ use tauri::State;
 use tauri_ui::ConfigParseResponse;
 use tauri_ui::OutputType;
 use tauri_ui::ipc::{
-    ApplyReviewDecisionRequest, ApplyReviewDecisionResponse,
-    AuditSessionSummary, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
-    CreateAuditSessionResponse, DownloadOutputResponse, GetProjectTreeResponse,
-    LoadChecklistPlanResponse, LoadReviewQueueResponse, LoadSecurityOverviewResponse,
-    LoadToolbenchContextResponse, OpenAuditSessionResponse, ProjectGraphResponse,
-    ReadSourceFileResponse, SourceInputIpc, TailSessionConsoleResponse,
-    ToolbenchSelectionRequest,
+    ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditSessionSummary,
+    ConfirmWorkspaceRequest, ConfirmWorkspaceResponse, CreateAuditSessionResponse,
+    DownloadOutputResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
+    LoadReviewQueueResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
+    OpenAuditSessionResponse, ProjectGraphResponse, ReadSourceFileResponse, SourceInputIpc,
+    TailSessionConsoleResponse, ToolbenchSelectionRequest,
 };
 use tauri_ui::{branch_resolution_banner, warning_message};
 
@@ -289,6 +288,18 @@ pub async fn load_dataflow_graph(
     let mut session = state.session.lock().await;
     session
         .load_dataflow_graph(&session_id, include_values.unwrap_or(false))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_symbol_graph(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<ProjectGraphResponse, String> {
+    let mut session = state.session.lock().await;
+    session
+        .load_symbol_graph(&session_id)
         .await
         .map_err(|err| err.to_string())
 }

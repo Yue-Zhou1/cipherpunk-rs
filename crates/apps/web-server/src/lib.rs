@@ -198,7 +198,13 @@ impl IntoResponse for AppError {
 fn map_session_error(err: SessionManagerError) -> AppError {
     match err {
         SessionManagerError::BadRequest { message } => AppError::bad_request(message),
-        SessionManagerError::NotFound { message } => AppError::not_found("NOT_FOUND", message),
+        SessionManagerError::NotFound { message } => {
+            if message.contains("ProjectIR has not been built for this session") {
+                AppError::not_found("PROJECT_IR_NOT_BUILT", message)
+            } else {
+                AppError::not_found("NOT_FOUND", message)
+            }
+        }
         SessionManagerError::SessionNotFound { session_id } => AppError::not_found(
             "SESSION_NOT_FOUND",
             format!("No session with id '{session_id}'"),
@@ -519,6 +525,7 @@ async fn load_graph(
                 .load_dataflow_graph(&session_id, query.include_values)
                 .await
         }
+        "symbol" => state.manager.load_symbol_graph(&session_id).await,
         _ => {
             return Err(AppError::bad_request(format!(
                 "unknown graph lens '{lens}'"
@@ -773,9 +780,13 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderMap, Request, StatusCode};
+    use axum::response::IntoResponse;
     use tower::ServiceExt;
 
-    use super::{AppState, SessionManager, WizardQuery, build_app, wizard_id_from_request};
+    use super::{
+        AppState, SessionManager, SessionManagerError, WizardQuery, build_app, map_session_error,
+        wizard_id_from_request,
+    };
 
     #[tokio::test(flavor = "current_thread")]
     async fn open_unknown_session_returns_error_envelope() {
@@ -905,4 +916,24 @@ mod tests {
             Some("wizard-header")
         );
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn project_ir_not_built_error_uses_dedicated_error_code() {
+        let response = map_session_error(SessionManagerError::NotFound {
+            message: "ProjectIR has not been built for this session. Run BuildProjectIr first."
+                .to_string(),
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let payload: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 1024 * 32)
+                .await
+                .expect("body"),
+        )
+        .expect("json");
+        assert_eq!(payload["error"]["code"], "PROJECT_IR_NOT_BUILT");
+        assert_eq!(payload["error"]["status"], 404);
+    }
+
 }

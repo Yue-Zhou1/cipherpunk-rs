@@ -36,7 +36,18 @@ function normalizeBaseUrl(baseUrl: string): string {
   if (!baseUrl) {
     return "";
   }
-  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function joinBaseUrlAndPath(baseUrl: string, path: string): string {
+  const normalizedBase = normalizeBaseUrl(baseUrl);
+  if (!normalizedBase) {
+    return path;
+  }
+  if (normalizedBase.endsWith("/api") && path.startsWith("/api/")) {
+    return `${normalizedBase}${path.slice("/api".length)}`;
+  }
+  return `${normalizedBase}${path}`;
 }
 
 function toWebSocketBaseUrl(baseUrl: string): string {
@@ -139,6 +150,11 @@ const COMMAND_ROUTES: Record<string, RouteDef> = {
       return `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/graphs/dataflow${includeValues}`;
     },
   },
+  load_symbol_graph: {
+    method: "GET",
+    path: (args) =>
+      `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/graphs/symbol`,
+  },
   load_security_overview: {
     method: "GET",
     path: (args) =>
@@ -182,6 +198,14 @@ const COMMAND_ROUTES: Record<string, RouteDef> = {
     path: () => "/api/manifest",
   },
 };
+
+const GRAPH_TIMEOUT_MS = 10_000;
+const GRAPH_COMMANDS = new Set([
+  "load_file_graph",
+  "load_feature_graph",
+  "load_dataflow_graph",
+  "load_symbol_graph",
+]);
 
 export class TauriTransport implements Transport {
   readonly kind: TransportKind = "tauri";
@@ -255,12 +279,33 @@ export class HttpTransport implements Transport {
       }
     }
 
-    const url = `${this.baseUrl}${route.path(args)}`;
-    const response = await fetch(url, {
-      method: route.method,
-      headers,
-      body: route.method === "POST" ? JSON.stringify(args) : undefined,
-    });
+    const url = joinBaseUrlAndPath(this.baseUrl, route.path(args));
+    const shouldTimeout = GRAPH_COMMANDS.has(command);
+    const controller = shouldTimeout ? new AbortController() : null;
+    const timeoutHandle = shouldTimeout
+      ? globalThis.setTimeout(() => {
+          controller?.abort();
+        }, GRAPH_TIMEOUT_MS)
+      : null;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: route.method,
+        headers,
+        body: route.method === "POST" ? JSON.stringify(args) : undefined,
+        signal: controller?.signal,
+      });
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new Error("Request timed out after 10s");
+      }
+      throw error instanceof Error ? error : new Error("Network request failed");
+    } finally {
+      if (timeoutHandle !== null) {
+        globalThis.clearTimeout(timeoutHandle);
+      }
+    }
 
     if (!response.ok) {
       let message = `HTTP ${response.status}`;

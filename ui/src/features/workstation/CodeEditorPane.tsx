@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 
@@ -10,12 +10,14 @@ type CodeEditorPaneProps = {
   preferPlainText?: boolean;
   focusedRecordId?: string | null;
   focusedNodeCount?: number;
+  targetLine?: number | null;
   onSymbolFocus?: (symbol: string | null) => void;
 };
 
 type PlainTextCodeViewerProps = {
   content: string;
   className?: string;
+  targetLine?: number | null;
 };
 
 function editorLanguage(filePath: string | null): string {
@@ -66,8 +68,29 @@ function splitPlainTextLines(content: string): string[] {
 function PlainTextCodeViewer({
   content,
   className,
+  targetLine,
 }: PlainTextCodeViewerProps): JSX.Element {
   const lines = splitPlainTextLines(content);
+  const normalizedTargetLine =
+    typeof targetLine === "number" && Number.isInteger(targetLine) && targetLine > 0
+      ? targetLine
+      : null;
+  const lineRefs = useRef(new Map<number, HTMLLIElement>());
+
+  useEffect(() => {
+    if (!normalizedTargetLine) {
+      return;
+    }
+    const lineEntry = lineRefs.current.get(normalizedTargetLine);
+    if (!lineEntry || typeof lineEntry.scrollIntoView !== "function") {
+      return;
+    }
+    lineEntry.scrollIntoView({
+      block: "center",
+      behavior: "auto",
+    });
+  }, [normalizedTargetLine, content]);
+
   const classes = [
     "workstation-editor-fallback",
     "workstation-plain-text-viewer",
@@ -80,7 +103,18 @@ function PlainTextCodeViewer({
     <div className={classes} role="region" aria-label="Code content">
       <ol className="workstation-plain-text-lines">
         {lines.map((line, index) => (
-          <li key={`${index}:${line.slice(0, 24)}`} className="workstation-plain-text-line">
+          <li
+            key={`${index}:${line.slice(0, 24)}`}
+            ref={(entry) => {
+              if (entry) {
+                lineRefs.current.set(index + 1, entry);
+                return;
+              }
+              lineRefs.current.delete(index + 1);
+            }}
+            data-testid={`code-line-${index + 1}`}
+            className={`workstation-plain-text-line${normalizedTargetLine === index + 1 ? " target-line" : ""}`}
+          >
             <span className="workstation-plain-text-gutter" data-testid="code-line-number" aria-hidden="true">
               {index + 1}
             </span>
@@ -100,10 +134,16 @@ function CodeEditorPane({
   preferPlainText = false,
   focusedRecordId,
   focusedNodeCount = 0,
+  targetLine,
   onSymbolFocus,
 }: CodeEditorPaneProps): JSX.Element {
   const language = editorLanguage(filePath);
   const [monacoMounted, setMonacoMounted] = useState(false);
+  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const normalizedTargetLine =
+    typeof targetLine === "number" && Number.isInteger(targetLine) && targetLine > 0
+      ? targetLine
+      : null;
   const useMonaco = shouldRenderMonaco() && !preferPlainText;
 
   useEffect(() => {
@@ -113,6 +153,14 @@ function CodeEditorPane({
   useEffect(() => {
     setMonacoMounted(false);
   }, [filePath, language]);
+
+  useEffect(() => {
+    if (!editorRef.current || !normalizedTargetLine) {
+      return;
+    }
+    editorRef.current.revealLineInCenter(normalizedTargetLine);
+    editorRef.current.setPosition({ lineNumber: normalizedTargetLine, column: 1 });
+  }, [filePath, normalizedTargetLine]);
 
   return (
     <section className="panel workstation-editor" aria-label="Code Editor">
@@ -153,6 +201,7 @@ function CodeEditorPane({
               }}
               onMount={(editorInstance: MonacoEditor.IStandaloneCodeEditor) => {
                 setMonacoMounted(true);
+                editorRef.current = editorInstance;
                 editorInstance.onMouseDown((event) => {
                   if (!event.target.position || !onSymbolFocus) {
                     return;
@@ -167,12 +216,13 @@ function CodeEditorPane({
             {!monacoMounted ? (
               <PlainTextCodeViewer
                 content={content}
+                targetLine={normalizedTargetLine}
                 className="workstation-editor-fallback-overlay"
               />
             ) : null}
           </div>
         ) : (
-          <PlainTextCodeViewer content={content} />
+          <PlainTextCodeViewer content={content} targetLine={normalizedTargetLine} />
         )
       ) : null}
 

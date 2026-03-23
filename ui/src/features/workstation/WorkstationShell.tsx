@@ -20,6 +20,8 @@ type WorkstationShellProps = {
   sessionId: string;
 };
 
+type WorkstationMainTab = "code" | "graph" | "security";
+
 const ACTIVITY_ITEMS = [
   { id: "files", label: "Explorer", icon: Files },
   { id: "search", label: "Search", icon: Search },
@@ -120,6 +122,33 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
   const [focusedSymbolName, setFocusedSymbolName] = useState<string | null>(null);
+  const [targetLine, setTargetLine] = useState<number | null>(null);
+  const [activeMainTab, setActiveMainTab] = useState<WorkstationMainTab>("code");
+  const useTabbedWebLayout = !useSplitLayout && webMode;
+
+  const handleSelectFile = useCallback(
+    (path: string) => {
+      setFocusedSymbolName(null);
+      setTargetLine(null);
+      if (useTabbedWebLayout) {
+        setActiveMainTab("code");
+      }
+      selectFile(path);
+    },
+    [selectFile, useTabbedWebLayout]
+  );
+
+  const handleNavigateToSource = useCallback(
+    (filePath: string, line?: number) => {
+      setFocusedSymbolName(null);
+      setTargetLine(typeof line === "number" ? line : null);
+      if (useTabbedWebLayout) {
+        setActiveMainTab("code");
+      }
+      selectFile(filePath);
+    },
+    [selectFile, useTabbedWebLayout]
+  );
 
   const handleSelectReviewRecord = useCallback(
     (item: ReviewQueueItem) => {
@@ -130,10 +159,10 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
 
       const matchedFilePath = resolveSelectedFilePath(nodeIds, projectTree);
       if (matchedFilePath) {
-        selectFile(matchedFilePath);
+        handleSelectFile(matchedFilePath);
       }
     },
-    [projectTree, selectFile]
+    [handleSelectFile, projectTree]
   );
 
   return (
@@ -190,7 +219,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                 sessionId={sessionId}
                 nodes={projectTree}
                 selectedFilePath={selectedFilePath}
-                onSelectFile={selectFile}
+                onSelectFile={handleSelectFile}
                 isLoading={treeLoading}
                 error={treeError}
               />
@@ -213,6 +242,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                       preferPlainText={webMode}
                       focusedRecordId={selectedReviewRecordId}
                       focusedNodeCount={selectedGraphNodeIds.length}
+                      targetLine={targetLine}
                       onSymbolFocus={setFocusedSymbolName}
                     />
                   </Allotment.Pane>
@@ -221,10 +251,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                       sessionId={sessionId}
                       selectedNodeIds={selectedGraphNodeIds}
                       focusSymbolName={focusedSymbolName}
-                      onNavigateToSource={(filePath) => {
-                        setFocusedSymbolName(null);
-                        selectFile(filePath);
-                      }}
+                      onNavigateToSource={handleNavigateToSource}
                     />
                   </Allotment.Pane>
                 </Allotment>
@@ -261,7 +288,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
               sessionId={sessionId}
               nodes={projectTree}
               selectedFilePath={selectedFilePath}
-              onSelectFile={selectFile}
+              onSelectFile={handleSelectFile}
               isLoading={treeLoading}
               error={treeError}
             />
@@ -271,49 +298,104 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                   {fileTabLabel(selectedFilePath)}
                 </button>
               </div>
-              <div className="vscode-editor-stack">
-                <CodeEditorPane
-                  filePath={selectedFilePath}
-                  content={fileContent}
-                  isLoading={fileLoading}
-                  error={fileError}
-                  preferPlainText={webMode}
-                  focusedRecordId={selectedReviewRecordId}
-                  focusedNodeCount={selectedGraphNodeIds.length}
-                  onSymbolFocus={setFocusedSymbolName}
-                />
-                <GraphLens
-                  sessionId={sessionId}
-                  selectedNodeIds={selectedGraphNodeIds}
-                  focusSymbolName={focusedSymbolName}
-                  onNavigateToSource={(filePath) => {
-                    setFocusedSymbolName(null);
-                    selectFile(filePath);
-                  }}
-                />
-              </div>
-            </section>
-            <aside className="vscode-right-column">
-              <SecurityOverviewPanel sessionId={sessionId} />
-              {webMode ? null : (
+              {useTabbedWebLayout ? (
                 <>
-                  <ChecklistPanel sessionId={sessionId} />
-                  <ToolbenchPanel
-                    sessionId={sessionId}
-                    selection={
-                      selectedFilePath
-                        ? { kind: "file", id: selectedFilePath }
-                        : { kind: "session", id: sessionId }
-                    }
-                  />
-                  <ReviewQueue
-                    sessionId={sessionId}
-                    selectedRecordId={selectedReviewRecordId}
-                    onSelectRecord={handleSelectReviewRecord}
-                  />
+                  <div
+                    className="workstation-view-tabs"
+                    role="tablist"
+                    aria-label="Workstation primary views"
+                  >
+                    {(["code", "graph", "security"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        className={`workstation-view-tab${activeMainTab === tab ? " active" : ""}`}
+                        role="tab"
+                        aria-selected={activeMainTab === tab}
+                        onClick={() => setActiveMainTab(tab)}
+                      >
+                        {tab === "code"
+                          ? "Code"
+                          : tab === "graph"
+                            ? "Graph"
+                            : "Security"}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="workstation-view-panel">
+                    {activeMainTab === "code" ? (
+                      <CodeEditorPane
+                        filePath={selectedFilePath}
+                        content={fileContent}
+                        isLoading={fileLoading}
+                        error={fileError}
+                        preferPlainText={webMode}
+                        focusedRecordId={selectedReviewRecordId}
+                        focusedNodeCount={selectedGraphNodeIds.length}
+                        targetLine={targetLine}
+                        onSymbolFocus={setFocusedSymbolName}
+                      />
+                    ) : null}
+                    {activeMainTab === "graph" ? (
+                      <div className="workstation-graph-tab-panel">
+                        <GraphLens
+                          sessionId={sessionId}
+                          selectedNodeIds={selectedGraphNodeIds}
+                          focusSymbolName={focusedSymbolName}
+                          onNavigateToSource={handleNavigateToSource}
+                        />
+                      </div>
+                    ) : null}
+                    {activeMainTab === "security" ? (
+                      <SecurityOverviewPanel sessionId={sessionId} />
+                    ) : null}
+                  </div>
                 </>
+              ) : (
+                <div className="vscode-editor-stack">
+                  <CodeEditorPane
+                    filePath={selectedFilePath}
+                    content={fileContent}
+                    isLoading={fileLoading}
+                    error={fileError}
+                    preferPlainText={webMode}
+                    focusedRecordId={selectedReviewRecordId}
+                    focusedNodeCount={selectedGraphNodeIds.length}
+                    targetLine={targetLine}
+                    onSymbolFocus={setFocusedSymbolName}
+                  />
+                  <GraphLens
+                    sessionId={sessionId}
+                    selectedNodeIds={selectedGraphNodeIds}
+                    focusSymbolName={focusedSymbolName}
+                    onNavigateToSource={handleNavigateToSource}
+                  />
+                </div>
               )}
-            </aside>
+            </section>
+            {useTabbedWebLayout ? null : (
+              <aside className="vscode-right-column">
+                <SecurityOverviewPanel sessionId={sessionId} />
+                {webMode ? null : (
+                  <>
+                    <ChecklistPanel sessionId={sessionId} />
+                    <ToolbenchPanel
+                      sessionId={sessionId}
+                      selection={
+                        selectedFilePath
+                          ? { kind: "file", id: selectedFilePath }
+                          : { kind: "session", id: sessionId }
+                      }
+                    />
+                    <ReviewQueue
+                      sessionId={sessionId}
+                      selectedRecordId={selectedReviewRecordId}
+                      onSelectRecord={handleSelectReviewRecord}
+                    />
+                  </>
+                )}
+              </aside>
+            )}
           </>
         )}
       </main>

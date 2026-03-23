@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use audit_agent_core::audit_config::{AuditConfig, BudgetConfig, ResolvedSource, SourceOrigin};
 use audit_agent_core::finding::{Severity, VerificationStatus};
 use audit_agent_core::output::{AuditManifest, CoverageReport};
@@ -170,6 +171,12 @@ pub struct ProjectGraphNodeResponse {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_severity: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,8 +322,17 @@ pub struct UiSessionState {
     session_jobs: HashMap<String, Vec<SessionJobView>>,
     project_ir_cache: HashMap<String, ProjectIr>,
     review_records_cache: HashMap<String, Vec<AuditRecord>>,
+    graph_overlay_cache: HashMap<String, GraphOverlayCacheEntry>,
     session_store: Option<Arc<SessionStore>>,
 }
+
+#[derive(Debug, Clone)]
+struct GraphOverlayCacheEntry {
+    loaded_at: Instant,
+    records: Vec<AuditRecord>,
+}
+
+const GRAPH_OVERLAY_CACHE_TTL: Duration = Duration::from_secs(2);
 
 impl UiSessionState {
     pub fn new(work_dir: PathBuf) -> Self {
@@ -334,6 +350,7 @@ impl UiSessionState {
             session_jobs: HashMap::new(),
             project_ir_cache: HashMap::new(),
             review_records_cache: HashMap::new(),
+            graph_overlay_cache: HashMap::new(),
             session_store,
         }
     }
@@ -695,13 +712,37 @@ impl UiSessionState {
     }
 
     pub async fn load_file_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
-        let ir = self.load_or_build_project_ir(session_id, false).await?;
-        Ok(file_graph_response(session_id, &ir))
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = self
+            .load_or_build_project_ir(session_id, false)
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = file_graph_response(session_id, &ir);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
     }
 
     pub async fn load_feature_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
-        let ir = self.load_or_build_project_ir(session_id, false).await?;
-        Ok(feature_graph_response(session_id, &ir))
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = self
+            .load_or_build_project_ir(session_id, false)
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = feature_graph_response(session_id, &ir);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
     }
 
     pub async fn load_dataflow_graph(
@@ -709,10 +750,37 @@ impl UiSessionState {
         session_id: &str,
         include_values: bool,
     ) -> Result<ProjectGraphResponse> {
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
         let ir = self
             .load_or_build_project_ir(session_id, include_values)
-            .await?;
-        Ok(dataflow_graph_response(session_id, &ir, !include_values))
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = dataflow_graph_response(session_id, &ir, !include_values);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
+    }
+
+    pub async fn load_symbol_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = self
+            .load_or_build_project_ir(session_id, false)
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = symbol_graph_response(session_id, &ir);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
     }
 
     pub async fn load_security_overview(
@@ -870,6 +938,43 @@ impl UiSessionState {
             .collect())
     }
 
+    fn load_graph_overlay_records(&mut self, session_id: &str) -> Result<Vec<AuditRecord>> {
+        if let Some(cached) = self.graph_overlay_cache.get(session_id) {
+            if cached.loaded_at.elapsed() <= GRAPH_OVERLAY_CACHE_TTL {
+                return Ok(cached.records.clone());
+            }
+        }
+
+        let records = if let Some(store) = &self.session_store {
+            let mut records = store.list_records(session_id, Some("finding"))?;
+            records.extend(store.list_records(session_id, Some("candidate"))?);
+            records
+        } else {
+            self.review_records_cache
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|record| {
+                    matches!(
+                        record.kind,
+                        AuditRecordKind::Candidate | AuditRecordKind::Finding
+                    )
+                })
+                .collect()
+        };
+
+        self.graph_overlay_cache.insert(
+            session_id.to_string(),
+            GraphOverlayCacheEntry {
+                loaded_at: Instant::now(),
+                records: records.clone(),
+            },
+        );
+
+        Ok(records)
+    }
+
     fn load_record(&self, session_id: &str, record_id: &str) -> Result<Option<AuditRecord>> {
         if let Some(store) = &self.session_store {
             return store.load_record(session_id, record_id);
@@ -902,6 +1007,7 @@ impl UiSessionState {
                 records.push(record.clone());
             }
         }
+        self.graph_overlay_cache.remove(session_id);
         Ok(())
     }
 
@@ -1470,6 +1576,26 @@ async fn build_project_ir_for_session(
         })
 }
 
+fn map_project_ir_build_error(err: anyhow::Error) -> anyhow::Error {
+    let has_not_found_io = err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .map(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+            .unwrap_or(false)
+    });
+
+    let message = err.to_string().to_ascii_lowercase();
+    let missing_source_context = message.contains("path does not exist")
+        || message.contains("resolve_source must be called")
+        || message.contains("confirm_workspace must be called");
+
+    if has_not_found_io || missing_source_context {
+        anyhow!("ProjectIR has not been built for this session. Run BuildProjectIr first.")
+    } else {
+        err
+    }
+}
+
 fn file_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse {
     ProjectGraphResponse {
         session_id: session_id.to_string(),
@@ -1484,6 +1610,9 @@ fn file_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse
                 label: node.path.display().to_string(),
                 kind: format!("file:{}", node.language),
                 file_path: Some(relative_path_to_string(&node.path)),
+                line: None,
+                finding_count: None,
+                max_severity: None,
             })
             .collect(),
         edges: ir
@@ -1514,6 +1643,9 @@ fn feature_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphRespo
                 label: node.name.clone(),
                 kind: "feature".to_string(),
                 file_path: Some(node.source.clone()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
             })
             .collect(),
         edges: ir
@@ -1548,6 +1680,9 @@ fn dataflow_graph_response(
                 label: node.label.clone(),
                 kind: "dataflow".to_string(),
                 file_path: node.file.as_ref().map(|path| relative_path_to_string(path)),
+                line: None,
+                finding_count: None,
+                max_severity: None,
             })
             .collect(),
         edges: ir
@@ -1561,6 +1696,156 @@ fn dataflow_graph_response(
                 value_preview: edge.value_preview.clone(),
             })
             .collect(),
+    }
+}
+
+fn symbol_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse {
+    ProjectGraphResponse {
+        session_id: session_id.to_string(),
+        lens: "symbol".to_string(),
+        redacted_values: true,
+        nodes: ir
+            .symbol_graph
+            .nodes
+            .iter()
+            .map(|node| ProjectGraphNodeResponse {
+                id: node.id.clone(),
+                label: node.name.clone(),
+                kind: node.kind.clone(),
+                file_path: Some(relative_path_to_string(&node.file)),
+                line: Some(node.line),
+                finding_count: None,
+                max_severity: None,
+            })
+            .collect(),
+        edges: ir
+            .symbol_graph
+            .edges
+            .iter()
+            .map(|edge| ProjectGraphEdgeResponse {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                relation: edge.relation.clone(),
+                value_preview: None,
+            })
+            .collect(),
+    }
+}
+
+fn normalized_graph_path(path: &str) -> String {
+    path.trim().replace('\\', "/").trim_start_matches("./").to_string()
+}
+
+fn is_absolute_like(path: &str) -> bool {
+    Path::new(path).is_absolute()
+        || path
+            .as_bytes()
+            .get(1)
+            .map(|byte| *byte == b':')
+            .unwrap_or(false)
+}
+
+fn split_path_segments(path: &str) -> Vec<&str> {
+    path.split('/').filter(|segment| !segment.is_empty()).collect()
+}
+
+fn has_segment_suffix(path: &str, suffix: &str) -> bool {
+    let path_segments = split_path_segments(path);
+    let suffix_segments = split_path_segments(suffix);
+    if suffix_segments.is_empty() || suffix_segments.len() > path_segments.len() {
+        return false;
+    }
+
+    let start = path_segments.len() - suffix_segments.len();
+    path_segments[start..] == suffix_segments
+}
+
+fn graph_paths_match(node_path: &str, record_path: &str) -> bool {
+    if node_path == record_path {
+        return true;
+    }
+
+    let node_absolute = is_absolute_like(node_path);
+    let record_absolute = is_absolute_like(record_path);
+    if node_absolute == record_absolute {
+        return false;
+    }
+
+    if node_absolute {
+        has_segment_suffix(node_path, record_path)
+    } else {
+        has_segment_suffix(record_path, node_path)
+    }
+}
+
+fn normalize_record_location_path(path: &Path, source_root: Option<&Path>) -> String {
+    if let Some(root) = source_root {
+        if let Ok(stripped) = path.strip_prefix(root) {
+            return normalized_graph_path(&stripped.to_string_lossy());
+        }
+    }
+
+    normalized_graph_path(&path.to_string_lossy())
+}
+
+fn severity_rank(severity: &Severity) -> u8 {
+    match severity {
+        Severity::Critical => 5,
+        Severity::High => 4,
+        Severity::Medium => 3,
+        Severity::Low => 2,
+        Severity::Observation => 1,
+    }
+}
+
+fn annotate_graph_with_findings(
+    nodes: &mut [ProjectGraphNodeResponse],
+    records: &[AuditRecord],
+    source_root: Option<&Path>,
+) {
+    for node in nodes.iter_mut() {
+        node.finding_count = None;
+        node.max_severity = None;
+
+        let Some(file_path) = node.file_path.as_ref() else {
+            continue;
+        };
+        let normalized = normalized_graph_path(file_path);
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let mut count = 0_u32;
+        let mut max_severity: Option<Severity> = None;
+
+        for record in records {
+            let record_matches = record.locations.iter().any(|location| {
+                let path = normalize_record_location_path(&location.file, source_root);
+                !path.is_empty() && graph_paths_match(&normalized, &path)
+            });
+
+            if !record_matches {
+                continue;
+            }
+
+            count = count.saturating_add(1);
+            if let Some(severity) = record.severity.as_ref() {
+                let is_higher = max_severity
+                    .as_ref()
+                    .map(|current| severity_rank(severity) > severity_rank(current))
+                    .unwrap_or(true);
+                if is_higher {
+                    max_severity = Some(severity.clone());
+                }
+            }
+        }
+
+        if count > 0 {
+            node.finding_count = Some(count);
+        }
+        if let Some(severity) = max_severity.as_ref() {
+            node.max_severity = Some(severity_name(severity).to_string());
+        }
     }
 }
 
@@ -2285,5 +2570,125 @@ mod tests {
             Some(&"[COVERAGE] Engine 'crypto_zk' failed: timeout".to_string())
         );
         assert_eq!(merged[1], existing[0]);
+    }
+
+    #[test]
+    fn annotate_graph_with_findings_populates_count_and_max_severity() {
+        let mut nodes = vec![
+            ProjectGraphNodeResponse {
+                id: "node-a".to_string(),
+                label: "lib.rs".to_string(),
+                kind: "file".to_string(),
+                file_path: Some("src/lib.rs".to_string()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
+            },
+            ProjectGraphNodeResponse {
+                id: "node-b".to_string(),
+                label: "mod.rs".to_string(),
+                kind: "file".to_string(),
+                file_path: Some("src/mod.rs".to_string()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
+            },
+            ProjectGraphNodeResponse {
+                id: "node-c".to_string(),
+                label: "summary".to_string(),
+                kind: "feature".to_string(),
+                file_path: Some("src/summary.rs".to_string()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
+            },
+        ];
+
+        let mut finding = AuditRecord::candidate(
+            "finding-1",
+            "Critical issue",
+            VerificationStatus::unverified("pending"),
+        );
+        finding.kind = AuditRecordKind::Finding;
+        finding.severity = Some(Severity::Critical);
+        finding.locations.push(audit_agent_core::finding::CodeLocation {
+            crate_name: "core".to_string(),
+            module: "core::lib".to_string(),
+            file: PathBuf::from("/tmp/repo/src/lib.rs"),
+            line_range: (10, 12),
+            snippet: None,
+        });
+
+        let mut candidate = AuditRecord::candidate(
+            "candidate-1",
+            "Low issue",
+            VerificationStatus::unverified("pending"),
+        );
+        candidate.severity = Some(Severity::Low);
+        candidate.locations.push(audit_agent_core::finding::CodeLocation {
+            crate_name: "core".to_string(),
+            module: "core::mod".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            line_range: (20, 22),
+            snippet: None,
+        });
+
+        let mut unmatched = AuditRecord::candidate(
+            "candidate-2",
+            "Observation",
+            VerificationStatus::unverified("pending"),
+        );
+        unmatched.severity = Some(Severity::Observation);
+        unmatched
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "core".to_string(),
+                module: "core::other".to_string(),
+                file: PathBuf::from("src/other.rs"),
+                line_range: (1, 1),
+                snippet: None,
+            });
+
+        annotate_graph_with_findings(&mut nodes, &[finding, candidate, unmatched], None);
+
+        assert_eq!(nodes[0].finding_count, Some(2));
+        assert_eq!(nodes[0].max_severity.as_deref(), Some("critical"));
+        assert_eq!(nodes[1].finding_count, None);
+        assert_eq!(nodes[1].max_severity, None);
+        assert_eq!(nodes[2].finding_count, None);
+        assert_eq!(nodes[2].max_severity, None);
+    }
+
+    #[test]
+    fn annotate_graph_with_findings_does_not_match_same_suffix_from_other_crates() {
+        let mut nodes = vec![ProjectGraphNodeResponse {
+            id: "node-a".to_string(),
+            label: "src/lib.rs".to_string(),
+            kind: "file".to_string(),
+            file_path: Some("src/lib.rs".to_string()),
+            line: None,
+            finding_count: None,
+            max_severity: None,
+        }];
+
+        let mut finding = AuditRecord::candidate(
+            "finding-1",
+            "Cross-crate issue",
+            VerificationStatus::unverified("pending"),
+        );
+        finding.kind = AuditRecordKind::Finding;
+        finding.severity = Some(Severity::High);
+        finding.locations.push(audit_agent_core::finding::CodeLocation {
+            crate_name: "other-crate".to_string(),
+            module: "other_crate::lib".to_string(),
+            file: PathBuf::from("/tmp/repo/other-crate/src/lib.rs"),
+            line_range: (4, 4),
+            snippet: None,
+        });
+
+        annotate_graph_with_findings(&mut nodes, &[finding], Some(Path::new("/tmp/repo")));
+
+        assert_eq!(nodes[0].finding_count, None);
+        assert_eq!(nodes[0].max_severity, None);
     }
 }

@@ -45,6 +45,7 @@ pub fn run() {
             commands::load_file_graph,
             commands::load_feature_graph,
             commands::load_dataflow_graph,
+            commands::load_symbol_graph,
             commands::load_security_overview,
             commands::load_checklist_plan,
             commands::load_toolbench_context,

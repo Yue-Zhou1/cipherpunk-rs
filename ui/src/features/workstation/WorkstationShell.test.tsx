@@ -4,9 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkstationShell from "./WorkstationShell";
 
 const selectFileSpy = vi.fn();
+let transportKind: "tauri" | "http" = "tauri";
 
 vi.mock("@monaco-editor/react", () => ({
   default: () => null,
+}));
+
+vi.mock("../../ipc/transport", () => ({
+  getTransport: () => ({ kind: transportKind }),
 }));
 
 vi.mock("./useSessionState", () => ({
@@ -37,9 +42,34 @@ vi.mock("./useSessionState", () => ({
   }),
 }));
 
+vi.mock("./CodeEditorPane", () => ({
+  default: ({ filePath, targetLine }: { filePath?: string | null; targetLine?: number | null }) => (
+    <section>
+      <h2>Code Editor</h2>
+      <p data-testid="code-editor-state">
+        {filePath ?? "none"}@{targetLine ?? "none"}
+      </p>
+    </section>
+  ),
+}));
+
 vi.mock("./GraphLens", () => ({
-  default: ({ selectedNodeIds }: { selectedNodeIds?: string[] }) => (
-    <div data-testid="graph-selection-state">{(selectedNodeIds ?? []).join("|")}</div>
+  default: ({
+    selectedNodeIds,
+    onNavigateToSource,
+  }: {
+    selectedNodeIds?: string[];
+    onNavigateToSource?: (filePath: string, line?: number) => void;
+  }) => (
+    <section>
+      <div data-testid="graph-selection-state">{(selectedNodeIds ?? []).join("|")}</div>
+      <button
+        type="button"
+        onClick={() => onNavigateToSource?.("rollup-core/src/lib.rs", 12)}
+      >
+        Navigate from Graph
+      </button>
+    </section>
   ),
 }));
 
@@ -104,6 +134,7 @@ vi.mock("./ReviewQueue", () => ({
 describe("WorkstationShell", () => {
   beforeEach(() => {
     selectFileSpy.mockClear();
+    transportKind = "tauri";
   });
 
   it("renders explorer, editor, toolbench, and console panels", () => {
@@ -129,5 +160,30 @@ describe("WorkstationShell", () => {
     fireEvent.click(screen.getByRole("button", { name: /select ambiguous filename/i }));
 
     expect(selectFileSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses Code/Graph/Security tabs in http mode", () => {
+    transportKind = "http";
+    render(<WorkstationShell sessionId="sess-1" />);
+
+    expect(screen.getByRole("tab", { name: /^code$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^graph$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^security$/i })).toBeInTheDocument();
+
+    expect(screen.queryByTestId("graph-selection-state")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
+    expect(screen.getByTestId("graph-selection-state")).toBeInTheDocument();
+  });
+
+  it("switches to code tab and forwards line when graph navigation is requested in http mode", () => {
+    transportKind = "http";
+    render(<WorkstationShell sessionId="sess-1" />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /navigate from graph/i }));
+
+    expect(selectFileSpy).toHaveBeenCalledWith("rollup-core/src/lib.rs");
+    expect(screen.getByRole("tab", { name: /^code$/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("code-editor-state")).toHaveTextContent("none@12");
   });
 });

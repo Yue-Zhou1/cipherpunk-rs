@@ -69,6 +69,9 @@ fn map_state_error(err: AnyhowError) -> SessionManagerError {
     if message.contains("unknown audit session") || message.contains("No session with id") {
         return SessionManagerError::NotFound { message };
     }
+    if message.contains("ProjectIR has not been built for this session") {
+        return SessionManagerError::NotFound { message };
+    }
     if message.contains("not found") || message.contains("path does not exist") {
         return SessionManagerError::NotFound { message };
     }
@@ -253,6 +256,14 @@ impl SessionManager {
             .map_err(map_state_error)
     }
 
+    pub async fn load_symbol_graph(&self, session_id: &str) -> SessionResult<ProjectGraphResponse> {
+        let mut state = self.inner.lock().await;
+        state
+            .load_symbol_graph(session_id)
+            .await
+            .map_err(map_state_error)
+    }
+
     pub async fn load_security_overview(
         &self,
         session_id: &str,
@@ -379,7 +390,12 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
-    use super::{ConfirmWorkspaceRequest, SessionManager, SourceInputIpc, SourceKind};
+    use anyhow::anyhow;
+
+    use super::{
+        ConfirmWorkspaceRequest, SessionManager, SessionManagerError, SourceInputIpc, SourceKind,
+        map_state_error,
+    };
 
     #[tokio::test(flavor = "current_thread")]
     async fn confirm_workspace_requires_resolve_source_first() {
@@ -472,5 +488,13 @@ mod tests {
             err.to_string().contains("resolve_source must be called"),
             "wizard state should be isolated per wizard_id"
         );
+    }
+
+    #[test]
+    fn project_ir_not_built_message_maps_to_not_found() {
+        let err = map_state_error(anyhow!(
+            "ProjectIR has not been built for this session. Run BuildProjectIr first."
+        ));
+        assert!(matches!(err, SessionManagerError::NotFound { .. }));
     }
 }

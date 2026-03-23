@@ -68,4 +68,21 @@ describe("CodeEditorPane", () => {
     expect(lineNumbers.map((entry) => entry.textContent)).toEqual(["1", "2", "3", "4"]);
     expect(screen.getByLabelText(/code content/i)).toHaveTextContent("println!(\"hello\");");
   });
+
+  it("highlights and exposes a targeted line in plain-text mode", () => {
+    render(
+      <CodeEditorPane
+        filePath="src/main.rs"
+        content={"line-1\nline-2\nline-3\nline-4\n"}
+        isLoading={false}
+        error={null}
+        preferPlainText
+        targetLine={3}
+      />
+    );
+
+    const targetLine = screen.getByTestId("code-line-3");
+    expect(targetLine).toHaveClass("target-line");
+    expect(targetLine.textContent).toContain("line-3");
+  });
 });
