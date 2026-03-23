@@ -144,6 +144,7 @@ fn executive_report_includes_coverage_section_when_analysis_is_partial() {
         engines_skipped: 0,
         coverage_complete: false,
         warnings: vec!["Engine 'crypto_zk' failed: timeout".to_string()],
+        failover_warnings: vec![],
     });
     let findings = vec![sample_finding()];
 

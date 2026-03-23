@@ -1,10 +1,10 @@
 #![allow(deprecated)]
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use llm::{
-    CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, llm_call_traced,
-    provider_from_env, provider_from_name,
+    CompletionOpts, LlmProvider, LlmRole, TemplateFallback, is_transient_error, llm_call,
+    llm_call_traced, provider_from_env, provider_from_name,
 };
 use mockito::Matcher;
 use std::process::Command;
@@ -396,6 +396,25 @@ fn provider_from_name_supports_template_aliases() {
         provider_from_name("template-fallback").name(),
         "template-fallback"
     );
+}
+
+#[test]
+fn transient_error_classification_matches_resilience_policy() {
+    assert!(is_transient_error(&anyhow!(
+        "OpenAI request failed (429): rate limited"
+    )));
+    assert!(is_transient_error(&anyhow!(
+        "Anthropic request failed (503): service unavailable"
+    )));
+    assert!(is_transient_error(&anyhow!(
+        "request timed out while waiting for response"
+    )));
+    assert!(!is_transient_error(&anyhow!(
+        "OpenAI request failed (401): unauthorized"
+    )));
+    assert!(!is_transient_error(&anyhow!(
+        "OpenAI request failed (400): invalid request"
+    )));
 }
 
 fn compile_snippet(source: &str) {

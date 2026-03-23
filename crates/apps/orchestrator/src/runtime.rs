@@ -112,5 +112,6 @@ fn role_label(role: &LlmRole) -> &'static str {
         LlmRole::SearchHints => "search",
         LlmRole::ProseRendering => "prose",
         LlmRole::LeanScaffold => "lean",
+        LlmRole::Advisory => "advisory",
     }
 }

@@ -43,6 +43,17 @@ pub enum AuditEvent {
         action: String,
         analyst_note: Option<String>,
     },
+    ProviderFailover {
+        from: String,
+        to: String,
+        role: String,
+        reason: String,
+    },
+    AdviserConsulted {
+        engine: String,
+        suggestion: String,
+        applied: bool,
+    },
 }
 
 impl AuditEvent {
@@ -54,6 +65,8 @@ impl AuditEvent {
             Self::LlmInteraction { .. } => "llm.interaction",
             Self::ToolActionCompleted { .. } => "tool.action.completed",
             Self::ReviewDecisionApplied { .. } => "review.decision",
+            Self::ProviderFailover { .. } => "provider.failover",
+            Self::AdviserConsulted { .. } => "adviser.consulted",
         }
     }
 
@@ -140,6 +153,23 @@ mod tests {
                     analyst_note: Some("validated against trace".to_string()),
                 },
                 "review.decision",
+            ),
+            (
+                AuditEvent::ProviderFailover {
+                    from: "openai".to_string(),
+                    to: "template-fallback".to_string(),
+                    role: "Scaffolding".to_string(),
+                    reason: "transient failure".to_string(),
+                },
+                "provider.failover",
+            ),
+            (
+                AuditEvent::AdviserConsulted {
+                    engine: "z3-engine".to_string(),
+                    suggestion: "RetryWithRelaxedBudget".to_string(),
+                    applied: true,
+                },
+                "adviser.consulted",
             ),
         ];
 

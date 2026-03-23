@@ -11,6 +11,7 @@ pub enum LlmRole {
     SearchHints,
     ProseRendering,
     LeanScaffold,
+    Advisory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

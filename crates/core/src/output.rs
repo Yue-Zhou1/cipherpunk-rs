@@ -46,6 +46,8 @@ pub struct EngineOutcome {
     pub status: EngineStatus,
     pub findings_count: usize,
     pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adviser_suggestion: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -63,6 +65,8 @@ pub struct CoverageReport {
     pub engines_skipped: usize,
     pub coverage_complete: bool,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub failover_warnings: Vec<String>,
 }
 
 impl CoverageReport {
@@ -97,6 +101,7 @@ impl CoverageReport {
             engines_skipped: skipped,
             coverage_complete: failed == 0 && skipped == 0,
             warnings,
+            failover_warnings: vec![],
         }
     }
 
@@ -153,6 +158,7 @@ mod tests {
                 status: EngineStatus::Completed,
                 findings_count: 1,
                 duration_ms: 10,
+                adviser_suggestion: None,
             },
             EngineOutcome {
                 engine: "engine-failed".to_string(),
@@ -161,6 +167,7 @@ mod tests {
                 },
                 findings_count: 0,
                 duration_ms: 20,
+                adviser_suggestion: None,
             },
             EngineOutcome {
                 engine: "engine-skipped".to_string(),
@@ -169,6 +176,7 @@ mod tests {
                 },
                 findings_count: 0,
                 duration_ms: 0,
+                adviser_suggestion: None,
             },
         ];
 
@@ -182,6 +190,7 @@ mod tests {
         assert_eq!(report.warnings.len(), 2);
         assert!(report.warnings.iter().any(|msg| msg.contains("failed")));
         assert!(report.warnings.iter().any(|msg| msg.contains("skipped")));
+        assert!(report.failover_warnings.is_empty());
     }
 
     #[test]
@@ -193,6 +202,7 @@ mod tests {
             engines_skipped: 0,
             coverage_complete: true,
             warnings: vec![],
+            failover_warnings: vec![],
         };
         assert_eq!(full.confidence_percent(), 100);
 
@@ -203,6 +213,7 @@ mod tests {
             engines_skipped: 1,
             coverage_complete: false,
             warnings: vec![],
+            failover_warnings: vec![],
         };
         assert_eq!(partial.confidence_percent(), 50);
 
@@ -213,6 +224,7 @@ mod tests {
             engines_skipped: 0,
             coverage_complete: false,
             warnings: vec![],
+            failover_warnings: vec![],
         };
         assert_eq!(none_requested.confidence_percent(), 0);
     }
@@ -235,8 +247,23 @@ mod tests {
             engines_skipped: 0,
             coverage_complete: false,
             warnings: vec![],
+            failover_warnings: vec![],
         };
         assert_eq!(low_confidence.confidence_percent(), 10);
         assert_eq!(findings.risk_score(), 85);
+    }
+
+    #[test]
+    fn failover_warnings_are_retained_separately() {
+        let mut report = CoverageReport::from_outcomes(&[]);
+        report.failover_warnings = vec![
+            "LLM provider failover occurred: Scaffolding switched from openai to template-fallback."
+                .to_string(),
+        ];
+        report.warnings.extend(report.failover_warnings.clone());
+
+        assert_eq!(report.failover_warnings.len(), 1);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("failover"));
     }
 }

@@ -23,6 +23,19 @@ fn default_role_config_map_matches_expected_defaults() {
 
     assert_eq!(config.lean_scaffold.temperature_millis, Some(200));
     assert_eq!(config.lean_scaffold.max_tokens, Some(1024));
+    assert_eq!(config.advisory.temperature_millis, Some(100));
+    assert_eq!(config.advisory.max_tokens, Some(512));
+    assert!(config.advisory.fallback_chain.is_empty());
+    assert_eq!(
+        config.scaffolding.fallback_chain,
+        vec!["template-fallback".to_string()]
+    );
+    assert!(config.search_hints.fallback_chain.is_empty());
+    assert!(config.prose_rendering.fallback_chain.is_empty());
+    assert_eq!(
+        config.lean_scaffold.fallback_chain,
+        vec!["template-fallback".to_string()]
+    );
 }
 
 #[test]
@@ -33,8 +46,13 @@ fn from_env_applies_role_overrides() {
         "LLM_ROLE_SCAFFOLDING_MODEL",
         "LLM_ROLE_SCAFFOLDING_TEMPERATURE",
         "LLM_ROLE_SCAFFOLDING_MAX_TOKENS",
+        "LLM_ROLE_SCAFFOLDING_FALLBACK_CHAIN",
         "LLM_ROLE_PROSE_RENDERING_MODEL",
         "LLM_ROLE_PROSE_RENDERING_TEMPERATURE",
+        "LLM_ROLE_ADVISORY_PROVIDER",
+        "LLM_ROLE_ADVISORY_MODEL",
+        "LLM_ROLE_ADVISORY_TEMPERATURE",
+        "LLM_ROLE_ADVISORY_MAX_TOKENS",
     ];
     let snapshot = snapshot_env(&vars);
 
@@ -44,8 +62,16 @@ fn from_env_applies_role_overrides() {
         std::env::set_var("LLM_ROLE_SCAFFOLDING_MODEL", "gpt-4o-mini");
         std::env::set_var("LLM_ROLE_SCAFFOLDING_TEMPERATURE", "333");
         std::env::set_var("LLM_ROLE_SCAFFOLDING_MAX_TOKENS", "4096");
+        std::env::set_var(
+            "LLM_ROLE_SCAFFOLDING_FALLBACK_CHAIN",
+            "ollama, template-fallback",
+        );
         std::env::set_var("LLM_ROLE_PROSE_RENDERING_MODEL", "claude-3-5-sonnet");
         std::env::set_var("LLM_ROLE_PROSE_RENDERING_TEMPERATURE", "250");
+        std::env::set_var("LLM_ROLE_ADVISORY_PROVIDER", "openai");
+        std::env::set_var("LLM_ROLE_ADVISORY_MODEL", "gpt-4.1-mini");
+        std::env::set_var("LLM_ROLE_ADVISORY_TEMPERATURE", "150");
+        std::env::set_var("LLM_ROLE_ADVISORY_MAX_TOKENS", "256");
     }
 
     let config = LlmRoleConfigMap::from_env();
@@ -54,10 +80,18 @@ fn from_env_applies_role_overrides() {
     assert_eq!(config.scaffolding.temperature_millis, Some(333));
     assert_eq!(config.scaffolding.max_tokens, Some(4096));
     assert_eq!(
+        config.scaffolding.fallback_chain,
+        vec!["ollama".to_string(), "template-fallback".to_string()]
+    );
+    assert_eq!(
         config.prose_rendering.model.as_deref(),
         Some("claude-3-5-sonnet")
     );
     assert_eq!(config.prose_rendering.temperature_millis, Some(250));
+    assert_eq!(config.advisory.provider.as_deref(), Some("openai"));
+    assert_eq!(config.advisory.model.as_deref(), Some("gpt-4.1-mini"));
+    assert_eq!(config.advisory.temperature_millis, Some(150));
+    assert_eq!(config.advisory.max_tokens, Some(256));
 
     restore_env(snapshot);
 }
@@ -96,6 +130,7 @@ fn merge_yaml_overrides_selected_values_only() {
             model: Some("claude-3-5-sonnet".to_string()),
             temperature_millis: Some(275),
             max_tokens: None,
+            fallback_chain: vec!["ollama".to_string()],
         },
     );
     yaml_roles.insert(
@@ -105,6 +140,7 @@ fn merge_yaml_overrides_selected_values_only() {
             model: None,
             temperature_millis: None,
             max_tokens: Some(2048),
+            fallback_chain: vec![],
         },
     );
 
@@ -120,6 +156,10 @@ fn merge_yaml_overrides_selected_values_only() {
     );
     assert_eq!(config.prose_rendering.temperature_millis, Some(275));
     assert_eq!(config.prose_rendering.max_tokens, Some(512));
+    assert_eq!(
+        config.prose_rendering.fallback_chain,
+        vec!["ollama".to_string()]
+    );
     assert_eq!(config.search_hints.max_tokens, Some(2048));
 }
 
@@ -147,12 +187,17 @@ fn yaml_merge_overrides_env_values() {
             model: Some("gpt-4.1".to_string()),
             temperature_millis: None,
             max_tokens: Some(2048),
+            fallback_chain: vec!["template-fallback".to_string()],
         },
     );
     config.merge_yaml(&yaml_roles);
 
     assert_eq!(config.scaffolding.model.as_deref(), Some("gpt-4.1"));
     assert_eq!(config.scaffolding.max_tokens, Some(2048));
+    assert_eq!(
+        config.scaffolding.fallback_chain,
+        vec!["template-fallback".to_string()]
+    );
 
     restore_env(snapshot);
 }

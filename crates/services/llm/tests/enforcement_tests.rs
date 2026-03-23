@@ -160,6 +160,10 @@ fn retry_policy_matches_role_defaults() {
     let prose = retry_policy_for_role(&LlmRole::ProseRendering);
     assert_eq!(prose.max_attempts, 1);
     assert_eq!(prose.backoff_ms, 0);
+
+    let advisory = retry_policy_for_role(&LlmRole::Advisory);
+    assert_eq!(advisory.max_attempts, 1);
+    assert_eq!(advisory.backoff_ms, 0);
 }
 
 #[tokio::test]

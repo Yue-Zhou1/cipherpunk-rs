@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -18,7 +18,10 @@ use intake::OptionalInputsRaw;
 use intake::diff::{AnalysisCache, DiffAnalysis, DiffModeAnalyzer};
 use intake::source::{GitAuth, SourceInput};
 use intake::{IntakeOrchestrator, workspace::WorkspaceAnalyzer};
-use llm::{LlmProvider, RoleConfig, provider_from_name, role_aware_provider_from_env};
+use llm::{
+    AdviserService, LlmProvider, ProviderFailoverRecord, RoleConfig, provider_from_name,
+    role_aware_provider_from_env,
+};
 use llm_eval::{EvalResult, EvalRunner, MarkdownReporter, load_fixtures_from_dir};
 use orchestrator::AuditOrchestrator;
 
@@ -206,16 +209,30 @@ pub async fn run_analyze(args: AnalyzeArgs) -> Result<AuditOutputs> {
                         model: role_override.model.clone(),
                         temperature_millis: role_override.temperature,
                         max_tokens: role_override.max_tokens,
+                        fallback_chain: vec![],
                     },
                 )
             })
             .collect::<HashMap<_, _>>();
         role_aware_provider.apply_yaml_overrides(&yaml_roles);
     }
+    let failover_events = Arc::new(Mutex::new(Vec::<ProviderFailoverRecord>::new()));
+    let failover_events_hook = Arc::clone(&failover_events);
+    let role_aware_provider =
+        role_aware_provider.with_failover_hook(Arc::new(move |record: ProviderFailoverRecord| {
+            failover_events_hook
+                .lock()
+                .expect("failover events lock")
+                .push(record);
+        }));
+
     let llm: Arc<dyn LlmProvider> = Arc::new(role_aware_provider);
+    let adviser = AdviserService::new(Arc::clone(&llm));
     let orchestrator = AuditOrchestrator::new(output_dir, evidence_pack_zip)
         .with_engines(engines)
-        .with_llm(llm);
+        .with_llm(llm)
+        .with_adviser(adviser)
+        .with_failover_events(failover_events);
 
     orchestrator.run(&config).await
 }
@@ -270,9 +287,7 @@ pub async fn run_eval(args: EvalArgs) -> Result<()> {
         .unwrap_or(0);
     if failures > 0 || regressions > 0 {
         return Err(anyhow!(
-            "eval failed: {} failed fixture(s), {} regression(s)",
-            failures,
-            regressions
+            "eval failed: {failures} failed fixture(s), {regressions} regression(s)"
         ));
     }
 

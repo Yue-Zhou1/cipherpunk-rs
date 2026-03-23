@@ -173,5 +173,9 @@ pub fn retry_policy_for_role(role: &LlmRole) -> RetryPolicy {
             max_attempts: 2,
             backoff_ms: 1_000,
         },
+        LlmRole::Advisory => RetryPolicy {
+            max_attempts: 1,
+            backoff_ms: 0,
+        },
     }
 }

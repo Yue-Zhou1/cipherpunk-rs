@@ -258,6 +258,40 @@ pub fn provider_from_name(provider_name: &str) -> Box<dyn LlmProvider> {
     }
 }
 
+/// Classify an LLM call error as transient (retryable) or permanent.
+pub fn is_transient_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+
+    // HTTP status classes commonly associated with provider-side instability.
+    if msg.contains("429") || msg.contains("rate limit") {
+        return true;
+    }
+    if msg.contains("500") || msg.contains("internal server error") {
+        return true;
+    }
+    if msg.contains("502") || msg.contains("bad gateway") {
+        return true;
+    }
+    if msg.contains("503") || msg.contains("service unavailable") {
+        return true;
+    }
+    if msg.contains("504") || msg.contains("gateway timeout") {
+        return true;
+    }
+
+    // Network/transient transport failures.
+    if msg.contains("timed out")
+        || msg.contains("timeout")
+        || msg.contains("connection refused")
+        || msg.contains("connection reset")
+        || msg.contains("dns")
+    {
+        return true;
+    }
+
+    false
+}
+
 pub(crate) fn openai_provider() -> Option<OpenAiProvider> {
     let api_key = std::env::var("LLM_API_KEY").ok()?;
     if api_key.trim().is_empty() {

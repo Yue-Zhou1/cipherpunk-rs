@@ -2283,6 +2283,7 @@ dependencies = [
  "session-store",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

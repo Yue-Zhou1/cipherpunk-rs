@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use audit_agent_core::audit_config::{AuditConfig, ParsedPreviousAudit};
@@ -18,9 +18,13 @@ use findings::pipeline::{
 use intake::diff::AnalysisCache;
 use intake::summarize_optional_inputs;
 use intake::workspace::WorkspaceAnalyzer;
-use llm::LlmProvider;
+use llm::{
+    AdviserAction, AdviserBudgetSnapshot, AdviserContext, AdviserService, LlmProvider,
+    ProviderFailoverRecord,
+};
 use report::generator::{ReportGenerator, ReportGeneratorOptions};
 use session_store::{SessionEvent, SessionStore};
+use tokio::sync::Mutex as AsyncMutex;
 
 pub mod events;
 pub mod jobs;
@@ -32,6 +36,9 @@ pub use events::{AuditEvent, AuditEventSink, JobLifecycleEvent};
 pub use jobs::{AuditJob, AuditJobKind, AuditJobStatus};
 pub use runtime::OrchestratorRuntime;
 pub use tool_actions::plan_tool_action;
+
+const MAX_ADVISER_CALLS_PER_AUDIT: u8 = 5;
+const MAX_RETRIES_PER_ENGINE: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditDag {
@@ -67,6 +74,9 @@ pub struct AuditOrchestrator {
     pub evidence_pack_zip: PathBuf,
     pub llm: Option<Arc<dyn LlmProvider>>,
     pub event_sink: Option<Arc<dyn AuditEventSink>>,
+    pub adviser: Option<AdviserService>,
+    pub failover_events: Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+    run_lock: Arc<AsyncMutex<()>>,
 }
 
 impl AuditOrchestrator {
@@ -81,6 +91,9 @@ impl AuditOrchestrator {
             evidence_pack_zip,
             llm: None,
             event_sink: None,
+            adviser: None,
+            failover_events: Arc::new(Mutex::new(Vec::new())),
+            run_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -130,6 +143,19 @@ impl AuditOrchestrator {
 
     pub fn with_event_sink(mut self, event_sink: Arc<dyn AuditEventSink>) -> Self {
         self.event_sink = Some(event_sink);
+        self
+    }
+
+    pub fn with_adviser(mut self, adviser: AdviserService) -> Self {
+        self.adviser = Some(adviser);
+        self
+    }
+
+    pub fn with_failover_events(
+        mut self,
+        failover_events: Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+    ) -> Self {
+        self.failover_events = failover_events;
         self
     }
 
@@ -253,6 +279,11 @@ impl AuditOrchestrator {
     }
 
     pub async fn run(&self, config: &AuditConfig) -> Result<AuditOutputs> {
+        let _run_guard = self.run_lock.lock().await;
+        self.failover_events
+            .lock()
+            .expect("failover events lock")
+            .clear();
         let dag = self.build_dag(config);
         let (findings, outcomes) = self.execute_dag(&dag, config).await?;
         self.produce_outputs(&findings, &outcomes, config).await
@@ -284,6 +315,7 @@ impl AuditOrchestrator {
 
         let mut findings = Vec::<Finding>::new();
         let mut outcomes = Vec::<EngineOutcome>::new();
+        let mut adviser_calls_remaining = MAX_ADVISER_CALLS_PER_AUDIT;
         for engine in &self.engines {
             let engine_name = engine.name().to_string();
             let started_at = std::time::Instant::now();
@@ -296,49 +328,155 @@ impl AuditOrchestrator {
                     },
                     findings_count: 0,
                     duration_ms: started_at.elapsed().as_millis() as u64,
+                    adviser_suggestion: None,
                 });
                 continue;
             }
 
-            match engine.analyze(&ctx).await {
-                Ok(engine_findings) => {
-                    let count = engine_findings.len();
-                    let duration_ms = started_at.elapsed().as_millis() as u64;
-                    findings.extend(engine_findings);
+            let mut attempt: u8 = 1;
+            let mut attempt_config = config.clone();
+            loop {
+                let attempt_ctx = AuditContext {
+                    config: Arc::new(attempt_config.clone()),
+                    workspace: Arc::clone(&ctx.workspace),
+                    sandbox: Arc::clone(&ctx.sandbox),
+                    evidence_store: Arc::clone(&ctx.evidence_store),
+                    llm: ctx.llm.clone(),
+                };
 
-                    if let Some(sink) = &self.event_sink {
-                        sink.emit(AuditEvent::EngineCompleted {
-                            engine: engine_name.clone(),
+                match engine.analyze(&attempt_ctx).await {
+                    Ok(engine_findings) => {
+                        let count = engine_findings.len();
+                        let duration_ms = started_at.elapsed().as_millis() as u64;
+                        findings.extend(engine_findings);
+
+                        if let Some(sink) = &self.event_sink {
+                            sink.emit(AuditEvent::EngineCompleted {
+                                engine: engine_name.clone(),
+                                findings_count: count,
+                                duration_ms,
+                            });
+                        }
+
+                        outcomes.push(EngineOutcome {
+                            engine: engine_name,
+                            status: EngineStatus::Completed,
                             findings_count: count,
                             duration_ms,
+                            adviser_suggestion: None,
                         });
+                        break;
                     }
+                    Err(err) => {
+                        let duration_ms = started_at.elapsed().as_millis() as u64;
+                        let mut suggestion = None::<llm::AdviserSuggestion>;
+                        let mut suggestion_applied = false;
 
-                    outcomes.push(EngineOutcome {
-                        engine: engine_name,
-                        status: EngineStatus::Completed,
-                        findings_count: count,
-                        duration_ms,
-                    });
-                }
-                Err(err) => {
-                    let duration_ms = started_at.elapsed().as_millis() as u64;
+                        if adviser_calls_remaining > 0 {
+                            if let Some(adviser) = &self.adviser {
+                                adviser_calls_remaining = adviser_calls_remaining.saturating_sub(1);
+                                let adviser_context = AdviserContext {
+                                    engine_name: adviser_engine_label(engine_name.as_str())
+                                        .to_string(),
+                                    error_message: err.to_string(),
+                                    attempt_number: attempt,
+                                    elapsed_ms: duration_ms,
+                                    findings_so_far: findings.len(),
+                                    budget: AdviserBudgetSnapshot::from_engine(
+                                        engine_name.as_str(),
+                                        &attempt_config.budget,
+                                    ),
+                                };
+                                match adviser.suggest_on_failure(&adviser_context).await {
+                                    Ok(value) => {
+                                        suggestion = Some(value);
+                                    }
+                                    Err(adviser_err) => {
+                                        tracing::warn!(
+                                            engine = %engine_name,
+                                            error = %adviser_err,
+                                            "adviser call failed — continuing without suggestion"
+                                        );
+                                    }
+                                }
+                            }
+                        }
 
-                    if let Some(sink) = &self.event_sink {
-                        sink.emit(AuditEvent::EngineFailed {
-                            engine: engine_name.clone(),
-                            reason: err.to_string(),
+                        if attempt <= MAX_RETRIES_PER_ENGINE && is_retryable_engine_failure(&err) {
+                            if let Some(llm::AdviserSuggestion {
+                                action:
+                                    AdviserAction::RetryWithRelaxedBudget {
+                                        timeout_secs,
+                                        memory_mb,
+                                    },
+                                ..
+                            }) = suggestion.as_ref()
+                            {
+                                if engine_supports_budget_adjustment(engine_name.as_str()) {
+                                    match apply_retry_budget_adjustment(
+                                        &mut attempt_config,
+                                        engine_name.as_str(),
+                                        *timeout_secs,
+                                        *memory_mb,
+                                    ) {
+                                        Ok(true) => {
+                                            suggestion_applied = true;
+                                            attempt = attempt.saturating_add(1);
+                                        }
+                                        Ok(false) => {
+                                            tracing::info!(
+                                                engine = %engine_name,
+                                                timeout_secs,
+                                                memory_mb,
+                                                "adviser retry suggestion did not change effective engine budget"
+                                            );
+                                        }
+                                        Err(adjustment_err) => {
+                                            tracing::warn!(
+                                                engine = %engine_name,
+                                                error = %adjustment_err,
+                                                "failed to apply adviser retry suggestion"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(sink) = &self.event_sink {
+                            if let Some(ref value) = suggestion {
+                                sink.emit(AuditEvent::AdviserConsulted {
+                                    engine: engine_name.clone(),
+                                    suggestion: format!("{:?}", value.action),
+                                    applied: suggestion_applied,
+                                });
+                            }
+                        }
+
+                        if suggestion_applied {
+                            continue;
+                        }
+
+                        if let Some(sink) = &self.event_sink {
+                            sink.emit(AuditEvent::EngineFailed {
+                                engine: engine_name.clone(),
+                                reason: err.to_string(),
+                            });
+                        }
+
+                        outcomes.push(EngineOutcome {
+                            engine: engine_name,
+                            status: EngineStatus::Failed {
+                                reason: err.to_string(),
+                            },
+                            findings_count: 0,
+                            duration_ms,
+                            adviser_suggestion: suggestion
+                                .as_ref()
+                                .map(|value| format!("{:?}: {}", value.action, value.rationale)),
                         });
+                        break;
                     }
-
-                    outcomes.push(EngineOutcome {
-                        engine: engine_name,
-                        status: EngineStatus::Failed {
-                            reason: err.to_string(),
-                        },
-                        findings_count: 0,
-                        duration_ms,
-                    });
                 }
             }
         }
@@ -358,7 +496,23 @@ impl AuditOrchestrator {
         );
 
         let finding_counts = FindingCounts::from(&deduplicated);
-        let coverage = CoverageReport::from_outcomes(outcomes);
+        let mut coverage = CoverageReport::from_outcomes(outcomes);
+        let failover_warnings = failover_warning_messages(&self.failover_events);
+        if let Some(sink) = &self.event_sink {
+            let events = self.failover_events.lock().expect("failover events lock");
+            for event in events.iter() {
+                sink.emit(AuditEvent::ProviderFailover {
+                    from: event.from.clone(),
+                    to: event.to.clone(),
+                    role: event.role.clone(),
+                    reason: event.reason.clone(),
+                });
+            }
+        }
+        if !failover_warnings.is_empty() {
+            coverage.failover_warnings = failover_warnings.clone();
+            coverage.warnings.extend(failover_warnings);
+        }
         let engine_outcomes = outcomes.to_vec();
         let engines_run = outcomes
             .iter()
@@ -489,4 +643,135 @@ fn optional_preview(value: &str) -> Option<String> {
     }
 
     Some(format!("{preview}..."))
+}
+
+fn is_retryable_engine_failure(err: &anyhow::Error) -> bool {
+    let message = err.to_string().to_ascii_lowercase();
+    if message.contains("unsupported")
+        || message.contains("not supported")
+        || message.contains("invalid input")
+        || message.contains("semantic")
+        || message.contains("unimplemented")
+    {
+        return false;
+    }
+
+    message.contains("timeout")
+        || message.contains("timed out")
+        || message.contains("oom")
+        || message.contains("out of memory")
+        || message.contains("resource exhausted")
+        || message.contains("sandbox")
+        || message.contains("temporary")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BudgetAdjustmentTarget {
+    Kani,
+    Z3Like,
+    Fuzz,
+    Madsim,
+    Semantic,
+}
+
+fn budget_adjustment_target(engine_name: &str) -> Option<BudgetAdjustmentTarget> {
+    let name = engine_name.to_ascii_lowercase();
+    if name.contains("kani") {
+        return Some(BudgetAdjustmentTarget::Kani);
+    }
+    if name.contains("z3") || name.contains("smt") {
+        return Some(BudgetAdjustmentTarget::Z3Like);
+    }
+    if name.contains("fuzz") {
+        return Some(BudgetAdjustmentTarget::Fuzz);
+    }
+    if name.contains("madsim") {
+        return Some(BudgetAdjustmentTarget::Madsim);
+    }
+    if name.contains("semantic") {
+        return Some(BudgetAdjustmentTarget::Semantic);
+    }
+    None
+}
+
+fn engine_supports_budget_adjustment(engine_name: &str) -> bool {
+    budget_adjustment_target(engine_name).is_some()
+}
+
+fn adviser_engine_label(engine_name: &str) -> &'static str {
+    match budget_adjustment_target(engine_name) {
+        Some(BudgetAdjustmentTarget::Kani) => "kani",
+        Some(BudgetAdjustmentTarget::Z3Like) => "smt",
+        Some(BudgetAdjustmentTarget::Fuzz) => "fuzz",
+        Some(BudgetAdjustmentTarget::Madsim) => "madsim",
+        Some(BudgetAdjustmentTarget::Semantic) => "semantic-index",
+        None => "generic-engine",
+    }
+}
+
+fn apply_retry_budget_adjustment(
+    config: &mut AuditConfig,
+    engine_name: &str,
+    timeout_secs: u64,
+    memory_mb: u64,
+) -> Result<bool> {
+    let Some(target) = budget_adjustment_target(engine_name) else {
+        anyhow::bail!("engine '{engine_name}' does not support budget adjustment");
+    };
+
+    let timeout_applied = match target {
+        BudgetAdjustmentTarget::Kani => {
+            let before = config.budget.kani_timeout_secs;
+            config.budget.kani_timeout_secs = before.max(timeout_secs);
+            config.budget.kani_timeout_secs > before
+        }
+        BudgetAdjustmentTarget::Z3Like => {
+            let before = config.budget.z3_timeout_secs;
+            config.budget.z3_timeout_secs = before.max(timeout_secs);
+            config.budget.z3_timeout_secs > before
+        }
+        BudgetAdjustmentTarget::Fuzz => {
+            let before = config.budget.fuzz_duration_secs;
+            config.budget.fuzz_duration_secs = before.max(timeout_secs);
+            config.budget.fuzz_duration_secs > before
+        }
+        BudgetAdjustmentTarget::Madsim => {
+            let before = config.budget.madsim_ticks;
+            config.budget.madsim_ticks = before.max(timeout_secs);
+            config.budget.madsim_ticks > before
+        }
+        BudgetAdjustmentTarget::Semantic => {
+            let before = config.budget.semantic_index_timeout_secs;
+            config.budget.semantic_index_timeout_secs = before.max(timeout_secs);
+            config.budget.semantic_index_timeout_secs > before
+        }
+    };
+
+    if memory_mb > 0 {
+        tracing::debug!(
+            engine = %engine_name,
+            memory_mb,
+            "memory budget suggestions are currently advisory-only: no per-engine memory knob in AuditConfig"
+        );
+    }
+
+    Ok(timeout_applied)
+}
+
+fn failover_warning_messages(
+    failover_events: &Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+) -> Vec<String> {
+    let events = failover_events.lock().expect("failover events lock");
+    let mut warnings = events
+        .iter()
+        .map(|event| {
+            format!(
+                "LLM provider failover occurred: {} switched from {} to {}. Findings produced during failover may differ from baseline.",
+                event.role, event.from, event.to
+            )
+        })
+        .collect::<Vec<_>>();
+    warnings.sort();
+    warnings.dedup();
+    warnings
 }

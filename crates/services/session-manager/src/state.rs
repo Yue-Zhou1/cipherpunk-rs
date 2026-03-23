@@ -1888,6 +1888,25 @@ fn console_entry_from_event(event: &session_store::SessionEvent) -> SessionConso
             }
         }
     }
+    if event.event_type == "provider.failover" {
+        level = SessionConsoleLevel::Warning;
+        if let Ok(orchestrator::AuditEvent::ProviderFailover { from, to, role, .. }) =
+            serde_json::from_str::<orchestrator::AuditEvent>(&event.payload)
+        {
+            message = format!("{role} failover: {from} -> {to}");
+        }
+    }
+    if event.event_type == "adviser.consulted" {
+        if let Ok(orchestrator::AuditEvent::AdviserConsulted {
+            engine,
+            suggestion,
+            applied,
+        }) = serde_json::from_str::<orchestrator::AuditEvent>(&event.payload)
+        {
+            let status = if applied { "applied" } else { "observed" };
+            message = format!("adviser {status} for {engine}: {suggestion}");
+        }
+    }
 
     SessionConsoleEntry {
         timestamp: event.created_at.format("%H:%M:%S").to_string(),
@@ -2949,6 +2968,7 @@ mod tests {
             engines_skipped: 0,
             coverage_complete: false,
             warnings: vec!["Engine 'crypto_zk' failed: timeout".to_string()],
+            failover_warnings: vec![],
         };
 
         let merged = prepend_coverage_warnings(existing.clone(), Some(&coverage));
@@ -3084,6 +3104,26 @@ mod tests {
 
         assert_eq!(nodes[0].finding_count, None);
         assert_eq!(nodes[0].max_severity, None);
+    }
+
+    #[test]
+    fn console_entry_marks_provider_failover_as_warning() {
+        let event = session_store::SessionEvent {
+            event_id: "evt-failover".to_string(),
+            event_type: "provider.failover".to_string(),
+            payload: serde_json::to_string(&orchestrator::AuditEvent::ProviderFailover {
+                from: "openai".to_string(),
+                to: "template-fallback".to_string(),
+                role: "Scaffolding".to_string(),
+                reason: "transient error".to_string(),
+            })
+            .expect("serialize failover event"),
+            created_at: Utc::now(),
+        };
+
+        let entry = console_entry_from_event(&event);
+        assert_eq!(entry.level, SessionConsoleLevel::Warning);
+        assert!(entry.message.contains("openai -> template-fallback"));
     }
 
     #[test]
