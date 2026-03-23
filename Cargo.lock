@@ -193,7 +193,9 @@ dependencies = [
  "engine-distributed",
  "intake",
  "llm",
+ "llm-eval",
  "orchestrator",
+ "serde_json",
  "tempfile",
  "tokio",
 ]
@@ -1811,6 +1813,21 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "llm-eval"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "llm",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

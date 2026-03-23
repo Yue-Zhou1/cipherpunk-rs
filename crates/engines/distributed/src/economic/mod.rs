@@ -10,7 +10,7 @@ use audit_agent_core::finding::{
 };
 use audit_agent_core::workspace::CargoWorkspace;
 use engine_crypto::semantic::ra_client::SemanticIndex;
-use llm::{CompletionOpts, LlmProvider, LlmRole, llm_call_traced};
+use llm::{LlmProvider, LlmRole, role_aware_llm_call};
 use serde::Deserialize;
 use tree_sitter::{Node, Parser};
 use walkdir::WalkDir;
@@ -190,17 +190,7 @@ impl EconomicAttackChecker {
              Output only improved text.",
             vector.id, safe_name, safe_summary
         );
-        match llm_call_traced(
-            llm.as_ref(),
-            LlmRole::ProseRendering,
-            &prompt,
-            &CompletionOpts {
-                temperature_millis: 200,
-                max_tokens: 256,
-            },
-        )
-        .await
-        {
+        match role_aware_llm_call(llm.as_ref(), LlmRole::ProseRendering, &prompt).await {
             Ok((response, provenance)) => {
                 tracing::debug!(
                     provider = %provenance.provider,

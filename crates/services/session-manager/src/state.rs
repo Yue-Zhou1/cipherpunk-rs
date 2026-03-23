@@ -12,7 +12,9 @@ use audit_agent_core::session::{AuditRecord, AuditRecordKind, AuditSession, Sess
 use chrono::Utc;
 use engine_crypto::intake_bridge::{CryptoEngineContext, EnvironmentManifest};
 use engine_crypto::rules::RuleEvaluator;
-use intake::config::{ConfigParser, RawEngineConfig, RawScope, RawSource, ValidatedConfig};
+use intake::config::{
+    ConfigParser, RawEngineConfig, RawLlmConfig, RawScope, RawSource, ValidatedConfig,
+};
 use intake::confirmation::{ConfirmationSummary, UserDecisions};
 use intake::project_snapshot_from_config;
 use intake::source::SourceInput;
@@ -1733,7 +1735,10 @@ fn symbol_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphRespon
 }
 
 fn normalized_graph_path(path: &str) -> String {
-    path.trim().replace('\\', "/").trim_start_matches("./").to_string()
+    path.trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
 }
 
 fn is_absolute_like(path: &str) -> bool {
@@ -1746,7 +1751,9 @@ fn is_absolute_like(path: &str) -> bool {
 }
 
 fn split_path_segments(path: &str) -> Vec<&str> {
-    path.split('/').filter(|segment| !segment.is_empty()).collect()
+    path.split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
 }
 
 fn has_segment_suffix(path: &str, suffix: &str) -> bool {
@@ -2324,6 +2331,7 @@ fn test_audit_config(work_dir: &Path) -> AuditConfig {
             api_key_present: false,
             provider: None,
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     }
@@ -2386,6 +2394,7 @@ fn default_validated_config(source: &ResolvedSource) -> ValidatedConfig {
             max_llm_retries: 3,
             semantic_index_timeout_secs: 120,
         },
+        llm: RawLlmConfig::default(),
         output_dir: PathBuf::from("audit-output"),
     }
 }
@@ -2611,13 +2620,15 @@ mod tests {
         );
         finding.kind = AuditRecordKind::Finding;
         finding.severity = Some(Severity::Critical);
-        finding.locations.push(audit_agent_core::finding::CodeLocation {
-            crate_name: "core".to_string(),
-            module: "core::lib".to_string(),
-            file: PathBuf::from("/tmp/repo/src/lib.rs"),
-            line_range: (10, 12),
-            snippet: None,
-        });
+        finding
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "core".to_string(),
+                module: "core::lib".to_string(),
+                file: PathBuf::from("/tmp/repo/src/lib.rs"),
+                line_range: (10, 12),
+                snippet: None,
+            });
 
         let mut candidate = AuditRecord::candidate(
             "candidate-1",
@@ -2625,13 +2636,15 @@ mod tests {
             VerificationStatus::unverified("pending"),
         );
         candidate.severity = Some(Severity::Low);
-        candidate.locations.push(audit_agent_core::finding::CodeLocation {
-            crate_name: "core".to_string(),
-            module: "core::mod".to_string(),
-            file: PathBuf::from("src/lib.rs"),
-            line_range: (20, 22),
-            snippet: None,
-        });
+        candidate
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "core".to_string(),
+                module: "core::mod".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                line_range: (20, 22),
+                snippet: None,
+            });
 
         let mut unmatched = AuditRecord::candidate(
             "candidate-2",
@@ -2678,13 +2691,15 @@ mod tests {
         );
         finding.kind = AuditRecordKind::Finding;
         finding.severity = Some(Severity::High);
-        finding.locations.push(audit_agent_core::finding::CodeLocation {
-            crate_name: "other-crate".to_string(),
-            module: "other_crate::lib".to_string(),
-            file: PathBuf::from("/tmp/repo/other-crate/src/lib.rs"),
-            line_range: (4, 4),
-            snippet: None,
-        });
+        finding
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "other-crate".to_string(),
+                module: "other_crate::lib".to_string(),
+                file: PathBuf::from("/tmp/repo/other-crate/src/lib.rs"),
+                line_range: (4, 4),
+                snippet: None,
+            });
 
         annotate_graph_with_findings(&mut nodes, &[finding], Some(Path::new("/tmp/repo")));
 

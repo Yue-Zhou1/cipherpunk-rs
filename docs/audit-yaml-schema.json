@@ -71,6 +71,59 @@
       },
       "type": "object"
     },
+    "AuditYamlLlm": {
+      "properties": {
+        "no_llm_prose": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "roles": {
+          "additionalProperties": {
+            "$ref": "#/definitions/AuditYamlRoleConfig"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AuditYamlRoleConfig": {
+      "properties": {
+        "max_tokens": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "temperature": {
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "AuditYamlScope": {
       "properties": {
         "exclude_crates": {
@@ -145,6 +198,16 @@
       "anyOf": [
         {
           "$ref": "#/definitions/AuditYamlEngines"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "llm": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/AuditYamlLlm"
         },
         {
           "type": "null"

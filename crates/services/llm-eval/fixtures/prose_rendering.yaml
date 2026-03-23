@@ -1,0 +1,45 @@
+- id: prose-improve-finding
+  role: ProseRendering
+  prompt: |
+    Improve the following finding description for clarity and technical precision.
+    Keep it under 400 characters.
+    Original: "The nonce is reused across multiple signatures which allows
+    an attacker to recover the private key via linear algebra on the signature equations."
+  template_fallback: skip
+  assertions:
+    - type: ContainsKeyword
+      value: nonce
+    - type: ContainsKeyword
+      value: private key
+    - type: MaxChars
+      value: 600
+
+- id: prose-executive-summary
+  role: ProseRendering
+  prompt: |
+    Write a one-paragraph executive summary for an audit that found:
+    2 Critical (nonce reuse, missing domain separation),
+    1 High (predictable RNG seed),
+    3 Medium findings.
+    Target audience: non-technical stakeholders.
+  template_fallback: skip
+  assertions:
+    - type: ContainsKeyword
+      value: critical
+    - type: MinChars
+      value: 100
+    - type: MaxChars
+      value: 1500
+
+- id: prose-recommendation
+  role: ProseRendering
+  prompt: |
+    Write a remediation recommendation for: BLS signature aggregation
+    does not validate that all signatures are on the same message.
+    Keep it actionable and under 200 words.
+  template_fallback: skip
+  assertions:
+    - type: ContainsKeyword
+      value: message
+    - type: MinChars
+      value: 50

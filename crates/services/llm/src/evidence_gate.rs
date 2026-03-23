@@ -8,7 +8,8 @@ use regex::Regex;
 use sandbox::SandboxExecutor;
 use serde::{Deserialize, Serialize};
 
-use crate::provider::{CompletionOpts, LlmProvenance, LlmProvider, LlmRole, llm_call_traced};
+use crate::provider::{LlmProvenance, LlmProvider, LlmRole};
+use crate::role_config::role_aware_llm_call;
 
 static ASSERTION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:kani\s*::\s*assert!?|assert!)\s*\(").expect("assertion regex compiles")
@@ -178,36 +179,30 @@ impl EvidenceGate {
         let mut last_provenance = None;
         for attempt in 1..=max_retries.max(1) {
             let prompt = Self::fix_loop_prompt(&required_assertion, compile_error);
-            let (candidate, mut provenance) = match llm_call_traced(
-                llm,
-                LlmRole::Scaffolding,
-                &prompt,
-                &CompletionOpts::default(),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(error) => {
-                    let provenance = LlmProvenance {
-                        provider: llm.name().to_string(),
-                        model: llm.model().map(|value| value.to_string()),
-                        role: "Scaffolding".to_string(),
-                        duration_ms: 0,
-                        prompt_chars: prompt.len(),
-                        response_chars: 0,
-                        attempt,
-                    };
-                    return GateResult {
-                        level_reached: 0,
-                        passed: false,
-                        counterexample: None,
-                        failure_reason: Some(format!("llm fix call failed: {error}")),
-                        attempts: attempt,
-                        llm_fixed_syntax: false,
-                        provenance: Some(provenance),
-                    };
-                }
-            };
+            let (candidate, mut provenance) =
+                match role_aware_llm_call(llm, LlmRole::Scaffolding, &prompt).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let provenance = LlmProvenance {
+                            provider: llm.name().to_string(),
+                            model: llm.model().map(|value| value.to_string()),
+                            role: "Scaffolding".to_string(),
+                            duration_ms: 0,
+                            prompt_chars: prompt.len(),
+                            response_chars: 0,
+                            attempt,
+                        };
+                        return GateResult {
+                            level_reached: 0,
+                            passed: false,
+                            counterexample: None,
+                            failure_reason: Some(format!("llm fix call failed: {error}")),
+                            attempts: attempt,
+                            llm_fixed_syntax: false,
+                            provenance: Some(provenance),
+                        };
+                    }
+                };
             provenance.attempt = attempt;
             last_provenance = Some(provenance.clone());
 

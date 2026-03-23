@@ -17,7 +17,9 @@ engine-crypto = { path = "../../engines/crypto" }
 engine-distributed = { path = "../../engines/distributed" }
 intake = { path = "../../services/intake" }
 llm = { path = "../../services/llm" }
+llm-eval = { path = "../../services/llm-eval" }
 orchestrator = { path = "../orchestrator" }
+serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]

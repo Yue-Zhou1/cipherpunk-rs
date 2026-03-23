@@ -1,0 +1,55 @@
+- id: search-hints-checklist-plan
+  role: SearchHints
+  prompt: |
+    Return only valid JSON for contract `ChecklistPlan`.
+    Do not include markdown, prose, or code fences.
+    Task:
+    Select applicable audit domains for this workspace:
+    Crates: threshold-bls, pairing-crypto, bls-signatures
+    Frameworks: halo2
+    Dependencies: ark-bls12-381, ark-ec
+  template_fallback: skip
+  assertions:
+    - type: JsonValid
+    - type: ParsesAsContract
+      contract: ChecklistPlan
+    - type: FieldNotEmpty
+      path: /domains
+
+- id: search-hints-architecture-overview
+  role: SearchHints
+  prompt: |
+    Return only valid JSON for contract `ArchitectureOverview`.
+    Do not include markdown, prose, or code fences.
+    Task:
+    Generate architecture overview fields for:
+    A BLS threshold signature library with pairing-based cryptography.
+    Key operations: keygen, sign, aggregate, verify.
+  template_fallback: skip
+  assertions:
+    - type: JsonValid
+    - type: ParsesAsContract
+      contract: ArchitectureOverview
+    - type: FieldNotEmpty
+      path: /assets
+    - type: FieldNotEmpty
+      path: /hotspots
+
+- id: search-hints-candidate-draft
+  role: SearchHints
+  prompt: |
+    Return only valid JSON for contract `CandidateDraft`.
+    Do not include markdown, prose, or code fences.
+    Task:
+    Generate a concise candidate for hotspot:
+    fn aggregate_signatures(sigs: &[Signature]) -> Result<Signature>
+    No length check on input array. Potential DoS with empty input.
+  template_fallback: skip
+  assertions:
+    - type: JsonValid
+    - type: ParsesAsContract
+      contract: CandidateDraft
+    - type: FieldNotEmpty
+      path: /title
+    - type: FieldNotEmpty
+      path: /summary

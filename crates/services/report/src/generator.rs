@@ -11,7 +11,7 @@ use audit_agent_core::session::AuditRecord;
 use findings::json_export::to_findings_json;
 use findings::pipeline::{deduplicate_findings, mark_regression_checks};
 use findings::sarif::to_sarif;
-use llm::{CompletionOpts, LlmProvider, LlmRole, llm_call_traced};
+use llm::{LlmProvider, LlmRole, role_aware_llm_call};
 use printpdf::{BuiltinFont, Mm, PdfDocument};
 
 pub use crate::coverage::{V3ChecklistCoverage, V3ToolInventory};
@@ -268,17 +268,7 @@ async fn polish_text(llm: &dyn LlmProvider, text: &str) -> (String, bool) {
         "Improve readability of this security text without changing technical content. \
          Output only improved text:\n\n{sanitized}"
     );
-    match llm_call_traced(
-        llm,
-        LlmRole::ProseRendering,
-        &prompt,
-        &CompletionOpts {
-            temperature_millis: 200,
-            max_tokens: 512,
-        },
-    )
-    .await
-    {
+    match role_aware_llm_call(llm, LlmRole::ProseRendering, &prompt).await {
         Ok((response, provenance)) => {
             tracing::debug!(
                 provider = %provenance.provider,

@@ -60,6 +60,7 @@ fn sample_config() -> AuditConfig {
             api_key_present: false,
             provider: None,
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     }

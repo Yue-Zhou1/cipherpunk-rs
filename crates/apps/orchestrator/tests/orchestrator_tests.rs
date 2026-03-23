@@ -74,6 +74,7 @@ fn sample_config(workspace_root: &Path, output_dir: &Path) -> AuditConfig {
             api_key_present: false,
             provider: None,
             no_llm_prose: true,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: output_dir.to_path_buf(),
     }

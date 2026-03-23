@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use audit_agent_core::audit_config::BudgetConfig;
+use audit_agent_core::audit_config::{BudgetConfig, RoleConfigOverride};
 use serde::Deserialize;
 
 pub struct ConfigParser;
@@ -13,6 +14,7 @@ pub struct RawAuditConfig {
     pub scope: Option<RawScope>,
     pub engines: Option<RawEngineConfig>,
     pub budget: Option<RawBudgetConfig>,
+    pub llm: Option<RawLlmConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,12 +47,19 @@ pub struct RawBudgetConfig {
     pub semantic_index_timeout_secs: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawLlmConfig {
+    pub no_llm_prose: Option<bool>,
+    pub roles: Option<HashMap<String, RoleConfigOverride>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidatedConfig {
     pub source: RawSource,
     pub scope: RawScope,
     pub engines: RawEngineConfig,
     pub budget: BudgetConfig,
+    pub llm: RawLlmConfig,
     pub output_dir: PathBuf,
 }
 
@@ -214,6 +223,7 @@ impl ConfigParser {
                 max_llm_retries: budget.max_llm_retries.unwrap_or(3),
                 semantic_index_timeout_secs: budget.semantic_index_timeout_secs.unwrap_or(120),
             },
+            llm: raw.llm.unwrap_or_default(),
             output_dir: PathBuf::from("audit-output"),
         })
     }

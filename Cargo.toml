@@ -12,6 +12,7 @@ members = [
     "crates/services/session-manager",
     "crates/services/knowledge",
     "crates/services/llm",
+    "crates/services/llm-eval",
     "crates/services/report",
     "crates/services/sandbox",
     "crates/workers/protocol",

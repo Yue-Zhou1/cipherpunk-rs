@@ -109,6 +109,7 @@ pub fn verify_proof() {}
             api_key_present: false,
             provider: None,
             no_llm_prose: true,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: root.join("audit-output"),
     }

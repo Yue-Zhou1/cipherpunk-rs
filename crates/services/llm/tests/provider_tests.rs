@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use llm::{
     CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, llm_call_traced,
-    provider_from_env,
+    provider_from_env, provider_from_name,
 };
 use mockito::Matcher;
 use std::process::Command;
@@ -152,6 +152,42 @@ async fn openai_provider_makes_chat_completion_request() {
 }
 
 #[tokio::test]
+async fn openai_provider_complete_with_role_and_model_overrides_model() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/v1/chat/completions")
+        .match_header("authorization", "Bearer key")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "gpt-4.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 32
+        })))
+        .with_status(200)
+        .with_body(r#"{"choices":[{"message":{"content":"openai-ok"}}]}"#)
+        .create_async()
+        .await;
+
+    let openai =
+        llm::OpenAiProvider::new("key".to_string(), "gpt-4o-mini".to_string(), server.url())
+            .expect("openai provider");
+    let output = LlmProvider::complete_with_role_and_model(
+        &openai,
+        &LlmRole::Scaffolding,
+        "hello",
+        &CompletionOpts {
+            temperature_millis: 100,
+            max_tokens: 32,
+        },
+        Some("gpt-4.1"),
+    )
+    .await
+    .expect("openai response");
+    assert_eq!(output.response, "openai-ok");
+    assert_eq!(output.model.as_deref(), Some("gpt-4.1"));
+    request.assert_async().await;
+}
+
+#[tokio::test]
 async fn anthropic_provider_makes_messages_request() {
     let mut server = mockito::Server::new_async().await;
     let request = server
@@ -189,6 +225,46 @@ async fn anthropic_provider_makes_messages_request() {
 }
 
 #[tokio::test]
+async fn anthropic_provider_complete_with_role_and_model_overrides_model() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/v1/messages")
+        .match_header("x-api-key", "key")
+        .match_header("anthropic-version", "2023-06-01")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "claude-3-7-sonnet",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 48
+        })))
+        .with_status(200)
+        .with_body(r#"{"content":[{"type":"text","text":"anthropic-ok"}]}"#)
+        .create_async()
+        .await;
+
+    let anthropic = llm::AnthropicProvider::new(
+        "key".to_string(),
+        "claude-3-5-sonnet".to_string(),
+        server.url(),
+    )
+    .expect("anthropic provider");
+    let output = LlmProvider::complete_with_role_and_model(
+        &anthropic,
+        &LlmRole::SearchHints,
+        "hello",
+        &CompletionOpts {
+            temperature_millis: 200,
+            max_tokens: 48,
+        },
+        Some("claude-3-7-sonnet"),
+    )
+    .await
+    .expect("anthropic response");
+    assert_eq!(output.response, "anthropic-ok");
+    assert_eq!(output.model.as_deref(), Some("claude-3-7-sonnet"));
+    request.assert_async().await;
+}
+
+#[tokio::test]
 async fn ollama_provider_makes_generate_request() {
     let mut server = mockito::Server::new_async().await;
     let request = server
@@ -216,6 +292,40 @@ async fn ollama_provider_makes_generate_request() {
         .await
         .expect("ollama response");
     assert_eq!(response, "ollama-ok");
+    request.assert_async().await;
+}
+
+#[tokio::test]
+async fn ollama_provider_complete_with_role_and_model_overrides_model() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/api/generate")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "qwen2.5-coder",
+            "prompt": "hello",
+            "stream": false
+        })))
+        .with_status(200)
+        .with_body(r#"{"response":"ollama-ok"}"#)
+        .create_async()
+        .await;
+
+    let ollama =
+        llm::OllamaProvider::new(server.url(), "llama3".to_string()).expect("ollama provider");
+    let output = LlmProvider::complete_with_role_and_model(
+        &ollama,
+        &LlmRole::ProseRendering,
+        "hello",
+        &CompletionOpts {
+            temperature_millis: 350,
+            max_tokens: 24,
+        },
+        Some("qwen2.5-coder"),
+    )
+    .await
+    .expect("ollama response");
+    assert_eq!(output.response, "ollama-ok");
+    assert_eq!(output.model.as_deref(), Some("qwen2.5-coder"));
     request.assert_async().await;
 }
 
@@ -277,6 +387,15 @@ fn provider_selection_falls_back_to_template_when_requested_provider_unavailable
 
     assert_eq!(provider_from_env().name(), "template-fallback");
     restore_env(restore);
+}
+
+#[test]
+fn provider_from_name_supports_template_aliases() {
+    assert_eq!(provider_from_name("template").name(), "template-fallback");
+    assert_eq!(
+        provider_from_name("template-fallback").name(),
+        "template-fallback"
+    );
 }
 
 fn compile_snippet(source: &str) {
