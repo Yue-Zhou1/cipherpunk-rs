@@ -59,6 +59,8 @@ fn sample_v3_bundle() -> V3ReportBundle {
         finding_counts: FindingCounts::default(),
         risk_score: 66,
         engines_run: vec!["crypto_zk".to_string()],
+        engine_outcomes: vec![],
+        coverage: None,
         optional_inputs_used: OptionalInputsSummary {
             spec_provided: false,
             prev_audit_provided: false,

@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use audit_agent_core::audit_config::{AuditConfig, ParsedPreviousAudit};
 use audit_agent_core::engine::{AuditContext, AuditEngine, EvidenceWriter, SandboxRunner};
 use audit_agent_core::finding::Finding;
-use audit_agent_core::output::{AuditManifest, AuditOutputs, FindingCounts};
+use audit_agent_core::output::{
+    AuditManifest, AuditOutputs, CoverageReport, EngineOutcome, EngineStatus, FindingCounts,
+};
 use audit_agent_core::session::AuditSession;
-use audit_agent_core::tooling::ToolActionStatus;
+use audit_agent_core::tooling::{ToolActionStatus, ToolTarget};
 use chrono::Utc;
 use findings::pipeline::{
     deduplicate_findings, mark_regression_checks as mark_regression_checks_by_key,
@@ -16,9 +18,15 @@ use findings::pipeline::{
 use intake::diff::AnalysisCache;
 use intake::summarize_optional_inputs;
 use intake::workspace::WorkspaceAnalyzer;
-use llm::LlmProvider;
+use knowledge::{AuditMemoryEntry, FindingSeverityCounts, LongTermMemory, WorkingMemory};
+use llm::{
+    AdviserAction, AdviserBudgetSnapshot, AdviserContext, AdviserService, LlmProvider,
+    ProviderFailoverRecord,
+};
 use report::generator::{ReportGenerator, ReportGeneratorOptions};
+use research::{ResearchQuery, ResearchService};
 use session_store::{SessionEvent, SessionStore};
+use tokio::sync::Mutex as AsyncMutex;
 
 pub mod events;
 pub mod jobs;
@@ -30,6 +38,9 @@ pub use events::{AuditEvent, AuditEventSink, JobLifecycleEvent};
 pub use jobs::{AuditJob, AuditJobKind, AuditJobStatus};
 pub use runtime::OrchestratorRuntime;
 pub use tool_actions::plan_tool_action;
+
+const MAX_ADVISER_CALLS_PER_AUDIT: u8 = 5;
+const MAX_RETRIES_PER_ENGINE: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditDag {
@@ -65,6 +76,12 @@ pub struct AuditOrchestrator {
     pub evidence_pack_zip: PathBuf,
     pub llm: Option<Arc<dyn LlmProvider>>,
     pub event_sink: Option<Arc<dyn AuditEventSink>>,
+    pub adviser: Option<AdviserService>,
+    pub failover_events: Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+    working_memory: Arc<Mutex<WorkingMemory>>,
+    pub long_term_memory: Option<Arc<tokio::sync::Mutex<LongTermMemory>>>,
+    research_service: Option<Arc<ResearchService>>,
+    run_lock: Arc<AsyncMutex<()>>,
 }
 
 impl AuditOrchestrator {
@@ -79,6 +96,12 @@ impl AuditOrchestrator {
             evidence_pack_zip,
             llm: None,
             event_sink: None,
+            adviser: None,
+            failover_events: Arc::new(Mutex::new(Vec::new())),
+            working_memory: Arc::new(Mutex::new(WorkingMemory::new())),
+            long_term_memory: None,
+            research_service: ResearchService::new().ok().map(Arc::new),
+            run_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -131,6 +154,39 @@ impl AuditOrchestrator {
         self
     }
 
+    pub fn with_adviser(mut self, adviser: AdviserService) -> Self {
+        self.adviser = Some(adviser);
+        self
+    }
+
+    pub fn with_failover_events(
+        mut self,
+        failover_events: Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+    ) -> Self {
+        self.failover_events = failover_events;
+        self
+    }
+
+    pub fn with_long_term_memory(
+        mut self,
+        memory: Arc<tokio::sync::Mutex<LongTermMemory>>,
+    ) -> Self {
+        self.long_term_memory = Some(memory);
+        self
+    }
+
+    pub fn with_research_service(mut self, research_service: Arc<ResearchService>) -> Self {
+        self.research_service = Some(research_service);
+        self
+    }
+
+    pub fn llm_assist_context(&self, role_name: &str) -> Option<String> {
+        self.working_memory
+            .lock()
+            .ok()
+            .map(|working_memory| working_memory.context_for_role(role_name))
+    }
+
     pub async fn bootstrap_jobs(&self, session: &AuditSession) -> Result<Vec<AuditJob>> {
         let mut jobs = Vec::<AuditJob>::new();
         jobs.push(AuditJob::queued(
@@ -148,6 +204,15 @@ impl AuditOrchestrator {
             AuditJobKind::PlanChecklists,
             jobs.len(),
         ));
+        for engine in &self.engines {
+            jobs.push(AuditJob::queued(
+                &session.session_id,
+                AuditJobKind::RunEngine {
+                    engine_name: engine.name().to_string(),
+                },
+                jobs.len(),
+            ));
+        }
         for domain_id in &session.selected_domains {
             jobs.push(AuditJob::queued(
                 &session.session_id,
@@ -182,6 +247,57 @@ impl AuditOrchestrator {
             .output_dir
             .join("tool-runs")
             .join(request.session_id.clone());
+
+        if request.tool_family == ToolFamily::Research {
+            let _ = std::fs::create_dir_all(&artifact_root);
+            let research = self
+                .research_service
+                .as_ref()
+                .ok_or_else(|| anyhow!("research service is unavailable"))?;
+            let target = request.target.display_value().to_string();
+            let query = parse_research_query(&request.target)?;
+            let result = research.query(&query).await?;
+            let artifact_path =
+                artifact_root.join(format!("research-{}.json", request.target.slug()));
+            std::fs::write(&artifact_path, serde_json::to_vec_pretty(&result)?)?;
+
+            let action_result = ToolActionResult {
+                action_id: format!("action-{}", Utc::now().timestamp_micros()),
+                session_id: request.session_id.clone(),
+                tool_family: ToolFamily::Research,
+                target: request.target,
+                command: vec!["research".to_string(), target.clone()],
+                artifact_refs: vec![artifact_path.to_string_lossy().to_string()],
+                rationale: research_rationale(&query),
+                status: ToolActionStatus::Completed,
+                stdout_preview: Some(format!(
+                    "Research completed with {} finding(s)",
+                    result.findings.len()
+                )),
+                stderr_preview: None,
+            };
+
+            if let Ok(mut working_memory) = self.working_memory.lock() {
+                working_memory.record_tool_result(
+                    "Research",
+                    action_result.target.display_value(),
+                    "completed",
+                );
+            }
+
+            if let Some(store) = &self.session_store {
+                let payload = serde_json::to_string(&action_result)?;
+                let event = SessionEvent {
+                    event_id: format!("tool-action:{}", action_result.action_id),
+                    event_type: "tool.action".to_string(),
+                    payload,
+                    created_at: Utc::now(),
+                };
+                store.append_event(&action_result.session_id, &event)?;
+            }
+
+            return Ok(action_result);
+        }
 
         if request.tool_family == ToolFamily::LeanExternal {
             let base_url = std::env::var("AXLE_API_URL")
@@ -227,6 +343,17 @@ impl AuditOrchestrator {
             stderr_preview: optional_preview(&sandbox_result.stderr),
         };
 
+        if let Ok(mut working_memory) = self.working_memory.lock() {
+            working_memory.record_tool_result(
+                &format!("{:?}", result.tool_family),
+                result.target.display_value(),
+                match result.status {
+                    ToolActionStatus::Completed => "completed",
+                    ToolActionStatus::Failed => "failed",
+                },
+            );
+        }
+
         if let Some(store) = &self.session_store {
             let payload = serde_json::to_string(&result)?;
             let event = SessionEvent {
@@ -242,9 +369,55 @@ impl AuditOrchestrator {
     }
 
     pub async fn run(&self, config: &AuditConfig) -> Result<AuditOutputs> {
+        let _run_guard = self.run_lock.lock().await;
+        if let Ok(mut working_memory) = self.working_memory.lock() {
+            *working_memory = WorkingMemory::new();
+        }
+        self.failover_events
+            .lock()
+            .expect("failover events lock")
+            .clear();
         let dag = self.build_dag(config);
-        let findings = self.execute_dag(&dag, config).await?;
-        self.produce_outputs(&findings, config).await
+        let (findings, outcomes) = self.execute_dag(&dag, config).await?;
+        let outputs = self.produce_outputs(&findings, &outcomes, config).await?;
+
+        if let Some(long_term) = &self.long_term_memory {
+            let entry = AuditMemoryEntry {
+                audit_id: config.audit_id.clone(),
+                timestamp: Utc::now().to_rfc3339(),
+                source_description: format!("{:?}", config.source.origin),
+                findings_by_severity: FindingSeverityCounts {
+                    critical: outputs.manifest.finding_counts.critical,
+                    high: outputs.manifest.finding_counts.high,
+                    medium: outputs.manifest.finding_counts.medium,
+                    low: outputs.manifest.finding_counts.low,
+                    observation: outputs.manifest.finding_counts.observation,
+                },
+                engines_used: outcomes
+                    .iter()
+                    .map(|outcome| outcome.engine.clone())
+                    .collect(),
+                key_findings: outputs
+                    .findings
+                    .iter()
+                    .take(5)
+                    .map(|finding| finding.title.clone())
+                    .collect(),
+                tags: config
+                    .scope
+                    .detected_frameworks
+                    .iter()
+                    .map(|framework| format!("{framework:?}").to_ascii_lowercase())
+                    .collect(),
+            };
+            let mut memory = long_term.lock().await;
+            memory.record_audit_outcome(entry);
+            if let Err(err) = memory.persist() {
+                tracing::warn!(error = %err, "failed to persist long-term memory");
+            }
+        }
+
+        Ok(outputs)
     }
 
     pub fn build_dag(&self, _config: &AuditConfig) -> AuditDag {
@@ -257,7 +430,11 @@ impl AuditOrchestrator {
         AuditDag { nodes }
     }
 
-    pub async fn execute_dag(&self, _dag: &AuditDag, config: &AuditConfig) -> Result<Vec<Finding>> {
+    pub async fn execute_dag(
+        &self,
+        _dag: &AuditDag,
+        config: &AuditConfig,
+    ) -> Result<(Vec<Finding>, Vec<EngineOutcome>)> {
         let workspace = Arc::new(WorkspaceAnalyzer::analyze(&config.source.local_path)?);
         let ctx = AuditContext {
             config: Arc::new(config.clone()),
@@ -267,18 +444,190 @@ impl AuditOrchestrator {
             llm: self.runtime.context_llm.clone(),
         };
 
+        let mut working_memory = WorkingMemory::new();
         let mut findings = Vec::<Finding>::new();
+        let mut outcomes = Vec::<EngineOutcome>::new();
+        let mut adviser_calls_remaining = MAX_ADVISER_CALLS_PER_AUDIT;
         for engine in &self.engines {
-            if engine.supports(&ctx).await {
-                findings.extend(engine.analyze(&ctx).await?);
+            let engine_name = engine.name().to_string();
+            let started_at = std::time::Instant::now();
+
+            if !engine.supports(&ctx).await {
+                working_memory.record_engine_outcome(&engine_name, "skipped", 0);
+                outcomes.push(EngineOutcome {
+                    engine: engine_name,
+                    status: EngineStatus::Skipped {
+                        reason: "engine reported unsupported for this context".to_string(),
+                    },
+                    findings_count: 0,
+                    duration_ms: started_at.elapsed().as_millis() as u64,
+                    adviser_suggestion: None,
+                });
+                continue;
+            }
+
+            let mut attempt: u8 = 1;
+            let mut attempt_config = config.clone();
+            loop {
+                let attempt_ctx = AuditContext {
+                    config: Arc::new(attempt_config.clone()),
+                    workspace: Arc::clone(&ctx.workspace),
+                    sandbox: Arc::clone(&ctx.sandbox),
+                    evidence_store: Arc::clone(&ctx.evidence_store),
+                    llm: ctx.llm.clone(),
+                };
+
+                match engine.analyze(&attempt_ctx).await {
+                    Ok(engine_findings) => {
+                        let count = engine_findings.len();
+                        let duration_ms = started_at.elapsed().as_millis() as u64;
+                        for finding in &engine_findings {
+                            working_memory.record_finding(finding);
+                        }
+                        working_memory.record_engine_outcome(&engine_name, "completed", count);
+                        findings.extend(engine_findings);
+
+                        if let Some(sink) = &self.event_sink {
+                            sink.emit(AuditEvent::EngineCompleted {
+                                engine: engine_name.clone(),
+                                findings_count: count,
+                                duration_ms,
+                            });
+                        }
+
+                        outcomes.push(EngineOutcome {
+                            engine: engine_name,
+                            status: EngineStatus::Completed,
+                            findings_count: count,
+                            duration_ms,
+                            adviser_suggestion: None,
+                        });
+                        break;
+                    }
+                    Err(err) => {
+                        let duration_ms = started_at.elapsed().as_millis() as u64;
+                        let mut suggestion = None::<llm::AdviserSuggestion>;
+                        let mut suggestion_applied = false;
+
+                        if adviser_calls_remaining > 0 {
+                            if let Some(adviser) = &self.adviser {
+                                adviser_calls_remaining = adviser_calls_remaining.saturating_sub(1);
+                                let adviser_context = AdviserContext {
+                                    engine_name: adviser_engine_label(engine_name.as_str()),
+                                    error_message: err.to_string(),
+                                    attempt_number: attempt,
+                                    elapsed_ms: duration_ms,
+                                    findings_so_far: findings.len(),
+                                    budget: AdviserBudgetSnapshot::from_engine(
+                                        engine_name.as_str(),
+                                        &attempt_config.budget,
+                                    ),
+                                };
+                                match adviser.suggest_on_failure(&adviser_context).await {
+                                    Ok(value) => {
+                                        suggestion = Some(value);
+                                    }
+                                    Err(adviser_err) => {
+                                        tracing::warn!(
+                                            engine = %engine_name,
+                                            error = %adviser_err,
+                                            "adviser call failed — continuing without suggestion"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        if attempt <= MAX_RETRIES_PER_ENGINE && is_retryable_engine_failure(&err) {
+                            if let Some(llm::AdviserSuggestion {
+                                action:
+                                    AdviserAction::RetryWithRelaxedBudget {
+                                        timeout_secs,
+                                        memory_mb,
+                                    },
+                                ..
+                            }) = suggestion.as_ref()
+                            {
+                                if engine_supports_budget_adjustment(engine_name.as_str()) {
+                                    match apply_retry_budget_adjustment(
+                                        &mut attempt_config,
+                                        engine_name.as_str(),
+                                        *timeout_secs,
+                                        *memory_mb,
+                                    ) {
+                                        Ok(true) => {
+                                            suggestion_applied = true;
+                                            attempt = attempt.saturating_add(1);
+                                        }
+                                        Ok(false) => {
+                                            tracing::info!(
+                                                engine = %engine_name,
+                                                timeout_secs,
+                                                memory_mb,
+                                                "adviser retry suggestion did not change effective engine budget"
+                                            );
+                                        }
+                                        Err(adjustment_err) => {
+                                            tracing::warn!(
+                                                engine = %engine_name,
+                                                error = %adjustment_err,
+                                                "failed to apply adviser retry suggestion"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(sink) = &self.event_sink {
+                            if let Some(ref value) = suggestion {
+                                sink.emit(AuditEvent::AdviserConsulted {
+                                    engine: engine_name.clone(),
+                                    suggestion: format!("{:?}", value.action),
+                                    applied: suggestion_applied,
+                                });
+                            }
+                        }
+
+                        if suggestion_applied {
+                            continue;
+                        }
+
+                        if let Some(sink) = &self.event_sink {
+                            sink.emit(AuditEvent::EngineFailed {
+                                engine: engine_name.clone(),
+                                reason: err.to_string(),
+                            });
+                        }
+
+                        working_memory.record_engine_outcome(&engine_name, "failed", 0);
+                        working_memory.record_adviser_note(&format!("{engine_name} failed: {err}"));
+                        outcomes.push(EngineOutcome {
+                            engine: engine_name,
+                            status: EngineStatus::Failed {
+                                reason: err.to_string(),
+                            },
+                            findings_count: 0,
+                            duration_ms,
+                            adviser_suggestion: suggestion
+                                .as_ref()
+                                .map(|value| format!("{:?}: {}", value.action, value.rationale)),
+                        });
+                        break;
+                    }
+                }
             }
         }
-        Ok(findings)
+        if let Ok(mut state) = self.working_memory.lock() {
+            *state = working_memory;
+        }
+        Ok((findings, outcomes))
     }
 
     pub async fn produce_outputs(
         &self,
         findings: &[Finding],
+        outcomes: &[EngineOutcome],
         config: &AuditConfig,
     ) -> Result<AuditOutputs> {
         let mut deduplicated = self.findings_db.deduplicate(findings);
@@ -288,6 +637,28 @@ impl AuditOrchestrator {
         );
 
         let finding_counts = FindingCounts::from(&deduplicated);
+        let mut coverage = CoverageReport::from_outcomes(outcomes);
+        let failover_warnings = failover_warning_messages(&self.failover_events);
+        if let Some(sink) = &self.event_sink {
+            let events = self.failover_events.lock().expect("failover events lock");
+            for event in events.iter() {
+                sink.emit(AuditEvent::ProviderFailover {
+                    from: event.from.clone(),
+                    to: event.to.clone(),
+                    role: event.role.clone(),
+                    reason: event.reason.clone(),
+                });
+            }
+        }
+        if !failover_warnings.is_empty() {
+            coverage.failover_warnings = failover_warnings.clone();
+            coverage.warnings.extend(failover_warnings);
+        }
+        let engine_outcomes = outcomes.to_vec();
+        let engines_run = outcomes
+            .iter()
+            .map(|outcome| outcome.engine.clone())
+            .collect::<Vec<_>>();
         let (tool_versions, container_digests) = aggregate_manifest_metadata(&deduplicated);
         let now = Utc::now();
         let manifest = AuditManifest {
@@ -301,11 +672,9 @@ impl AuditOrchestrator {
             container_digests: container_digests.clone(),
             finding_counts: finding_counts.clone(),
             risk_score: finding_counts.risk_score(),
-            engines_run: self
-                .engines
-                .iter()
-                .map(|engine| engine.name().to_string())
-                .collect(),
+            engines_run: engines_run.clone(),
+            engine_outcomes: engine_outcomes.clone(),
+            coverage: Some(coverage.clone()),
             optional_inputs_used: summarize_optional_inputs(config),
         };
 
@@ -332,11 +701,9 @@ impl AuditOrchestrator {
             container_digests,
             finding_counts: finding_counts.clone(),
             risk_score: finding_counts.risk_score(),
-            engines_run: self
-                .engines
-                .iter()
-                .map(|engine| engine.name().to_string())
-                .collect(),
+            engines_run,
+            engine_outcomes,
+            coverage: Some(coverage),
             optional_inputs_used: summarize_optional_inputs(config),
         });
 
@@ -417,4 +784,281 @@ fn optional_preview(value: &str) -> Option<String> {
     }
 
     Some(format!("{preview}..."))
+}
+
+fn parse_research_query(target: &ToolTarget) -> Result<ResearchQuery> {
+    let raw = target.display_value().trim();
+    if raw.is_empty() {
+        anyhow::bail!("research target cannot be empty");
+    }
+
+    if let Some(crate_name) = raw.strip_prefix("rustsec:") {
+        let crate_name = crate_name.trim();
+        if crate_name.is_empty() {
+            anyhow::bail!("rustsec query requires a crate name");
+        }
+        return Ok(ResearchQuery::RustSecAdvisory {
+            crate_name: crate_name.to_string(),
+        });
+    }
+
+    if let Some(crate_name) = raw.strip_prefix("github:") {
+        let crate_name = crate_name.trim();
+        if crate_name.is_empty() {
+            anyhow::bail!("github query requires a crate name");
+        }
+        return Ok(ResearchQuery::GithubAdvisory {
+            crate_name: crate_name.to_string(),
+        });
+    }
+
+    if let Some(cve_query) = raw.strip_prefix("cve:") {
+        let cve_query = cve_query.trim();
+        if cve_query.is_empty() {
+            anyhow::bail!("cve query requires a crate name");
+        }
+        let (crate_name, version) = match cve_query.split_once('@') {
+            Some((name, version)) if !version.trim().is_empty() => {
+                (name.trim().to_string(), Some(version.trim().to_string()))
+            }
+            Some((name, _)) => (name.trim().to_string(), None),
+            None => (cve_query.to_string(), None),
+        };
+        if crate_name.is_empty() {
+            anyhow::bail!("cve query requires a crate name");
+        }
+        return Ok(ResearchQuery::CveSearch {
+            crate_name,
+            version,
+        });
+    }
+
+    if let Some(url) = raw.strip_prefix("spec:") {
+        let url = url.trim();
+        if url.is_empty() {
+            anyhow::bail!("spec query requires a URL");
+        }
+        return Ok(ResearchQuery::SpecFetch {
+            url: url.to_string(),
+        });
+    }
+
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        return Ok(ResearchQuery::SpecFetch {
+            url: raw.to_string(),
+        });
+    }
+
+    Ok(ResearchQuery::RustSecAdvisory {
+        crate_name: raw.to_string(),
+    })
+}
+
+fn research_rationale(query: &ResearchQuery) -> String {
+    match query {
+        ResearchQuery::RustSecAdvisory { .. } => {
+            "Queried RustSec advisory data for the target crate".to_string()
+        }
+        ResearchQuery::GithubAdvisory { .. } => {
+            "Queried GitHub Advisory API for the target crate".to_string()
+        }
+        ResearchQuery::CveSearch { .. } => "Queried NVD CVE data for the target crate".to_string(),
+        ResearchQuery::SpecFetch { .. } => {
+            "Fetched an allowlisted specification document".to_string()
+        }
+    }
+}
+
+fn is_retryable_engine_failure(err: &anyhow::Error) -> bool {
+    let message = err.to_string().to_ascii_lowercase();
+    if message.contains("unsupported")
+        || message.contains("not supported")
+        || message.contains("invalid input")
+        || message.contains("semantic")
+        || message.contains("unimplemented")
+    {
+        return false;
+    }
+
+    message.contains("timeout")
+        || message.contains("timed out")
+        || message.contains("oom")
+        || message.contains("out of memory")
+        || message.contains("resource exhausted")
+        || message.contains("sandbox")
+        || message.contains("temporary")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BudgetAdjustmentTarget {
+    Kani,
+    Z3Like,
+    Fuzz,
+    Madsim,
+    Semantic,
+}
+
+fn budget_adjustment_target(engine_name: &str) -> Option<BudgetAdjustmentTarget> {
+    let name = engine_name.to_ascii_lowercase();
+    if name.contains("kani") {
+        return Some(BudgetAdjustmentTarget::Kani);
+    }
+    if name.contains("z3") || name.contains("smt") {
+        return Some(BudgetAdjustmentTarget::Z3Like);
+    }
+    if name.contains("fuzz") {
+        return Some(BudgetAdjustmentTarget::Fuzz);
+    }
+    if name.contains("madsim") {
+        return Some(BudgetAdjustmentTarget::Madsim);
+    }
+    if name.contains("semantic") {
+        return Some(BudgetAdjustmentTarget::Semantic);
+    }
+    None
+}
+
+fn engine_supports_budget_adjustment(engine_name: &str) -> bool {
+    budget_adjustment_target(engine_name).is_some()
+}
+
+fn adviser_engine_label(engine_name: &str) -> String {
+    match budget_adjustment_target(engine_name) {
+        Some(BudgetAdjustmentTarget::Kani) => "kani".to_string(),
+        Some(BudgetAdjustmentTarget::Z3Like) => "smt".to_string(),
+        Some(BudgetAdjustmentTarget::Fuzz) => "fuzz".to_string(),
+        Some(BudgetAdjustmentTarget::Madsim) => "madsim".to_string(),
+        Some(BudgetAdjustmentTarget::Semantic) => "semantic-index".to_string(),
+        None => {
+            tracing::warn!(
+                engine = %engine_name,
+                "unmapped engine name for adviser label; preserving identity under 'other:' prefix"
+            );
+            format!("other:{engine_name}")
+        }
+    }
+}
+
+fn apply_retry_budget_adjustment(
+    config: &mut AuditConfig,
+    engine_name: &str,
+    timeout_secs: u64,
+    memory_mb: u64,
+) -> Result<bool> {
+    let Some(target) = budget_adjustment_target(engine_name) else {
+        anyhow::bail!("engine '{engine_name}' does not support budget adjustment");
+    };
+
+    let timeout_applied = match target {
+        BudgetAdjustmentTarget::Kani => {
+            let before = config.budget.kani_timeout_secs;
+            config.budget.kani_timeout_secs = before.max(timeout_secs);
+            config.budget.kani_timeout_secs > before
+        }
+        BudgetAdjustmentTarget::Z3Like => {
+            let before = config.budget.z3_timeout_secs;
+            config.budget.z3_timeout_secs = before.max(timeout_secs);
+            config.budget.z3_timeout_secs > before
+        }
+        BudgetAdjustmentTarget::Fuzz => {
+            let before = config.budget.fuzz_duration_secs;
+            config.budget.fuzz_duration_secs = before.max(timeout_secs);
+            config.budget.fuzz_duration_secs > before
+        }
+        BudgetAdjustmentTarget::Madsim => {
+            let before = config.budget.madsim_ticks;
+            config.budget.madsim_ticks = before.max(timeout_secs);
+            config.budget.madsim_ticks > before
+        }
+        BudgetAdjustmentTarget::Semantic => {
+            let before = config.budget.semantic_index_timeout_secs;
+            config.budget.semantic_index_timeout_secs = before.max(timeout_secs);
+            config.budget.semantic_index_timeout_secs > before
+        }
+    };
+
+    if memory_mb > 0 {
+        tracing::debug!(
+            engine = %engine_name,
+            memory_mb,
+            "memory budget suggestions are currently advisory-only: no per-engine memory knob in AuditConfig"
+        );
+    }
+
+    Ok(timeout_applied)
+}
+
+fn failover_warning_messages(
+    failover_events: &Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+) -> Vec<String> {
+    let events = failover_events.lock().expect("failover events lock");
+    let mut warnings = events
+        .iter()
+        .map(|event| {
+            format!(
+                "LLM provider failover occurred: {} switched from {} to {}. Findings produced during failover may differ from baseline.",
+                event.role, event.from, event.to
+            )
+        })
+        .collect::<Vec<_>>();
+    warnings.sort();
+    warnings.dedup();
+    warnings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{adviser_engine_label, parse_research_query};
+    use audit_agent_core::tooling::ToolTarget;
+    use research::ResearchQuery;
+
+    #[test]
+    fn parse_research_query_defaults_to_rustsec_for_plain_target() {
+        let query = parse_research_query(&ToolTarget::Symbol {
+            id: "openssl".to_string(),
+        })
+        .expect("parse query");
+
+        assert!(matches!(
+            query,
+            ResearchQuery::RustSecAdvisory { crate_name } if crate_name == "openssl"
+        ));
+    }
+
+    #[test]
+    fn parse_research_query_supports_all_prefixed_sources() {
+        let github = parse_research_query(&ToolTarget::Symbol {
+            id: "github:openssl".to_string(),
+        })
+        .expect("github query");
+        assert!(matches!(
+            github,
+            ResearchQuery::GithubAdvisory { crate_name } if crate_name == "openssl"
+        ));
+
+        let cve = parse_research_query(&ToolTarget::Symbol {
+            id: "cve:openssl@3.2.1".to_string(),
+        })
+        .expect("cve query");
+        assert!(matches!(
+            cve,
+            ResearchQuery::CveSearch { crate_name, version }
+                if crate_name == "openssl" && version.as_deref() == Some("3.2.1")
+        ));
+
+        let spec = parse_research_query(&ToolTarget::File {
+            path: "spec:https://eips.ethereum.org/EIPS/eip-155".to_string(),
+        })
+        .expect("spec query");
+        assert!(matches!(
+            spec,
+            ResearchQuery::SpecFetch { url } if url == "https://eips.ethereum.org/EIPS/eip-155"
+        ));
+    }
+
+    #[test]
+    fn adviser_engine_label_preserves_unknown_engine_name() {
+        assert_eq!(adviser_engine_label("z3-budget"), "smt");
+        assert_eq!(adviser_engine_label("new-prover-x"), "other:new-prover-x");
+    }
 }

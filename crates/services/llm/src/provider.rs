@@ -2,16 +2,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+pub use audit_agent_core::llm::LlmRole;
 use reqwest::Client;
-use serde::Deserialize;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum LlmRole {
-    Scaffolding,
-    SearchHints,
-    ProseRendering,
-    LeanScaffold,
-}
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionOpts {
@@ -31,8 +24,55 @@ impl Default for CompletionOpts {
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String>;
+
+    async fn complete_with_role(
+        &self,
+        _role: &LlmRole,
+        prompt: &str,
+        opts: &CompletionOpts,
+    ) -> Result<LlmCallOutput> {
+        let response = self.complete(prompt, opts).await?;
+        Ok(LlmCallOutput {
+            response,
+            provider: self.name().to_string(),
+            model: self.model().map(|value| value.to_string()),
+        })
+    }
+
+    async fn complete_with_role_and_model(
+        &self,
+        role: &LlmRole,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model_override: Option<&str>,
+    ) -> Result<LlmCallOutput> {
+        let _ = model_override;
+        self.complete_with_role(role, prompt, opts).await
+    }
+
     fn name(&self) -> &str;
     fn is_available(&self) -> bool;
+    fn model(&self) -> Option<&str> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmProvenance {
+    pub provider: String,
+    pub model: Option<String>,
+    pub role: String,
+    pub duration_ms: u64,
+    pub prompt_chars: usize,
+    pub response_chars: usize,
+    pub attempt: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmCallOutput {
+    pub response: String,
+    pub provider: String,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,30 +104,23 @@ pub struct TemplateFallback;
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String> {
-        if !self.is_available() {
-            return Err(anyhow!("OpenAI API key is missing"));
-        }
+        self.complete_with_model(prompt, opts, &self.model).await
+    }
 
-        let url = format!(
-            "{}/v1/chat/completions",
-            trim_trailing_slash(&self.base_url)
-        );
-        let payload = serde_json::json!({
-            "model": self.model,
-            "messages": [{ "role": "user", "content": prompt }],
-            "temperature": temperature(opts),
-            "max_tokens": opts.max_tokens,
-        });
-
-        let response = self
-            .client
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .send()
-            .await?;
-
-        parse_openai_response(response).await
+    async fn complete_with_role_and_model(
+        &self,
+        _role: &LlmRole,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model_override: Option<&str>,
+    ) -> Result<LlmCallOutput> {
+        let model = model_override.unwrap_or(&self.model);
+        let response = self.complete_with_model(prompt, opts, model).await?;
+        Ok(LlmCallOutput {
+            response,
+            provider: self.name().to_string(),
+            model: Some(model.to_string()),
+        })
     }
 
     fn name(&self) -> &str {
@@ -97,33 +130,32 @@ impl LlmProvider for OpenAiProvider {
     fn is_available(&self) -> bool {
         !self.api_key.trim().is_empty()
     }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
 }
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
     async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String> {
-        if !self.is_available() {
-            return Err(anyhow!("Anthropic API key is missing"));
-        }
+        self.complete_with_model(prompt, opts, &self.model).await
+    }
 
-        let url = format!("{}/v1/messages", trim_trailing_slash(&self.base_url));
-        let payload = serde_json::json!({
-            "model": self.model,
-            "messages": [{ "role": "user", "content": prompt }],
-            "temperature": temperature(opts),
-            "max_tokens": opts.max_tokens,
-        });
-
-        let response = self
-            .client
-            .post(url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&payload)
-            .send()
-            .await?;
-
-        parse_anthropic_response(response).await
+    async fn complete_with_role_and_model(
+        &self,
+        _role: &LlmRole,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model_override: Option<&str>,
+    ) -> Result<LlmCallOutput> {
+        let model = model_override.unwrap_or(&self.model);
+        let response = self.complete_with_model(prompt, opts, model).await?;
+        Ok(LlmCallOutput {
+            response,
+            provider: self.name().to_string(),
+            model: Some(model.to_string()),
+        })
     }
 
     fn name(&self) -> &str {
@@ -133,28 +165,32 @@ impl LlmProvider for AnthropicProvider {
     fn is_available(&self) -> bool {
         !self.api_key.trim().is_empty()
     }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
 }
 
 #[async_trait]
 impl LlmProvider for OllamaProvider {
     async fn complete(&self, prompt: &str, opts: &CompletionOpts) -> Result<String> {
-        if !self.is_available() {
-            return Err(anyhow!("Ollama base URL is missing"));
-        }
+        self.complete_with_model(prompt, opts, &self.model).await
+    }
 
-        let url = format!("{}/api/generate", trim_trailing_slash(&self.base_url));
-        let payload = serde_json::json!({
-            "model": self.model,
-            "prompt": prompt,
-            "stream": false,
-            "options": {
-                "temperature": temperature(opts),
-                "num_predict": opts.max_tokens,
-            }
-        });
-
-        let response = self.client.post(url).json(&payload).send().await?;
-        parse_ollama_response(response).await
+    async fn complete_with_role_and_model(
+        &self,
+        _role: &LlmRole,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model_override: Option<&str>,
+    ) -> Result<LlmCallOutput> {
+        let model = model_override.unwrap_or(&self.model);
+        let response = self.complete_with_model(prompt, opts, model).await?;
+        Ok(LlmCallOutput {
+            response,
+            provider: self.name().to_string(),
+            model: Some(model.to_string()),
+        })
     }
 
     fn name(&self) -> &str {
@@ -163,6 +199,10 @@ impl LlmProvider for OllamaProvider {
 
     fn is_available(&self) -> bool {
         !self.base_url.trim().is_empty()
+    }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
     }
 }
 
@@ -187,17 +227,7 @@ pub fn provider_from_env() -> Box<dyn LlmProvider> {
         .map(|provider| provider.trim().to_ascii_lowercase());
 
     match requested.as_deref() {
-        Some("openai") => openai_provider()
-            .map(|provider| Box::new(provider) as Box<dyn LlmProvider>)
-            .unwrap_or_else(|| Box::new(TemplateFallback)),
-        Some("anthropic") => anthropic_provider()
-            .map(|provider| Box::new(provider) as Box<dyn LlmProvider>)
-            .unwrap_or_else(|| Box::new(TemplateFallback)),
-        Some("ollama") => ollama_provider()
-            .map(|provider| Box::new(provider) as Box<dyn LlmProvider>)
-            .unwrap_or_else(|| Box::new(TemplateFallback)),
-        Some("template") | Some("template-fallback") => Box::new(TemplateFallback),
-        Some(_) => Box::new(TemplateFallback),
+        Some(provider_name) => provider_from_name(provider_name),
         None => {
             if let Some(provider) = openai_provider() {
                 Box::new(provider)
@@ -212,7 +242,57 @@ pub fn provider_from_env() -> Box<dyn LlmProvider> {
     }
 }
 
-fn openai_provider() -> Option<OpenAiProvider> {
+pub fn provider_from_name(provider_name: &str) -> Box<dyn LlmProvider> {
+    match provider_name.trim().to_ascii_lowercase().as_str() {
+        "openai" => openai_provider()
+            .map(|provider| Box::new(provider) as Box<dyn LlmProvider>)
+            .unwrap_or_else(|| Box::new(TemplateFallback)),
+        "anthropic" => anthropic_provider()
+            .map(|provider| Box::new(provider) as Box<dyn LlmProvider>)
+            .unwrap_or_else(|| Box::new(TemplateFallback)),
+        "ollama" => ollama_provider()
+            .map(|provider| Box::new(provider) as Box<dyn LlmProvider>)
+            .unwrap_or_else(|| Box::new(TemplateFallback)),
+        "template" | "template-fallback" => Box::new(TemplateFallback),
+        _ => Box::new(TemplateFallback),
+    }
+}
+
+/// Classify an LLM call error as transient (retryable) or permanent.
+pub fn is_transient_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+
+    // HTTP status classes commonly associated with provider-side instability.
+    if msg.contains("429") || msg.contains("rate limit") {
+        return true;
+    }
+    if msg.contains("500") || msg.contains("internal server error") {
+        return true;
+    }
+    if msg.contains("502") || msg.contains("bad gateway") {
+        return true;
+    }
+    if msg.contains("503") || msg.contains("service unavailable") {
+        return true;
+    }
+    if msg.contains("504") || msg.contains("gateway timeout") {
+        return true;
+    }
+
+    // Network/transient transport failures.
+    if msg.contains("timed out")
+        || msg.contains("timeout")
+        || msg.contains("connection refused")
+        || msg.contains("connection reset")
+        || msg.contains("dns")
+    {
+        return true;
+    }
+
+    false
+}
+
+pub(crate) fn openai_provider() -> Option<OpenAiProvider> {
     let api_key = std::env::var("LLM_API_KEY").ok()?;
     if api_key.trim().is_empty() {
         return None;
@@ -225,7 +305,7 @@ fn openai_provider() -> Option<OpenAiProvider> {
     .ok()
 }
 
-fn anthropic_provider() -> Option<AnthropicProvider> {
+pub(crate) fn anthropic_provider() -> Option<AnthropicProvider> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
     if api_key.trim().is_empty() {
         return None;
@@ -239,7 +319,7 @@ fn anthropic_provider() -> Option<AnthropicProvider> {
     .ok()
 }
 
-fn ollama_provider() -> Option<OllamaProvider> {
+pub(crate) fn ollama_provider() -> Option<OllamaProvider> {
     let base_url = std::env::var("OLLAMA_BASE_URL").ok()?;
     if base_url.trim().is_empty() {
         return None;
@@ -251,16 +331,46 @@ fn ollama_provider() -> Option<OllamaProvider> {
     .ok()
 }
 
+#[deprecated(note = "Use llm_call_traced to capture response provenance.")]
 pub async fn llm_call(
     provider: &dyn LlmProvider,
     role: LlmRole,
     prompt: &str,
     opts: &CompletionOpts,
 ) -> Result<String> {
-    tracing::debug!(role = ?role, provider = provider.name(), "LLM call");
-    let response = provider.complete(prompt, opts).await?;
-    tracing::trace!(role = ?role, chars = response.len(), "LLM response");
+    let (response, _provenance) = llm_call_traced(provider, role, prompt, opts).await?;
     Ok(response)
+}
+
+pub async fn llm_call_traced(
+    provider: &dyn LlmProvider,
+    role: LlmRole,
+    prompt: &str,
+    opts: &CompletionOpts,
+) -> Result<(String, LlmProvenance)> {
+    let started_at = std::time::Instant::now();
+    tracing::debug!(role = ?role, provider = provider.name(), "LLM call");
+    let output = provider.complete_with_role(&role, prompt, opts).await?;
+    let response = output.response;
+    let duration_ms = started_at.elapsed().as_millis() as u64;
+    tracing::info!(
+        role = ?role,
+        provider = output.provider.as_str(),
+        model = output.model.as_deref().unwrap_or("unknown"),
+        duration_ms,
+        response_chars = response.len(),
+        "LLM call completed"
+    );
+    let provenance = LlmProvenance {
+        provider: output.provider,
+        model: output.model,
+        role: format!("{role:?}"),
+        duration_ms,
+        prompt_chars: prompt.len(),
+        response_chars: response.len(),
+        attempt: 1,
+    };
+    Ok((response, provenance))
 }
 
 pub fn json_only_prompt(contract_name: &str, task: &str) -> String {
@@ -288,6 +398,38 @@ impl OpenAiProvider {
             client: http_client()?,
         })
     }
+
+    async fn complete_with_model(
+        &self,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model: &str,
+    ) -> Result<String> {
+        if !self.is_available() {
+            return Err(anyhow!("OpenAI API key is missing"));
+        }
+
+        let url = format!(
+            "{}/v1/chat/completions",
+            trim_trailing_slash(&self.base_url)
+        );
+        let payload = serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": temperature(opts),
+            "max_tokens": opts.max_tokens,
+        });
+
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&payload)
+            .send()
+            .await?;
+
+        parse_openai_response(response).await
+    }
 }
 
 impl AnthropicProvider {
@@ -299,6 +441,36 @@ impl AnthropicProvider {
             client: http_client()?,
         })
     }
+
+    async fn complete_with_model(
+        &self,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model: &str,
+    ) -> Result<String> {
+        if !self.is_available() {
+            return Err(anyhow!("Anthropic API key is missing"));
+        }
+
+        let url = format!("{}/v1/messages", trim_trailing_slash(&self.base_url));
+        let payload = serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": temperature(opts),
+            "max_tokens": opts.max_tokens,
+        });
+
+        let response = self
+            .client
+            .post(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&payload)
+            .send()
+            .await?;
+
+        parse_anthropic_response(response).await
+    }
 }
 
 impl OllamaProvider {
@@ -308,6 +480,31 @@ impl OllamaProvider {
             model,
             client: http_client()?,
         })
+    }
+
+    async fn complete_with_model(
+        &self,
+        prompt: &str,
+        opts: &CompletionOpts,
+        model: &str,
+    ) -> Result<String> {
+        if !self.is_available() {
+            return Err(anyhow!("Ollama base URL is missing"));
+        }
+
+        let url = format!("{}/api/generate", trim_trailing_slash(&self.base_url));
+        let payload = serde_json::json!({
+            "model": model,
+            "prompt": prompt,
+            "stream": false,
+            "options": {
+                "temperature": temperature(opts),
+                "num_predict": opts.max_tokens,
+            }
+        });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+        parse_ollama_response(response).await
     }
 }
 

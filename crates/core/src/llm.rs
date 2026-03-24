@@ -5,9 +5,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum LlmRole {
-    MechanicalScaffolding,
-    SearchSpaceGuidance,
+    #[serde(alias = "MechanicalScaffolding")]
+    Scaffolding,
+    #[serde(alias = "SearchSpaceGuidance")]
+    SearchHints,
     ProseRendering,
+    LeanScaffold,
+    Advisory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -19,7 +23,7 @@ pub struct CompletionOpts {
 impl Default for CompletionOpts {
     fn default() -> Self {
         Self {
-            temperature_millis: 200,
+            temperature_millis: 100,
             max_tokens: 1024,
         }
     }

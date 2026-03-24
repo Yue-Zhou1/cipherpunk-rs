@@ -165,6 +165,7 @@ fn audit_config_and_manifest_round_trip() {
             api_key_present: false,
             provider: None,
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     };
@@ -183,6 +184,8 @@ fn audit_config_and_manifest_round_trip() {
         finding_counts: FindingCounts::default(),
         risk_score: 100,
         engines_run: vec!["crypto_zk".to_string()],
+        engine_outcomes: vec![],
+        coverage: None,
         optional_inputs_used: OptionalInputsSummary {
             spec_provided: true,
             prev_audit_provided: false,
@@ -223,6 +226,7 @@ fn audit_context_is_constructible_with_all_fields() {
             api_key_present: false,
             provider: None,
             no_llm_prose: true,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     });

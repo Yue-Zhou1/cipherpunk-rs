@@ -60,6 +60,7 @@ fn sample_config() -> AuditConfig {
             api_key_present: false,
             provider: None,
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     }
@@ -96,7 +97,7 @@ fn create_local_workspace_repo(root: &Path) -> (PathBuf, String) {
     .expect("write crate manifest");
     fs::write(
         repo_root.join("rollup-core/src/lib.rs"),
-        "pub fn verifier_ready() -> bool { true }\n",
+        "pub fn verifier_ready() -> bool { helper_ready() }\nfn helper_ready() -> bool { true }\n",
     )
     .expect("write crate source");
 
@@ -485,6 +486,37 @@ async fn workstation_commands_return_tree_file_and_console_data() {
         .expect("load redacted dataflow graph");
     assert_eq!(dataflow_graph.lens, "dataflow");
     assert!(dataflow_graph.redacted_values);
+
+    let symbol_graph = session
+        .load_symbol_graph(&created.session_id)
+        .await
+        .expect("load symbol graph");
+    assert_eq!(symbol_graph.lens, "symbol");
+    assert!(
+        symbol_graph
+            .nodes
+            .iter()
+            .any(|node| node.kind.contains("function")),
+        "symbol graph should contain function symbols"
+    );
+    assert!(
+        symbol_graph
+            .nodes
+            .iter()
+            .any(|node| node.label.contains("verifier_ready")),
+        "symbol graph should include crate functions"
+    );
+    assert!(
+        symbol_graph
+            .nodes
+            .iter()
+            .all(|node| node.file_path.is_some()),
+        "symbol nodes should include source file metadata"
+    );
+    assert!(
+        !symbol_graph.edges.is_empty(),
+        "symbol graph should include at least one relationship edge"
+    );
 
     let overview = session
         .load_security_overview(&created.session_id)

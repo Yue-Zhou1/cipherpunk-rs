@@ -79,6 +79,7 @@ pub fn build_test_config() -> AuditConfig {
             api_key_present: false,
             provider: None,
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::new(),
     }
@@ -107,8 +108,10 @@ impl LlmProvider for TestContextLlmProvider {
 
 fn role_label(role: &LlmRole) -> &'static str {
     match role {
-        LlmRole::MechanicalScaffolding => "scaffolding",
-        LlmRole::SearchSpaceGuidance => "search",
+        LlmRole::Scaffolding => "scaffolding",
+        LlmRole::SearchHints => "search",
         LlmRole::ProseRendering => "prose",
+        LlmRole::LeanScaffold => "lean",
+        LlmRole::Advisory => "advisory",
     }
 }

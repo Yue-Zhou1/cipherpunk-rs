@@ -12,6 +12,7 @@ describe("ipc transport", () => {
     window.sessionStorage.removeItem("audit-agent:wizard-id");
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("maps resolve_source to POST /api/source/resolve", async () => {
@@ -74,13 +75,106 @@ describe("ipc transport", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:3000/api/sessions/sess-1/graphs/dataflow?include_values=true",
-      {
+      expect.objectContaining({
         method: "GET",
         headers: { "Content-Type": "application/json" },
         body: undefined,
-      }
+        signal: expect.any(AbortSignal),
+      })
     );
   });
+
+  it("maps symbol graph route to /api/sessions/:id/graphs/symbol", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ nodes: [], edges: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const transport = new HttpTransport("http://localhost:3000");
+    await transport.invoke("load_symbol_graph", {
+      session_id: "sess-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/sessions/sess-1/graphs/symbol",
+      expect.objectContaining({
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it("avoids a double /api prefix when baseUrl already ends with /api", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ nodes: [], edges: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const transport = new HttpTransport("http://localhost:3000/api");
+    await transport.invoke("load_file_graph", { session_id: "sess-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/sessions/sess-1/graphs/file",
+      expect.objectContaining({
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it("normalizes multiple trailing slashes in baseUrl", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ nodes: [], edges: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const transport = new HttpTransport("http://localhost:3000///");
+    await transport.invoke("load_file_graph", { session_id: "sess-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/sessions/sess-1/graphs/file",
+      expect.objectContaining({
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it("aborts graph requests after 10 seconds", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const transport = new HttpTransport("http://localhost:3000");
+    const request = transport.invoke("load_file_graph", { session_id: "sess-1" });
+    const assertion = expect(request).rejects.toThrow("Request timed out after 10s");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+  }, 15_000);
 
   it("maps tail_session_console with limit query param", async () => {
     const fetchMock = vi.fn(async () =>

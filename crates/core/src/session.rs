@@ -112,6 +112,43 @@ pub struct SessionUiState {
     pub active_graph_view: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditPlan {
+    pub plan_id: String,
+    pub session_id: String,
+    pub overview: AuditPlanOverview,
+    pub domains: Vec<AuditPlanDomain>,
+    pub recommended_tools: Vec<AuditPlanTool>,
+    pub engines: AuditPlanEngines,
+    pub rationale: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditPlanOverview {
+    pub assets: Vec<String>,
+    pub trust_boundaries: Vec<String>,
+    pub hotspots: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditPlanDomain {
+    pub id: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditPlanTool {
+    pub tool: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditPlanEngines {
+    pub crypto_zk: bool,
+    pub distributed: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +191,40 @@ mod tests {
             decoded.ir_node_ids.is_empty(),
             "legacy records should deserialize with empty provenance"
         );
+    }
+
+    #[test]
+    fn audit_plan_roundtrips_through_serde() {
+        let plan = AuditPlan {
+            plan_id: "plan-1".to_string(),
+            session_id: "sess-1".to_string(),
+            overview: AuditPlanOverview {
+                assets: vec!["Asset A".to_string()],
+                trust_boundaries: vec!["Boundary A".to_string()],
+                hotspots: vec!["Hotspot A".to_string()],
+            },
+            domains: vec![AuditPlanDomain {
+                id: "crypto".to_string(),
+                rationale: "crypto checks".to_string(),
+            }],
+            recommended_tools: vec![AuditPlanTool {
+                tool: "Kani".to_string(),
+                rationale: "deterministic baseline".to_string(),
+            }],
+            engines: AuditPlanEngines {
+                crypto_zk: true,
+                distributed: false,
+            },
+            rationale: "generated from deterministic analysis".to_string(),
+            created_at: Utc::now(),
+        };
+
+        let encoded = serde_json::to_string(&plan).expect("serialize audit plan");
+        let decoded: AuditPlan = serde_json::from_str(&encoded).expect("deserialize audit plan");
+        assert_eq!(decoded.plan_id, plan.plan_id);
+        assert_eq!(decoded.session_id, plan.session_id);
+        assert_eq!(decoded.domains, plan.domains);
+        assert_eq!(decoded.recommended_tools, plan.recommended_tools);
+        assert_eq!(decoded.engines, plan.engines);
     }
 }

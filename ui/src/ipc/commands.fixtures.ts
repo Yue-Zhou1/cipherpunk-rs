@@ -1,6 +1,8 @@
 import type {
+  ActivitySummary,
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
+  AuditPlanResponse,
   AuditManifestResponse,
   AuditSessionSummary,
   ChecklistDomainPlan,
@@ -89,6 +91,61 @@ const FALLBACK_CONSOLE_ENTRIES: SessionConsoleEntry[] = [
   },
 ];
 
+const FALLBACK_ACTIVITY_SUMMARY: Omit<ActivitySummary, "sessionId"> = {
+  llmCalls: [
+    {
+      role: "SearchHints",
+      count: 2,
+      avgDurationMs: 85,
+      totalPromptChars: 510,
+      totalResponseChars: 930,
+      providersUsed: ["openai"],
+      succeeded: 2,
+      failed: 0,
+    },
+  ],
+  toolActions: [
+    {
+      toolFamily: "kani",
+      count: 1,
+      succeeded: 1,
+      failed: 0,
+      avgDurationMs: 42,
+    },
+  ],
+  reviewDecisions: [{ action: "confirm", count: 1 }],
+  engineOutcomes: [
+    { engine: "crypto_zk", status: "completed", findingsCount: 2, durationMs: 133 },
+    { engine: "distributed", status: "failed", findingsCount: 0, durationMs: 0 },
+  ],
+  totalEvents: 5,
+  totalDurationMs: 303,
+};
+
+const FALLBACK_AUDIT_PLAN: Omit<AuditPlanResponse, "sessionId"> = {
+  planId: "plan-fallback-1",
+  overview: {
+    assets: ["Session store", "IR pipeline", "Workstation API"],
+    trustBoundaries: ["Source intake boundary", "Analyst decision boundary"],
+    hotspots: ["Persistence writes", "Graph rendering bridge"],
+  },
+  domains: [
+    { id: "crypto", rationale: "workspace includes crypto-related crates and symbols" },
+    { id: "zk", rationale: "IR features include zk-adjacent patterns" },
+  ],
+  recommendedTools: [
+    { tool: "Kani", rationale: "deterministic baseline for symbol-level invariants" },
+    { tool: "Z3", rationale: "constraint solving for arithmetic/path invariants" },
+  ],
+  engines: {
+    cryptoZk: true,
+    distributed: false,
+  },
+  rationale:
+    "Generated from deterministic workspace analysis and checklist/tool recommendation synthesis.",
+  createdAt: new Date("2026-03-23T10:00:00Z").toISOString(),
+};
+
 const FALLBACK_FILE_GRAPH: ProjectGraphResponse = {
   sessionId: "sess-fallback",
   lens: "file",
@@ -164,6 +221,47 @@ const FALLBACK_DATAFLOW_GRAPH_VALUES: ProjectGraphResponse = {
       to: "d3",
       relation: "persist",
       valuePreview: "session_id=sess-...",
+    },
+  ],
+};
+
+const FALLBACK_SYMBOL_GRAPH: ProjectGraphResponse = {
+  sessionId: "sess-fallback",
+  lens: "symbol",
+  redactedValues: true,
+  nodes: [
+    {
+      id: "symbol:crates/core/src/session.rs::create_session",
+      label: "create_session",
+      kind: "function",
+      filePath: "crates/core/src/session.rs",
+      line: 18,
+    },
+    {
+      id: "symbol:crates/core/src/session.rs::persist_session",
+      label: "persist_session",
+      kind: "function",
+      filePath: "crates/core/src/session.rs",
+      line: 47,
+    },
+    {
+      id: "symbol:crates/apps/tauri-ui/src/ipc.rs::load_file_graph",
+      label: "load_file_graph",
+      kind: "function",
+      filePath: "crates/apps/tauri-ui/src/ipc.rs",
+      line: 22,
+    },
+  ],
+  edges: [
+    {
+      from: "symbol:crates/apps/tauri-ui/src/ipc.rs::load_file_graph",
+      to: "symbol:crates/core/src/session.rs::create_session",
+      relation: "calls",
+    },
+    {
+      from: "symbol:crates/core/src/session.rs::create_session",
+      to: "symbol:crates/core/src/session.rs::persist_session",
+      relation: "calls",
     },
   ],
 };
@@ -476,6 +574,14 @@ export function tailSessionConsoleFallback(
   return { sessionId, entries: FALLBACK_CONSOLE_ENTRIES.slice(-Math.max(1, limit)) };
 }
 
+export function loadActivitySummaryFallback(sessionId: string): ActivitySummary {
+  return { sessionId, ...FALLBACK_ACTIVITY_SUMMARY };
+}
+
+export function loadAuditPlanFallback(sessionId: string): AuditPlanResponse {
+  return { sessionId, ...FALLBACK_AUDIT_PLAN };
+}
+
 export function loadFileGraphFallback(sessionId: string): ProjectGraphResponse {
   return { ...FALLBACK_FILE_GRAPH, sessionId };
 }
@@ -492,6 +598,10 @@ export function loadDataflowGraphFallback(
     ...(includeValues ? FALLBACK_DATAFLOW_GRAPH_VALUES : FALLBACK_DATAFLOW_GRAPH_REDACTED),
     sessionId,
   };
+}
+
+export function loadSymbolGraphFallback(sessionId: string): ProjectGraphResponse {
+  return { ...FALLBACK_SYMBOL_GRAPH, sessionId };
 }
 
 export function loadSecurityOverviewFallback(sessionId: string): SecurityOverviewResponse {

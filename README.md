@@ -105,12 +105,33 @@ cargo run -p audit-agent-cli -- diff \
   --head <head_sha>
 ```
 
-### 4. CLI help
+### 4. Run LLM eval fixtures
+
+Use fixture-based LLM regression checks and save a baseline:
+
+```bash
+# TemplateFallback floor baseline
+cargo run -p audit-agent-cli -- eval \
+  --provider template \
+  --baseline baselines/template-fallback.json
+
+# Compare current provider output against an existing baseline
+cargo run -p audit-agent-cli -- eval \
+  --provider openai \
+  --compare baselines/template-fallback.json
+```
+
+By default, `eval` reads fixtures from
+`crates/services/llm-eval/fixtures`. Override with `--fixtures <dir>`.
+The command exits non-zero if any fixture fails or regresses versus `--compare`.
+
+### 5. CLI help
 
 ```bash
 cargo run -p audit-agent-cli -- --help
 cargo run -p audit-agent-cli -- analyze --help
 cargo run -p audit-agent-cli -- diff --help
+cargo run -p audit-agent-cli -- eval --help
 ```
 
 ## Desktop App (Tauri)

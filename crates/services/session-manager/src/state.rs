@@ -2,16 +2,23 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use audit_agent_core::audit_config::{AuditConfig, BudgetConfig, ResolvedSource, SourceOrigin};
 use audit_agent_core::finding::{Severity, VerificationStatus};
-use audit_agent_core::output::AuditManifest;
-use audit_agent_core::session::{AuditRecord, AuditRecordKind, AuditSession, SessionUiState};
+use audit_agent_core::output::{AuditManifest, CoverageReport};
+use audit_agent_core::session::{
+    AuditPlan, AuditPlanDomain, AuditPlanEngines, AuditPlanOverview, AuditPlanTool, AuditRecord,
+    AuditRecordKind, AuditSession, SessionUiState,
+};
+use audit_agent_core::tooling::{ToolActionResult, ToolActionStatus, ToolFamily};
 use chrono::Utc;
 use engine_crypto::intake_bridge::{CryptoEngineContext, EnvironmentManifest};
 use engine_crypto::rules::RuleEvaluator;
-use intake::config::{ConfigParser, RawEngineConfig, RawScope, RawSource, ValidatedConfig};
+use intake::config::{
+    ConfigParser, RawEngineConfig, RawLlmConfig, RawScope, RawSource, ValidatedConfig,
+};
 use intake::confirmation::{ConfirmationSummary, UserDecisions};
 use intake::project_snapshot_from_config;
 use intake::source::SourceInput;
@@ -20,17 +27,22 @@ use knowledge::KnowledgeBase;
 use knowledge::memory_block::MemoryBlock;
 use knowledge::memory_block::embedder::resolved_config_and_provider_from_env;
 use knowledge::models::AdjudicatedCase;
+use llm::{LlmInteractionHook, LlmProvenance};
 use orchestrator::{AuditJob, AuditJobKind, AuditOrchestrator};
 use project_ir::{
     ChecklistPlan as IrChecklistPlan, ProjectIr, ProjectIrBuilder,
     SecurityOverview as IrSecurityOverview,
 };
+use research::{ResearchQuery, ResearchService};
 use serde::{Deserialize, Serialize};
-use session_store::SessionStore;
+use session_store::{LlmInteractionEvent, SessionStore};
 
 use crate::{
-    ConfigParseResponse, OutputType, ResolvedSourceView, confirm_workspace, detect_workspace,
-    download_output, export_audit_yaml, get_audit_manifest, resolve_source,
+    ActivitySummary, AuditPlanDomainView, AuditPlanOverviewView, AuditPlanResponse,
+    ConfigParseResponse, EngineOutcomeView, EngineSelectionView, LlmCallSummary, OutputType,
+    ResolvedSourceView, ReviewDecisionSummary, ToolActionSummary, ToolRecommendationView,
+    confirm_workspace, detect_workspace, download_output, export_audit_yaml, get_audit_manifest,
+    resolve_source,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +181,12 @@ pub struct ProjectGraphNodeResponse {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_severity: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +264,16 @@ pub struct ToolbenchSimilarCaseResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResearchAdvisoryView {
+    pub source: String,
+    pub id: String,
+    pub title: String,
+    pub severity: Option<String>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoadToolbenchContextResponse {
     pub session_id: String,
     pub selection: ToolbenchSelectionResponse,
@@ -253,6 +281,8 @@ pub struct LoadToolbenchContextResponse {
     pub domains: Vec<ChecklistDomainPlanResponse>,
     pub overview_notes: Vec<String>,
     pub similar_cases: Vec<ToolbenchSimilarCaseResponse>,
+    #[serde(default)]
+    pub advisories: Vec<ResearchAdvisoryView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,8 +344,18 @@ pub struct UiSessionState {
     session_jobs: HashMap<String, Vec<SessionJobView>>,
     project_ir_cache: HashMap<String, ProjectIr>,
     review_records_cache: HashMap<String, Vec<AuditRecord>>,
+    graph_overlay_cache: HashMap<String, GraphOverlayCacheEntry>,
     session_store: Option<Arc<SessionStore>>,
+    research_service: Option<Arc<ResearchService>>,
 }
+
+#[derive(Debug, Clone)]
+struct GraphOverlayCacheEntry {
+    loaded_at: Instant,
+    records: Vec<AuditRecord>,
+}
+
+const GRAPH_OVERLAY_CACHE_TTL: Duration = Duration::from_secs(2);
 
 impl UiSessionState {
     pub fn new(work_dir: PathBuf) -> Self {
@@ -333,7 +373,9 @@ impl UiSessionState {
             session_jobs: HashMap::new(),
             project_ir_cache: HashMap::new(),
             review_records_cache: HashMap::new(),
+            graph_overlay_cache: HashMap::new(),
             session_store,
+            research_service: ResearchService::new().ok().map(Arc::new),
         }
     }
 
@@ -693,14 +735,191 @@ impl UiSessionState {
         })
     }
 
+    pub fn load_activity_summary(&self, session_id: &str) -> Result<ActivitySummary> {
+        self.ensure_session_exists(session_id)?;
+        let store = self
+            .session_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("no session store"))?;
+        let events = store.list_events(session_id)?;
+
+        let mut llm_by_role = HashMap::<String, LlmRoleAggregate>::new();
+        let mut tool_by_family = HashMap::<String, ToolFamilyAggregate>::new();
+        let mut review_by_action = HashMap::<String, usize>::new();
+        let mut engine_outcomes = Vec::<EngineOutcomeView>::new();
+        let mut total_duration_ms = 0_u64;
+
+        for event in &events {
+            match event.event_type.as_str() {
+                "llm.interaction" => {
+                    if let Ok(data) =
+                        serde_json::from_str::<LlmInteractionSummaryEvent>(&event.payload)
+                    {
+                        let aggregate = llm_by_role.entry(data.role).or_default();
+                        aggregate.count += 1;
+                        aggregate.total_duration_ms += data.duration_ms;
+                        aggregate.total_prompt_chars += data.prompt_chars;
+                        aggregate.total_response_chars += data.response_chars;
+                        aggregate.providers_used.insert(data.provider);
+                        if data.succeeded {
+                            aggregate.succeeded += 1;
+                        } else {
+                            aggregate.failed += 1;
+                        }
+                        total_duration_ms += data.duration_ms;
+                    }
+                }
+                "tool.action.completed" => {
+                    if let Ok(data) =
+                        serde_json::from_str::<ToolActionCompletedEvent>(&event.payload)
+                    {
+                        let aggregate = tool_by_family.entry(data.tool_family).or_default();
+                        aggregate.count += 1;
+                        aggregate.total_duration_ms += data.duration_ms;
+                        if data.status.eq_ignore_ascii_case("completed") {
+                            aggregate.succeeded += 1;
+                        } else {
+                            aggregate.failed += 1;
+                        }
+                        total_duration_ms += data.duration_ms;
+                    }
+                }
+                "tool.action" => {
+                    if let Ok(data) = serde_json::from_str::<ToolActionResult>(&event.payload) {
+                        let tool_family = tool_family_name(&data.tool_family).to_string();
+                        let aggregate = tool_by_family.entry(tool_family).or_default();
+                        aggregate.count += 1;
+                        if matches!(data.status, ToolActionStatus::Completed) {
+                            aggregate.succeeded += 1;
+                        } else {
+                            aggregate.failed += 1;
+                        }
+                    }
+                }
+                "review.decision" | "review.action" => {
+                    if let Ok(data) = serde_json::from_str::<ReviewDecisionEvent>(&event.payload) {
+                        *review_by_action.entry(data.action).or_default() += 1;
+                    }
+                }
+                "engine.completed" => {
+                    if let Ok(data) = serde_json::from_str::<EngineCompletedEvent>(&event.payload) {
+                        total_duration_ms += data.duration_ms;
+                        engine_outcomes.push(EngineOutcomeView {
+                            engine: data.engine,
+                            status: "completed".to_string(),
+                            findings_count: data.findings_count,
+                            duration_ms: data.duration_ms,
+                        });
+                    }
+                }
+                "engine.failed" => {
+                    if let Ok(data) = serde_json::from_str::<EngineFailedEvent>(&event.payload) {
+                        engine_outcomes.push(EngineOutcomeView {
+                            engine: data.engine,
+                            status: "failed".to_string(),
+                            findings_count: 0,
+                            duration_ms: 0,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut llm_calls = llm_by_role
+            .into_iter()
+            .map(|(role, aggregate)| {
+                let mut providers_used = aggregate.providers_used.into_iter().collect::<Vec<_>>();
+                providers_used.sort();
+                let avg_duration_ms = if aggregate.count == 0 {
+                    0
+                } else {
+                    aggregate.total_duration_ms / aggregate.count as u64
+                };
+                LlmCallSummary {
+                    role,
+                    count: aggregate.count,
+                    avg_duration_ms,
+                    total_prompt_chars: aggregate.total_prompt_chars,
+                    total_response_chars: aggregate.total_response_chars,
+                    providers_used,
+                    succeeded: aggregate.succeeded,
+                    failed: aggregate.failed,
+                }
+            })
+            .collect::<Vec<_>>();
+        llm_calls.sort_by(|a, b| a.role.cmp(&b.role));
+
+        let mut tool_actions = tool_by_family
+            .into_iter()
+            .map(|(tool_family, aggregate)| {
+                let avg_duration_ms = if aggregate.count == 0 {
+                    0
+                } else {
+                    aggregate.total_duration_ms / aggregate.count as u64
+                };
+                ToolActionSummary {
+                    tool_family,
+                    count: aggregate.count,
+                    succeeded: aggregate.succeeded,
+                    failed: aggregate.failed,
+                    avg_duration_ms,
+                }
+            })
+            .collect::<Vec<_>>();
+        tool_actions.sort_by(|a, b| a.tool_family.cmp(&b.tool_family));
+
+        let mut review_decisions = review_by_action
+            .into_iter()
+            .map(|(action, count)| ReviewDecisionSummary { action, count })
+            .collect::<Vec<_>>();
+        review_decisions.sort_by(|a, b| a.action.cmp(&b.action));
+
+        engine_outcomes.sort_by(|a, b| a.engine.cmp(&b.engine));
+
+        Ok(ActivitySummary {
+            session_id: session_id.to_string(),
+            llm_calls,
+            tool_actions,
+            review_decisions,
+            engine_outcomes,
+            total_events: events.len(),
+            total_duration_ms,
+        })
+    }
+
     pub async fn load_file_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
-        let ir = self.load_or_build_project_ir(session_id, false).await?;
-        Ok(file_graph_response(session_id, &ir))
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = self
+            .load_or_build_project_ir(session_id, false)
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = file_graph_response(session_id, &ir);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
     }
 
     pub async fn load_feature_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
-        let ir = self.load_or_build_project_ir(session_id, false).await?;
-        Ok(feature_graph_response(session_id, &ir))
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = self
+            .load_or_build_project_ir(session_id, false)
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = feature_graph_response(session_id, &ir);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
     }
 
     pub async fn load_dataflow_graph(
@@ -708,10 +927,37 @@ impl UiSessionState {
         session_id: &str,
         include_values: bool,
     ) -> Result<ProjectGraphResponse> {
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
         let ir = self
             .load_or_build_project_ir(session_id, include_values)
-            .await?;
-        Ok(dataflow_graph_response(session_id, &ir, !include_values))
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = dataflow_graph_response(session_id, &ir, !include_values);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
+    }
+
+    pub async fn load_symbol_graph(&mut self, session_id: &str) -> Result<ProjectGraphResponse> {
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = self
+            .load_or_build_project_ir(session_id, false)
+            .await
+            .map_err(map_project_ir_build_error)?;
+        let mut response = symbol_graph_response(session_id, &ir);
+        let records = self.load_graph_overlay_records(session_id)?;
+        annotate_graph_with_findings(&mut response.nodes, &records, Some(source_root.as_path()));
+        Ok(response)
     }
 
     pub async fn load_security_overview(
@@ -719,10 +965,17 @@ impl UiSessionState {
         session_id: &str,
     ) -> Result<LoadSecurityOverviewResponse> {
         let ir = self.load_or_build_project_ir(session_id, false).await?;
-        Ok(security_overview_response(
-            session_id,
-            ir.security_overview(),
-        ))
+        let mut response = security_overview_response(session_id, ir.security_overview());
+        let output_dir = self
+            .audit_config
+            .as_ref()
+            .map(|config| config.output_dir.clone())
+            .unwrap_or_else(|| self.work_dir.join("audit-output"));
+        let coverage = get_audit_manifest(&output_dir)
+            .ok()
+            .and_then(|manifest| manifest.coverage);
+        response.review_notes = prepend_coverage_warnings(response.review_notes, coverage.as_ref());
+        Ok(response)
     }
 
     pub async fn load_checklist_plan(
@@ -733,11 +986,58 @@ impl UiSessionState {
         Ok(checklist_plan_response(session_id, ir.checklist_plan()))
     }
 
+    pub fn load_audit_plan(&mut self, session_id: &str) -> Result<AuditPlanResponse> {
+        let _session = self.ensure_session_loaded(session_id)?;
+        let store = self
+            .session_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("no session store"))?;
+        let events = store.list_events_by_type(session_id, "audit.plan.generated")?;
+        let plan_event = events
+            .last()
+            .ok_or_else(|| anyhow!("audit plan not found for session `{session_id}`"))?;
+        let plan: AuditPlan = serde_json::from_str(&plan_event.payload)
+            .context("deserialize audit plan event payload")?;
+
+        Ok(AuditPlanResponse {
+            session_id: session_id.to_string(),
+            plan_id: plan.plan_id,
+            overview: AuditPlanOverviewView {
+                assets: plan.overview.assets,
+                trust_boundaries: plan.overview.trust_boundaries,
+                hotspots: plan.overview.hotspots,
+            },
+            domains: plan
+                .domains
+                .into_iter()
+                .map(|domain| AuditPlanDomainView {
+                    id: domain.id,
+                    rationale: domain.rationale,
+                })
+                .collect(),
+            recommended_tools: plan
+                .recommended_tools
+                .into_iter()
+                .map(|tool| ToolRecommendationView {
+                    tool: tool.tool,
+                    rationale: tool.rationale,
+                })
+                .collect(),
+            engines: EngineSelectionView {
+                crypto_zk: plan.engines.crypto_zk,
+                distributed: plan.engines.distributed,
+            },
+            rationale: plan.rationale,
+            created_at: plan.created_at.to_rfc3339(),
+        })
+    }
+
     pub async fn load_toolbench_context(
         &mut self,
         session_id: &str,
         selection: ToolbenchSelectionRequest,
     ) -> Result<LoadToolbenchContextResponse> {
+        let session = self.ensure_session_loaded(session_id)?;
         let ir = self.load_or_build_project_ir(session_id, false).await?;
         let overview = ir.security_overview();
         let checklist = ir.checklist_plan();
@@ -770,6 +1070,28 @@ impl UiSessionState {
             recommended_tools = fallback_tool_recommendations(&checklist);
         }
 
+        let advisories = self.load_research_advisories(&session).await;
+
+        if let Some(config) = self.audit_config.as_ref() {
+            let should_persist_plan = if let Some(store) = &self.session_store {
+                store
+                    .list_events_by_type(&session.session_id, "audit.plan.generated")?
+                    .is_empty()
+            } else {
+                !config.output_dir.join("audit-plan.json").exists()
+            };
+            if should_persist_plan {
+                let plan = generate_audit_plan(
+                    &session,
+                    &overview,
+                    &checklist,
+                    &recommended_tools,
+                    config,
+                );
+                self.persist_audit_plan(&session.session_id, &plan, &config.output_dir)?;
+            }
+        }
+
         Ok(LoadToolbenchContextResponse {
             session_id: session_id.to_string(),
             selection: ToolbenchSelectionResponse {
@@ -780,7 +1102,34 @@ impl UiSessionState {
             domains: checklist_domain_responses(&checklist),
             overview_notes: overview.review_notes,
             similar_cases,
+            advisories,
         })
+    }
+
+    fn persist_audit_plan(
+        &self,
+        session_id: &str,
+        plan: &AuditPlan,
+        output_dir: &Path,
+    ) -> Result<()> {
+        if let Some(store) = &self.session_store {
+            let plan_event = session_store::SessionEvent {
+                event_id: format!("audit-plan:{}", plan.plan_id),
+                event_type: "audit.plan.generated".to_string(),
+                payload: serde_json::to_string(plan)?,
+                created_at: Utc::now(),
+            };
+            store.append_event(session_id, &plan_event)?;
+        }
+
+        fs::create_dir_all(output_dir)
+            .with_context(|| format!("create output directory {}", output_dir.display()))?;
+        fs::write(
+            output_dir.join("audit-plan.json"),
+            serde_json::to_string_pretty(plan)?,
+        )
+        .with_context(|| format!("write {}", output_dir.join("audit-plan.json").display()))?;
+        Ok(())
     }
 
     pub async fn load_review_queue(&mut self, session_id: &str) -> Result<LoadReviewQueueResponse> {
@@ -862,6 +1211,43 @@ impl UiSessionState {
             .collect())
     }
 
+    fn load_graph_overlay_records(&mut self, session_id: &str) -> Result<Vec<AuditRecord>> {
+        if let Some(cached) = self.graph_overlay_cache.get(session_id) {
+            if cached.loaded_at.elapsed() <= GRAPH_OVERLAY_CACHE_TTL {
+                return Ok(cached.records.clone());
+            }
+        }
+
+        let records = if let Some(store) = &self.session_store {
+            let mut records = store.list_records(session_id, Some("finding"))?;
+            records.extend(store.list_records(session_id, Some("candidate"))?);
+            records
+        } else {
+            self.review_records_cache
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|record| {
+                    matches!(
+                        record.kind,
+                        AuditRecordKind::Candidate | AuditRecordKind::Finding
+                    )
+                })
+                .collect()
+        };
+
+        self.graph_overlay_cache.insert(
+            session_id.to_string(),
+            GraphOverlayCacheEntry {
+                loaded_at: Instant::now(),
+                records: records.clone(),
+            },
+        );
+
+        Ok(records)
+    }
+
     fn load_record(&self, session_id: &str, record_id: &str) -> Result<Option<AuditRecord>> {
         if let Some(store) = &self.session_store {
             return store.load_record(session_id, record_id);
@@ -894,6 +1280,7 @@ impl UiSessionState {
                 records.push(record.clone());
             }
         }
+        self.graph_overlay_cache.remove(session_id);
         Ok(())
     }
 
@@ -928,6 +1315,57 @@ impl UiSessionState {
                 .or_default();
         }
         Ok(())
+    }
+
+    pub fn append_llm_interaction_event(
+        &self,
+        session_id: &str,
+        provenance: &LlmProvenance,
+        succeeded: bool,
+    ) -> Result<()> {
+        let Some(store) = &self.session_store else {
+            return Ok(());
+        };
+        store.append_llm_interaction_event(
+            session_id,
+            &LlmInteractionEvent {
+                provider: provenance.provider.clone(),
+                model: provenance.model.clone(),
+                role: provenance.role.clone(),
+                duration_ms: provenance.duration_ms,
+                prompt_chars: provenance.prompt_chars,
+                response_chars: provenance.response_chars,
+                attempt: provenance.attempt,
+                succeeded,
+            },
+        )
+    }
+
+    pub fn llm_interaction_hook_for_session(&self, session_id: &str) -> LlmInteractionHook {
+        let store = self.session_store.clone();
+        let session_id = session_id.to_string();
+        Arc::new(move |provenance: &LlmProvenance, succeeded: bool| {
+            let Some(store) = &store else {
+                return;
+            };
+            let interaction = LlmInteractionEvent {
+                provider: provenance.provider.clone(),
+                model: provenance.model.clone(),
+                role: provenance.role.clone(),
+                duration_ms: provenance.duration_ms,
+                prompt_chars: provenance.prompt_chars,
+                response_chars: provenance.response_chars,
+                attempt: provenance.attempt,
+                succeeded,
+            };
+            if let Err(err) = store.append_llm_interaction_event(&session_id, &interaction) {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "failed to append llm interaction session event"
+                );
+            }
+        })
     }
 
     fn ingest_review_feedback(&self, record: &AuditRecord, request: &ApplyReviewDecisionRequest) {
@@ -1067,6 +1505,23 @@ impl UiSessionState {
         .into())
     }
 
+    fn ensure_session_exists(&self, session_id: &str) -> Result<()> {
+        if self.sessions.contains_key(session_id) {
+            return Ok(());
+        }
+
+        if let Some(store) = &self.session_store {
+            if store.load_session(session_id)?.is_some() {
+                return Ok(());
+            }
+        }
+
+        Err(crate::UnknownSessionError {
+            session_id: session_id.to_string(),
+        }
+        .into())
+    }
+
     fn knowledge_feedback_store_path(&self) -> PathBuf {
         self.work_dir.join("knowledge-feedback.yaml")
     }
@@ -1085,6 +1540,66 @@ impl UiSessionState {
         } else {
             None
         }
+    }
+
+    async fn load_research_advisories(&self, session: &AuditSession) -> Vec<ResearchAdvisoryView> {
+        let Some(research_service) = &self.research_service else {
+            return Vec::new();
+        };
+
+        let workspace = match WorkspaceAnalyzer::analyze(&session.snapshot.source.local_path) {
+            Ok(workspace) => workspace,
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session.session_id,
+                    error = %err,
+                    "failed to analyze workspace for research advisories"
+                );
+                return Vec::new();
+            }
+        };
+
+        let mut advisories = Vec::<ResearchAdvisoryView>::new();
+        let mut seen_dependencies = HashSet::<String>::new();
+        let mut seen_advisories = HashSet::<String>::new();
+
+        'deps: for member in workspace.members {
+            for dependency in member.dependencies {
+                if !seen_dependencies.insert(dependency.name.clone()) {
+                    continue;
+                }
+
+                match research_service
+                    .query(&ResearchQuery::RustSecAdvisory {
+                        crate_name: dependency.name.clone(),
+                    })
+                    .await
+                {
+                    Ok(result) => {
+                        for finding in result.findings {
+                            let key = format!("{}:{}", finding.source, finding.id);
+                            if !seen_advisories.insert(key) {
+                                continue;
+                            }
+                            advisories.push(ResearchAdvisoryView {
+                                source: finding.source,
+                                id: finding.id,
+                                title: finding.title,
+                                severity: finding.severity,
+                                url: finding.url,
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        if err.to_string().to_ascii_lowercase().contains("rate limit") {
+                            break 'deps;
+                        }
+                    }
+                }
+            }
+        }
+
+        advisories
     }
 
     fn load_knowledge_base(&self) -> Result<KnowledgeBase> {
@@ -1170,6 +1685,7 @@ fn job_kind(kind: &AuditJobKind) -> String {
         AuditJobKind::BuildProjectIr => "build_project_ir".to_string(),
         AuditJobKind::GenerateAiOverview => "generate_ai_overview".to_string(),
         AuditJobKind::PlanChecklists => "plan_checklists".to_string(),
+        AuditJobKind::RunEngine { engine_name } => format!("run_engine:{engine_name}"),
         AuditJobKind::RunDomainChecklist { domain_id } => {
             format!("run_domain_checklist:{domain_id}")
         }
@@ -1190,6 +1706,73 @@ fn session_jobs_from_events(events: &[session_store::SessionEvent]) -> Vec<Sessi
         }
     }
     jobs
+}
+
+#[derive(Debug, Deserialize)]
+struct LlmInteractionSummaryEvent {
+    provider: String,
+    role: String,
+    duration_ms: u64,
+    prompt_chars: usize,
+    response_chars: usize,
+    succeeded: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolActionCompletedEvent {
+    tool_family: String,
+    status: String,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReviewDecisionEvent {
+    action: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EngineCompletedEvent {
+    engine: String,
+    findings_count: usize,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct EngineFailedEvent {
+    engine: String,
+}
+
+#[derive(Debug, Default)]
+struct LlmRoleAggregate {
+    count: usize,
+    total_duration_ms: u64,
+    total_prompt_chars: usize,
+    total_response_chars: usize,
+    providers_used: HashSet<String>,
+    succeeded: usize,
+    failed: usize,
+}
+
+#[derive(Debug, Default)]
+struct ToolFamilyAggregate {
+    count: usize,
+    total_duration_ms: u64,
+    succeeded: usize,
+    failed: usize,
+}
+
+fn tool_family_name(tool_family: &ToolFamily) -> &'static str {
+    match tool_family {
+        ToolFamily::Kani => "kani",
+        ToolFamily::Z3 => "z3",
+        ToolFamily::CargoFuzz => "cargo_fuzz",
+        ToolFamily::MadSim => "madsim",
+        ToolFamily::Chaos => "chaos",
+        ToolFamily::CircomZ3 => "circom_z3",
+        ToolFamily::Research => "research",
+        ToolFamily::CairoExternal => "cairo_external",
+        ToolFamily::LeanExternal => "lean_external",
+    }
 }
 
 const MAX_PROJECT_TREE_DEPTH: usize = 7;
@@ -1384,6 +1967,25 @@ fn console_entry_from_event(event: &session_store::SessionEvent) -> SessionConso
             }
         }
     }
+    if event.event_type == "provider.failover" {
+        level = SessionConsoleLevel::Warning;
+        if let Ok(orchestrator::AuditEvent::ProviderFailover { from, to, role, .. }) =
+            serde_json::from_str::<orchestrator::AuditEvent>(&event.payload)
+        {
+            message = format!("{role} failover: {from} -> {to}");
+        }
+    }
+    if event.event_type == "adviser.consulted" {
+        if let Ok(orchestrator::AuditEvent::AdviserConsulted {
+            engine,
+            suggestion,
+            applied,
+        }) = serde_json::from_str::<orchestrator::AuditEvent>(&event.payload)
+        {
+            let status = if applied { "applied" } else { "observed" };
+            message = format!("adviser {status} for {engine}: {suggestion}");
+        }
+    }
 
     SessionConsoleEntry {
         timestamp: event.created_at.format("%H:%M:%S").to_string(),
@@ -1410,6 +2012,26 @@ async fn build_project_ir_for_session(
         })
 }
 
+fn map_project_ir_build_error(err: anyhow::Error) -> anyhow::Error {
+    let has_not_found_io = err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .map(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+            .unwrap_or(false)
+    });
+
+    let message = err.to_string().to_ascii_lowercase();
+    let missing_source_context = message.contains("path does not exist")
+        || message.contains("resolve_source must be called")
+        || message.contains("confirm_workspace must be called");
+
+    if has_not_found_io || missing_source_context {
+        anyhow!("ProjectIR has not been built for this session. Run BuildProjectIr first.")
+    } else {
+        err
+    }
+}
+
 fn file_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse {
     ProjectGraphResponse {
         session_id: session_id.to_string(),
@@ -1424,6 +2046,9 @@ fn file_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse
                 label: node.path.display().to_string(),
                 kind: format!("file:{}", node.language),
                 file_path: Some(relative_path_to_string(&node.path)),
+                line: None,
+                finding_count: None,
+                max_severity: None,
             })
             .collect(),
         edges: ir
@@ -1454,6 +2079,9 @@ fn feature_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphRespo
                 label: node.name.clone(),
                 kind: "feature".to_string(),
                 file_path: Some(node.source.clone()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
             })
             .collect(),
         edges: ir
@@ -1488,6 +2116,9 @@ fn dataflow_graph_response(
                 label: node.label.clone(),
                 kind: "dataflow".to_string(),
                 file_path: node.file.as_ref().map(|path| relative_path_to_string(path)),
+                line: None,
+                finding_count: None,
+                max_severity: None,
             })
             .collect(),
         edges: ir
@@ -1504,6 +2135,161 @@ fn dataflow_graph_response(
     }
 }
 
+fn symbol_graph_response(session_id: &str, ir: &ProjectIr) -> ProjectGraphResponse {
+    ProjectGraphResponse {
+        session_id: session_id.to_string(),
+        lens: "symbol".to_string(),
+        redacted_values: true,
+        nodes: ir
+            .symbol_graph
+            .nodes
+            .iter()
+            .map(|node| ProjectGraphNodeResponse {
+                id: node.id.clone(),
+                label: node.name.clone(),
+                kind: node.kind.clone(),
+                file_path: Some(relative_path_to_string(&node.file)),
+                line: Some(node.line),
+                finding_count: None,
+                max_severity: None,
+            })
+            .collect(),
+        edges: ir
+            .symbol_graph
+            .edges
+            .iter()
+            .map(|edge| ProjectGraphEdgeResponse {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                relation: edge.relation.clone(),
+                value_preview: None,
+            })
+            .collect(),
+    }
+}
+
+fn normalized_graph_path(path: &str) -> String {
+    path.trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
+}
+
+fn is_absolute_like(path: &str) -> bool {
+    Path::new(path).is_absolute()
+        || path
+            .as_bytes()
+            .get(1)
+            .map(|byte| *byte == b':')
+            .unwrap_or(false)
+}
+
+fn split_path_segments(path: &str) -> Vec<&str> {
+    path.split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn has_segment_suffix(path: &str, suffix: &str) -> bool {
+    let path_segments = split_path_segments(path);
+    let suffix_segments = split_path_segments(suffix);
+    if suffix_segments.is_empty() || suffix_segments.len() > path_segments.len() {
+        return false;
+    }
+
+    let start = path_segments.len() - suffix_segments.len();
+    path_segments[start..] == suffix_segments
+}
+
+fn graph_paths_match(node_path: &str, record_path: &str) -> bool {
+    if node_path == record_path {
+        return true;
+    }
+
+    let node_absolute = is_absolute_like(node_path);
+    let record_absolute = is_absolute_like(record_path);
+    if node_absolute == record_absolute {
+        return false;
+    }
+
+    if node_absolute {
+        has_segment_suffix(node_path, record_path)
+    } else {
+        has_segment_suffix(record_path, node_path)
+    }
+}
+
+fn normalize_record_location_path(path: &Path, source_root: Option<&Path>) -> String {
+    if let Some(root) = source_root {
+        if let Ok(stripped) = path.strip_prefix(root) {
+            return normalized_graph_path(&stripped.to_string_lossy());
+        }
+    }
+
+    normalized_graph_path(&path.to_string_lossy())
+}
+
+fn severity_rank(severity: &Severity) -> u8 {
+    match severity {
+        Severity::Critical => 5,
+        Severity::High => 4,
+        Severity::Medium => 3,
+        Severity::Low => 2,
+        Severity::Observation => 1,
+    }
+}
+
+fn annotate_graph_with_findings(
+    nodes: &mut [ProjectGraphNodeResponse],
+    records: &[AuditRecord],
+    source_root: Option<&Path>,
+) {
+    for node in nodes.iter_mut() {
+        node.finding_count = None;
+        node.max_severity = None;
+
+        let Some(file_path) = node.file_path.as_ref() else {
+            continue;
+        };
+        let normalized = normalized_graph_path(file_path);
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let mut count = 0_u32;
+        let mut max_severity: Option<Severity> = None;
+
+        for record in records {
+            let record_matches = record.locations.iter().any(|location| {
+                let path = normalize_record_location_path(&location.file, source_root);
+                !path.is_empty() && graph_paths_match(&normalized, &path)
+            });
+
+            if !record_matches {
+                continue;
+            }
+
+            count = count.saturating_add(1);
+            if let Some(severity) = record.severity.as_ref() {
+                let is_higher = max_severity
+                    .as_ref()
+                    .map(|current| severity_rank(severity) > severity_rank(current))
+                    .unwrap_or(true);
+                if is_higher {
+                    max_severity = Some(severity.clone());
+                }
+            }
+        }
+
+        if count > 0 {
+            node.finding_count = Some(count);
+        }
+        if let Some(severity) = max_severity.as_ref() {
+            node.max_severity = Some(severity_name(severity).to_string());
+        }
+    }
+}
+
 fn security_overview_response(
     session_id: &str,
     overview: IrSecurityOverview,
@@ -1515,6 +2301,26 @@ fn security_overview_response(
         hotspots: overview.hotspots,
         review_notes: overview.review_notes,
     }
+}
+
+fn prepend_coverage_warnings(
+    review_notes: Vec<String>,
+    coverage: Option<&CoverageReport>,
+) -> Vec<String> {
+    let mut prefixed = coverage
+        .map(|coverage| {
+            coverage
+                .warnings
+                .iter()
+                .map(|warning| format!("[COVERAGE] {warning}"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if prefixed.is_empty() {
+        return review_notes;
+    }
+    prefixed.extend(review_notes);
+    prefixed
 }
 
 fn checklist_plan_response(session_id: &str, plan: IrChecklistPlan) -> LoadChecklistPlanResponse {
@@ -1770,6 +2576,49 @@ fn fallback_tool_recommendations(plan: &IrChecklistPlan) -> Vec<ToolbenchRecomme
     recommendations
 }
 
+fn generate_audit_plan(
+    session: &AuditSession,
+    overview: &IrSecurityOverview,
+    checklist_plan: &IrChecklistPlan,
+    tool_recommendations: &[ToolbenchRecommendationResponse],
+    config: &AuditConfig,
+) -> AuditPlan {
+    AuditPlan {
+        plan_id: format!("plan-{}", Utc::now().timestamp_micros()),
+        session_id: session.session_id.clone(),
+        overview: AuditPlanOverview {
+            assets: overview.assets.clone(),
+            trust_boundaries: overview.trust_boundaries.clone(),
+            hotspots: overview.hotspots.clone(),
+        },
+        domains: checklist_plan
+            .domains
+            .iter()
+            .map(|domain| AuditPlanDomain {
+                id: domain.id.clone(),
+                rationale: domain.rationale.clone(),
+            })
+            .collect(),
+        recommended_tools: tool_recommendations
+            .iter()
+            .map(|tool| AuditPlanTool {
+                tool: tool.tool_id.clone(),
+                rationale: tool.rationale.clone(),
+            })
+            .collect(),
+        engines: AuditPlanEngines {
+            crypto_zk: config.engines.crypto_zk,
+            distributed: config.engines.distributed,
+        },
+        rationale: format!(
+            "Generated from workspace analysis of {} target crates with {} detected frameworks.",
+            config.scope.target_crates.len(),
+            config.scope.detected_frameworks.len(),
+        ),
+        created_at: Utc::now(),
+    }
+}
+
 fn default_review_ir_node_ids(ir: &ProjectIr) -> Vec<String> {
     let mut ids = Vec::<String>::new();
     let mut seen = HashSet::<String>::new();
@@ -1959,6 +2808,7 @@ fn test_audit_config(work_dir: &Path) -> AuditConfig {
             api_key_present: false,
             provider: None,
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     }
@@ -2021,6 +2871,7 @@ fn default_validated_config(source: &ResolvedSource) -> ValidatedConfig {
             max_llm_retries: 3,
             semantic_index_timeout_secs: 120,
         },
+        llm: RawLlmConfig::default(),
         output_dir: PathBuf::from("audit-output"),
     }
 }
@@ -2134,10 +2985,16 @@ mod tests {
             "[package]\nname = \"crate-b\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .expect("write crate-b manifest");
-        fs::write(workspace.path().join("crate-a/src/lib.rs"), "pub fn a() {}\n")
-            .expect("write crate-a source");
-        fs::write(workspace.path().join("crate-b/src/lib.rs"), "pub fn b() {}\n")
-            .expect("write crate-b source");
+        fs::write(
+            workspace.path().join("crate-a/src/lib.rs"),
+            "pub fn a() {}\n",
+        )
+        .expect("write crate-a source");
+        fs::write(
+            workspace.path().join("crate-b/src/lib.rs"),
+            "pub fn b() {}\n",
+        )
+        .expect("write crate-b source");
 
         let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
         let mut config = test_audit_config(workspace.path());
@@ -2175,5 +3032,421 @@ mod tests {
             paths.extend(all_tree_paths(&node.children));
         }
         paths
+    }
+
+    #[test]
+    fn coverage_warnings_are_prefixed_and_prepended_to_review_notes() {
+        let existing = vec![
+            "AI-generated overview material must remain unverified until analyst review"
+                .to_string(),
+        ];
+        let coverage = audit_agent_core::output::CoverageReport {
+            engines_requested: 2,
+            engines_completed: 1,
+            engines_failed: 1,
+            engines_skipped: 0,
+            coverage_complete: false,
+            warnings: vec!["Engine 'crypto_zk' failed: timeout".to_string()],
+            failover_warnings: vec![],
+        };
+
+        let merged = prepend_coverage_warnings(existing.clone(), Some(&coverage));
+
+        assert_eq!(
+            merged.first(),
+            Some(&"[COVERAGE] Engine 'crypto_zk' failed: timeout".to_string())
+        );
+        assert_eq!(merged[1], existing[0]);
+    }
+
+    #[test]
+    fn annotate_graph_with_findings_populates_count_and_max_severity() {
+        let mut nodes = vec![
+            ProjectGraphNodeResponse {
+                id: "node-a".to_string(),
+                label: "lib.rs".to_string(),
+                kind: "file".to_string(),
+                file_path: Some("src/lib.rs".to_string()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
+            },
+            ProjectGraphNodeResponse {
+                id: "node-b".to_string(),
+                label: "mod.rs".to_string(),
+                kind: "file".to_string(),
+                file_path: Some("src/mod.rs".to_string()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
+            },
+            ProjectGraphNodeResponse {
+                id: "node-c".to_string(),
+                label: "summary".to_string(),
+                kind: "feature".to_string(),
+                file_path: Some("src/summary.rs".to_string()),
+                line: None,
+                finding_count: None,
+                max_severity: None,
+            },
+        ];
+
+        let mut finding = AuditRecord::candidate(
+            "finding-1",
+            "Critical issue",
+            VerificationStatus::unverified("pending"),
+        );
+        finding.kind = AuditRecordKind::Finding;
+        finding.severity = Some(Severity::Critical);
+        finding
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "core".to_string(),
+                module: "core::lib".to_string(),
+                file: PathBuf::from("/tmp/repo/src/lib.rs"),
+                line_range: (10, 12),
+                snippet: None,
+            });
+
+        let mut candidate = AuditRecord::candidate(
+            "candidate-1",
+            "Low issue",
+            VerificationStatus::unverified("pending"),
+        );
+        candidate.severity = Some(Severity::Low);
+        candidate
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "core".to_string(),
+                module: "core::mod".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                line_range: (20, 22),
+                snippet: None,
+            });
+
+        let mut unmatched = AuditRecord::candidate(
+            "candidate-2",
+            "Observation",
+            VerificationStatus::unverified("pending"),
+        );
+        unmatched.severity = Some(Severity::Observation);
+        unmatched
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "core".to_string(),
+                module: "core::other".to_string(),
+                file: PathBuf::from("src/other.rs"),
+                line_range: (1, 1),
+                snippet: None,
+            });
+
+        annotate_graph_with_findings(&mut nodes, &[finding, candidate, unmatched], None);
+
+        assert_eq!(nodes[0].finding_count, Some(2));
+        assert_eq!(nodes[0].max_severity.as_deref(), Some("critical"));
+        assert_eq!(nodes[1].finding_count, None);
+        assert_eq!(nodes[1].max_severity, None);
+        assert_eq!(nodes[2].finding_count, None);
+        assert_eq!(nodes[2].max_severity, None);
+    }
+
+    #[test]
+    fn annotate_graph_with_findings_does_not_match_same_suffix_from_other_crates() {
+        let mut nodes = vec![ProjectGraphNodeResponse {
+            id: "node-a".to_string(),
+            label: "src/lib.rs".to_string(),
+            kind: "file".to_string(),
+            file_path: Some("src/lib.rs".to_string()),
+            line: None,
+            finding_count: None,
+            max_severity: None,
+        }];
+
+        let mut finding = AuditRecord::candidate(
+            "finding-1",
+            "Cross-crate issue",
+            VerificationStatus::unverified("pending"),
+        );
+        finding.kind = AuditRecordKind::Finding;
+        finding.severity = Some(Severity::High);
+        finding
+            .locations
+            .push(audit_agent_core::finding::CodeLocation {
+                crate_name: "other-crate".to_string(),
+                module: "other_crate::lib".to_string(),
+                file: PathBuf::from("/tmp/repo/other-crate/src/lib.rs"),
+                line_range: (4, 4),
+                snippet: None,
+            });
+
+        annotate_graph_with_findings(&mut nodes, &[finding], Some(Path::new("/tmp/repo")));
+
+        assert_eq!(nodes[0].finding_count, None);
+        assert_eq!(nodes[0].max_severity, None);
+    }
+
+    #[test]
+    fn console_entry_marks_provider_failover_as_warning() {
+        let event = session_store::SessionEvent {
+            event_id: "evt-failover".to_string(),
+            event_type: "provider.failover".to_string(),
+            payload: serde_json::to_string(&orchestrator::AuditEvent::ProviderFailover {
+                from: "openai".to_string(),
+                to: "template-fallback".to_string(),
+                role: "Scaffolding".to_string(),
+                reason: "transient error".to_string(),
+            })
+            .expect("serialize failover event"),
+            created_at: Utc::now(),
+        };
+
+        let entry = console_entry_from_event(&event);
+        assert_eq!(entry.level, SessionConsoleLevel::Warning);
+        assert!(entry.message.contains("openai -> template-fallback"));
+    }
+
+    #[test]
+    fn load_activity_summary_aggregates_llm_tool_review_and_engine_events() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
+        let session = AuditSession {
+            session_id: "sess-activity".to_string(),
+            snapshot: project_snapshot_from_config(
+                &test_audit_config(workspace.path()),
+                "snap-activity".to_string(),
+            ),
+            selected_domains: vec![],
+            ui_state: SessionUiState::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        state
+            .session_store
+            .as_ref()
+            .expect("session store")
+            .create_session(&session)
+            .expect("create session");
+        state
+            .sessions
+            .insert(session.session_id.clone(), session.clone());
+
+        let store = state.session_store.as_ref().expect("session store");
+        let now = Utc::now();
+        let events = vec![
+            session_store::SessionEvent {
+                event_id: "evt-llm".to_string(),
+                event_type: "llm.interaction".to_string(),
+                payload: serde_json::json!({
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini",
+                    "role": "SearchHints",
+                    "duration_ms": 120,
+                    "prompt_chars": 300,
+                    "response_chars": 600,
+                    "attempt": 1,
+                    "succeeded": true
+                })
+                .to_string(),
+                created_at: now,
+            },
+            session_store::SessionEvent {
+                event_id: "evt-tool".to_string(),
+                event_type: "tool.action.completed".to_string(),
+                payload: serde_json::json!({
+                    "action_id": "action-1",
+                    "tool_family": "kani",
+                    "target": "crate-a",
+                    "status": "Completed",
+                    "duration_ms": 8
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(1),
+            },
+            session_store::SessionEvent {
+                event_id: "evt-review".to_string(),
+                event_type: "review.decision".to_string(),
+                payload: serde_json::json!({
+                    "record_id": "cand-1",
+                    "action": "confirm",
+                    "analyst_note": "validated"
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(2),
+            },
+            session_store::SessionEvent {
+                event_id: "evt-engine-ok".to_string(),
+                event_type: "engine.completed".to_string(),
+                payload: serde_json::json!({
+                    "engine": "crypto_zk",
+                    "findings_count": 2,
+                    "duration_ms": 33
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(3),
+            },
+            session_store::SessionEvent {
+                event_id: "evt-engine-fail".to_string(),
+                event_type: "engine.failed".to_string(),
+                payload: serde_json::json!({
+                    "engine": "distributed",
+                    "reason": "timeout"
+                })
+                .to_string(),
+                created_at: now + chrono::TimeDelta::seconds(4),
+            },
+        ];
+
+        for event in &events {
+            store
+                .append_event(&session.session_id, event)
+                .expect("append event");
+        }
+
+        let summary = state
+            .load_activity_summary(&session.session_id)
+            .expect("load activity summary");
+        assert_eq!(summary.session_id, session.session_id);
+        assert_eq!(summary.total_events, 5);
+        assert_eq!(summary.total_duration_ms, 161);
+
+        assert_eq!(summary.llm_calls.len(), 1);
+        let llm = &summary.llm_calls[0];
+        assert_eq!(llm.role, "SearchHints");
+        assert_eq!(llm.count, 1);
+        assert_eq!(llm.avg_duration_ms, 120);
+        assert_eq!(llm.total_prompt_chars, 300);
+        assert_eq!(llm.total_response_chars, 600);
+        assert_eq!(llm.providers_used, vec!["openai".to_string()]);
+        assert_eq!(llm.succeeded, 1);
+        assert_eq!(llm.failed, 0);
+
+        assert_eq!(summary.tool_actions.len(), 1);
+        let tool = &summary.tool_actions[0];
+        assert_eq!(tool.tool_family, "kani");
+        assert_eq!(tool.count, 1);
+        assert_eq!(tool.succeeded, 1);
+        assert_eq!(tool.failed, 0);
+        assert_eq!(tool.avg_duration_ms, 8);
+
+        assert_eq!(summary.review_decisions.len(), 1);
+        assert_eq!(summary.review_decisions[0].action, "confirm");
+        assert_eq!(summary.review_decisions[0].count, 1);
+
+        assert_eq!(summary.engine_outcomes.len(), 2);
+        assert!(
+            summary
+                .engine_outcomes
+                .iter()
+                .any(|item| item.engine == "crypto_zk"
+                    && item.status == "completed"
+                    && item.findings_count == 2
+                    && item.duration_ms == 33)
+        );
+        assert!(
+            summary
+                .engine_outcomes
+                .iter()
+                .any(|item| item.engine == "distributed"
+                    && item.status == "failed"
+                    && item.findings_count == 0
+                    && item.duration_ms == 0)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_audit_plan_returns_generated_plan_after_toolbench_context() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"demo\"]\nresolver = \"2\"\n",
+        )
+        .expect("write workspace manifest");
+        fs::create_dir_all(workspace.path().join("demo/src")).expect("create src");
+        fs::write(
+            workspace.path().join("demo/Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write member manifest");
+        fs::write(
+            workspace.path().join("demo/src/lib.rs"),
+            "pub fn demo() {}\n",
+        )
+        .expect("write source");
+
+        let mut state = UiSessionState::new(workspace.path().join(".audit-work"));
+        let mut config = test_audit_config(workspace.path());
+        config.output_dir = workspace.path().join("audit-output");
+        config.scope.target_crates = vec!["demo".to_string()];
+        state.audit_config = Some(config.clone());
+
+        let session = AuditSession {
+            session_id: "sess-plan".to_string(),
+            snapshot: project_snapshot_from_config(&config, "snap-plan".to_string()),
+            selected_domains: vec!["crypto".to_string()],
+            ui_state: SessionUiState::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        state
+            .session_store
+            .as_ref()
+            .expect("session store")
+            .create_session(&session)
+            .expect("create session");
+        state
+            .sessions
+            .insert(session.session_id.clone(), session.clone());
+
+        state
+            .load_toolbench_context(
+                &session.session_id,
+                ToolbenchSelectionRequest {
+                    kind: "session".to_string(),
+                    id: session.session_id.clone(),
+                },
+            )
+            .await
+            .expect("load toolbench context");
+
+        let plan = state
+            .load_audit_plan(&session.session_id)
+            .expect("load audit plan");
+        assert_eq!(plan.session_id, session.session_id);
+        assert!(!plan.plan_id.is_empty());
+        assert!(
+            !plan.recommended_tools.is_empty(),
+            "generated plan should include tool recommendations"
+        );
+
+        state
+            .load_toolbench_context(
+                &session.session_id,
+                ToolbenchSelectionRequest {
+                    kind: "session".to_string(),
+                    id: session.session_id.clone(),
+                },
+            )
+            .await
+            .expect("load toolbench context twice");
+
+        let events = state
+            .session_store
+            .as_ref()
+            .expect("session store")
+            .list_events_by_type(&session.session_id, "audit.plan.generated")
+            .expect("list plan events");
+        assert_eq!(
+            events.len(),
+            1,
+            "load_toolbench_context should not append duplicate audit plans"
+        );
+
+        let reloaded = state
+            .load_audit_plan(&session.session_id)
+            .expect("reload audit plan");
+        assert_eq!(
+            reloaded.plan_id, plan.plan_id,
+            "plan id should remain stable after repeated context loads"
+        );
     }
 }

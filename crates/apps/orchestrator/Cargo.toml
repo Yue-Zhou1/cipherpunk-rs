@@ -14,13 +14,18 @@ engine-distributed = { path = "../../engines/distributed" }
 engine-lean = { path = "../../engines/lean" }
 findings = { path = "../../data/findings" }
 intake = { path = "../../services/intake" }
+knowledge = { path = "../../services/knowledge" }
 llm = { path = "../../services/llm" }
+research = { path = "../../services/research" }
 report = { path = "../../services/report" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 session-store = { path = "../../data/session-store" }
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
 
 [dev-dependencies]
+mockito = "1"
 sandbox = { path = "../../services/sandbox" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

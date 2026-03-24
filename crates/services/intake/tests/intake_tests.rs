@@ -202,6 +202,7 @@ fn config_parser_reports_multiple_validation_errors() {
             max_llm_retries: Some(0),
             semantic_index_timeout_secs: Some(0),
         }),
+        llm: None,
     };
 
     let errors = ConfigParser::validate(raw).expect_err("validation must fail");
@@ -391,6 +392,7 @@ fn summarize_optional_inputs_respects_no_llm_prose_flag() {
             api_key_present: true,
             provider: Some("openai".to_string()),
             no_llm_prose: false,
+            roles: std::collections::HashMap::new(),
         },
         output_dir: PathBuf::from("audit-output"),
     };
@@ -424,6 +426,37 @@ fn confirmation_summary_serializes_to_json() {
     let json = WorkspaceConfirmation::to_json(&summary).expect("to json");
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
     assert_eq!(parsed["estimated_duration_mins"], 42);
+}
+
+#[test]
+fn config_parser_reads_llm_role_overrides() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let yaml = temp.path().join("audit.yaml");
+    fs::write(
+        &yaml,
+        r#"
+source:
+  local_path: /tmp/workspace
+llm:
+  no_llm_prose: true
+  roles:
+    scaffolding:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 250
+      max_tokens: 2048
+"#,
+    )
+    .expect("write audit yaml");
+
+    let parsed = ConfigParser::parse(&yaml).expect("parse config");
+    assert_eq!(parsed.llm.no_llm_prose, Some(true));
+    let roles = parsed.llm.roles.expect("roles map");
+    let scaffolding = roles.get("scaffolding").expect("scaffolding role");
+    assert_eq!(scaffolding.provider.as_deref(), Some("openai"));
+    assert_eq!(scaffolding.model.as_deref(), Some("gpt-4o-mini"));
+    assert_eq!(scaffolding.temperature, Some(250));
+    assert_eq!(scaffolding.max_tokens, Some(2048));
 }
 
 #[test]

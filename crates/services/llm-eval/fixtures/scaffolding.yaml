@@ -1,0 +1,41 @@
+- id: scaffolding-field-mul
+  role: Scaffolding
+  prompt: |
+    Generate a Kani harness for fn field_mul(a: u64, b: u64) -> u64 that verifies
+    the output equals a.wrapping_mul(b). Return compilable Rust source code only.
+  template_fallback: required
+  assertions:
+    - type: ContainsKeyword
+      value: "fn harness"
+    - type: ContainsKeyword
+      value: "kani::assert"
+    - type: ContainsKeyword
+      value: "wrapping_mul"
+    - type: MinChars
+      value: 50
+
+- id: scaffolding-field-add
+  role: Scaffolding
+  prompt: |
+    Generate a Kani harness for fn field_add(a: u64, b: u64) -> u64 that verifies
+    the output equals a.wrapping_add(b). Return compilable Rust source code only.
+  template_fallback: required
+  assertions:
+    - type: ContainsKeyword
+      value: "fn harness"
+    - type: ContainsKeyword
+      value: "wrapping_add"
+    - type: MinChars
+      value: 50
+
+- id: scaffolding-verify-proof
+  role: Scaffolding
+  prompt: |
+    Generate a Kani harness for fn verify_proof(bytes: &[u8]) -> bool.
+    Return compilable Rust source code only.
+  template_fallback: required
+  assertions:
+    - type: ContainsKeyword
+      value: "fn harness"
+    - type: MinChars
+      value: 30

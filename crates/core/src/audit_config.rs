@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use num_bigint::BigUint;
@@ -100,6 +101,17 @@ pub struct LlmConfig {
     pub api_key_present: bool,
     pub provider: Option<String>,
     pub no_llm_prose: bool,
+    #[serde(default)]
+    pub roles: HashMap<String, RoleConfigOverride>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+pub struct RoleConfigOverride {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    #[serde(rename = "temperature", alias = "temperature_millis")]
+    pub temperature: Option<u16>,
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

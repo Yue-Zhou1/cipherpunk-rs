@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -18,7 +18,11 @@ use intake::OptionalInputsRaw;
 use intake::diff::{AnalysisCache, DiffAnalysis, DiffModeAnalyzer};
 use intake::source::{GitAuth, SourceInput};
 use intake::{IntakeOrchestrator, workspace::WorkspaceAnalyzer};
-use llm::{LlmProvider, provider_from_env};
+use llm::{
+    AdviserService, LlmProvider, ProviderFailoverRecord, RoleConfig, provider_from_name,
+    role_aware_provider_from_env,
+};
+use llm_eval::{EvalResult, EvalRunner, MarkdownReporter, load_fixtures_from_dir};
 use orchestrator::AuditOrchestrator;
 
 #[derive(Debug, Parser)]
@@ -33,6 +37,7 @@ pub struct Cli {
 pub enum Command {
     Analyze(Box<AnalyzeArgs>),
     Diff(DiffArgs),
+    Eval(EvalArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -106,6 +111,25 @@ pub struct DiffArgs {
     pub cache_dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct EvalArgs {
+    /// Provider to evaluate. If omitted, use role-aware provider config from env.
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    /// Save current results as JSON baseline.
+    #[arg(long)]
+    pub baseline: Option<PathBuf>,
+
+    /// Compare against a previous JSON baseline.
+    #[arg(long)]
+    pub compare: Option<PathBuf>,
+
+    /// Fixture directory. Defaults to built-in fixtures.
+    #[arg(long)]
+    pub fixtures: Option<PathBuf>,
+}
+
 pub async fn run_cli(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Analyze(args) => {
@@ -126,6 +150,9 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                 diff.affected_files.len(),
                 diff.cache_hit_rate
             );
+        }
+        Command::Eval(args) => {
+            run_eval(args).await?;
         }
     }
     Ok(())
@@ -168,10 +195,44 @@ pub async fn run_analyze(args: AnalyzeArgs) -> Result<AuditOutputs> {
         }));
     }
 
-    let llm = Arc::<dyn LlmProvider>::from(provider_from_env());
+    let mut role_aware_provider = role_aware_provider_from_env();
+    if !config.llm.roles.is_empty() {
+        let yaml_roles = config
+            .llm
+            .roles
+            .iter()
+            .map(|(role_name, role_override)| {
+                (
+                    role_name.clone(),
+                    RoleConfig {
+                        provider: role_override.provider.clone(),
+                        model: role_override.model.clone(),
+                        temperature_millis: role_override.temperature,
+                        max_tokens: role_override.max_tokens,
+                        fallback_chain: vec![],
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        role_aware_provider.apply_yaml_overrides(&yaml_roles);
+    }
+    let failover_events = Arc::new(Mutex::new(Vec::<ProviderFailoverRecord>::new()));
+    let failover_events_hook = Arc::clone(&failover_events);
+    let role_aware_provider =
+        role_aware_provider.with_failover_hook(Arc::new(move |record: ProviderFailoverRecord| {
+            failover_events_hook
+                .lock()
+                .expect("failover events lock")
+                .push(record);
+        }));
+
+    let llm: Arc<dyn LlmProvider> = Arc::new(role_aware_provider);
+    let adviser = AdviserService::new(Arc::clone(&llm));
     let orchestrator = AuditOrchestrator::new(output_dir, evidence_pack_zip)
         .with_engines(engines)
-        .with_llm(llm);
+        .with_llm(llm)
+        .with_adviser(adviser)
+        .with_failover_events(failover_events);
 
     orchestrator.run(&config).await
 }
@@ -185,6 +246,52 @@ pub fn run_diff(args: DiffArgs) -> Result<DiffAnalysis> {
     };
     let analyzer = DiffModeAnalyzer::new(args.repo_root, workspace, cache);
     analyzer.compute_diff(&args.base, &args.head)
+}
+
+pub async fn run_eval(args: EvalArgs) -> Result<()> {
+    let fixture_dir = args.fixtures.unwrap_or_else(default_eval_fixture_dir);
+    let fixtures = load_fixtures_from_dir(&fixture_dir)
+        .with_context(|| format!("load eval fixtures from {}", fixture_dir.display()))?;
+    if fixtures.is_empty() {
+        return Err(anyhow!(
+            "no eval fixtures found in fixture directory {}",
+            fixture_dir.display()
+        ));
+    }
+
+    let provider: Arc<dyn LlmProvider> = if let Some(provider_name) = args.provider.as_deref() {
+        Arc::from(provider_from_name(provider_name))
+    } else {
+        Arc::new(role_aware_provider_from_env())
+    };
+
+    let baseline_results = if let Some(path) = args.compare.as_ref() {
+        Some(load_eval_results(path)?)
+    } else {
+        None
+    };
+
+    let runner = EvalRunner::new(provider);
+    let results = runner.run_all(&fixtures).await;
+    let report = MarkdownReporter::generate(&results, baseline_results.as_deref());
+    println!("{report}");
+
+    if let Some(path) = args.baseline.as_ref() {
+        save_eval_results(path, &results)?;
+    }
+
+    let failures = count_failures(&results);
+    let regressions = baseline_results
+        .as_deref()
+        .map(|baseline| count_regressions(&results, baseline))
+        .unwrap_or(0);
+    if failures > 0 || regressions > 0 {
+        return Err(anyhow!(
+            "eval failed: {failures} failed fixture(s), {regressions} regression(s)"
+        ));
+    }
+
+    Ok(())
 }
 
 fn parse_source_input(args: &AnalyzeArgs) -> Result<SourceInput> {
@@ -230,6 +337,50 @@ fn ensure_placeholder_evidence_zip(path: &PathBuf) -> Result<()> {
     }
     std::fs::write(path, b"placeholder evidence pack")
         .with_context(|| format!("write placeholder evidence zip {}", path.display()))
+}
+
+fn default_eval_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .expect("repo root from cli crate")
+        .join("crates/services/llm-eval/fixtures")
+}
+
+fn load_eval_results(path: &PathBuf) -> Result<Vec<EvalResult>> {
+    let bytes = std::fs::read(path).with_context(|| format!("read baseline {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse baseline {}", path.display()))
+}
+
+fn save_eval_results(path: &PathBuf, results: &[EvalResult]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create baseline parent {}", parent.display()))?;
+    }
+    let payload = serde_json::to_vec_pretty(results).context("serialize eval results")?;
+    std::fs::write(path, payload).with_context(|| format!("write baseline {}", path.display()))
+}
+
+fn count_failures(results: &[EvalResult]) -> usize {
+    results
+        .iter()
+        .filter(|result| !result.skipped && !result.passed)
+        .count()
+}
+
+fn count_regressions(results: &[EvalResult], baseline: &[EvalResult]) -> usize {
+    results
+        .iter()
+        .filter(|result| {
+            !result.skipped
+                && baseline
+                    .iter()
+                    .find(|existing| existing.fixture_id == result.fixture_id)
+                    .map(|existing| existing.passed && !result.passed)
+                    .unwrap_or(false)
+        })
+        .count()
 }
 
 #[derive(Debug, Clone)]

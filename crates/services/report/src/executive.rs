@@ -21,6 +21,23 @@ pub fn render_executive_report(findings: &[Finding], manifest: &AuditManifest) -
     out.push_str(&format!("- **Risk Score:** {score} ({band})\n"));
     out.push_str(&format!("- **Recommendation:** {recommendation}\n\n"));
 
+    if let Some(coverage) = &manifest.coverage {
+        if !coverage.coverage_complete {
+            out.push_str("## Coverage\n\n");
+            out.push_str(
+                "**This report reflects partial analysis. The following engines did not complete successfully.**\n\n",
+            );
+            if coverage.warnings.is_empty() {
+                out.push_str("- One or more engines were not completed.\n\n");
+            } else {
+                for warning in &coverage.warnings {
+                    out.push_str(&format!("- {warning}\n"));
+                }
+                out.push('\n');
+            }
+        }
+    }
+
     out.push_str("## Finding Summary\n\n");
     out.push_str(&format!(
         "| Severity | Count |\n|----------|-------|\n| Critical | {} |\n| High | {} |\n| Medium | {} |\n| Low | {} |\n| Observation | {} |\n\n",

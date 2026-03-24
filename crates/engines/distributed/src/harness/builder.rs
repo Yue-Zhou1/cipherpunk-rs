@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use audit_agent_core::workspace::CargoWorkspace;
 use intake::detection::DetectedEntryPoint;
-use llm::{CompletionOpts, EvidenceGate, LlmProvider, LlmRole, llm_call};
+use llm::{EvidenceGate, LlmProvider, LlmRole, role_aware_llm_call};
 
 use crate::feasibility::AdapterPoint;
 use crate::util::sanitize_ident;
@@ -139,14 +139,23 @@ impl HarnessBuilder {
 
         let skeleton = self.generate_skeleton(&entry_point_name, config);
         let entry_call = if let Some(llm) = &self.llm {
-            llm_call(
+            role_aware_llm_call(
                 llm.as_ref(),
                 LlmRole::Scaffolding,
                 &self.entry_call_prompt(entry_points),
-                &CompletionOpts::default(),
             )
             .await
-            .map(|raw| self.filter_entry_call(&raw))
+            .map(|(raw, provenance)| {
+                tracing::debug!(
+                    provider = %provenance.provider,
+                    model = ?provenance.model,
+                    role = %provenance.role,
+                    duration_ms = provenance.duration_ms,
+                    attempt = provenance.attempt,
+                    "captured madsim-entry-call LLM provenance"
+                );
+                self.filter_entry_call(&raw)
+            })
             .unwrap_or_else(|_| self.entry_call_todo_comment(entry_points))
         } else {
             self.entry_call_todo_comment(entry_points)

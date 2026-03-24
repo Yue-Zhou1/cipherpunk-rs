@@ -1,6 +1,11 @@
-use anyhow::Result;
+#![allow(deprecated)]
+
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use llm::{CompletionOpts, LlmProvider, LlmRole, TemplateFallback, llm_call, provider_from_env};
+use llm::{
+    CompletionOpts, LlmProvider, LlmRole, TemplateFallback, is_transient_error, llm_call,
+    llm_call_traced, provider_from_env, provider_from_name,
+};
 use mockito::Matcher;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +29,10 @@ impl LlmProvider for EchoProvider {
 
     fn is_available(&self) -> bool {
         true
+    }
+
+    fn model(&self) -> Option<&str> {
+        Some("echo-v1")
     }
 }
 
@@ -90,6 +99,26 @@ async fn llm_call_routes_through_provider() {
 }
 
 #[tokio::test]
+async fn llm_call_traced_returns_response_with_provenance() {
+    let provider = EchoProvider;
+    let (output, provenance) = llm_call_traced(
+        &provider,
+        LlmRole::SearchHints,
+        "hello",
+        &CompletionOpts::default(),
+    )
+    .await
+    .expect("llm traced call");
+    assert_eq!(output, "echo:hello");
+    assert_eq!(provenance.provider, "echo");
+    assert_eq!(provenance.model.as_deref(), Some("echo-v1"));
+    assert_eq!(provenance.role, "SearchHints");
+    assert_eq!(provenance.prompt_chars, 5);
+    assert_eq!(provenance.response_chars, "echo:hello".len());
+    assert_eq!(provenance.attempt, 1);
+}
+
+#[tokio::test]
 async fn openai_provider_makes_chat_completion_request() {
     let mut server = mockito::Server::new_async().await;
     let request = server
@@ -119,6 +148,42 @@ async fn openai_provider_makes_chat_completion_request() {
         .await
         .expect("openai response");
     assert_eq!(response, "openai-ok");
+    request.assert_async().await;
+}
+
+#[tokio::test]
+async fn openai_provider_complete_with_role_and_model_overrides_model() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/v1/chat/completions")
+        .match_header("authorization", "Bearer key")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "gpt-4.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 32
+        })))
+        .with_status(200)
+        .with_body(r#"{"choices":[{"message":{"content":"openai-ok"}}]}"#)
+        .create_async()
+        .await;
+
+    let openai =
+        llm::OpenAiProvider::new("key".to_string(), "gpt-4o-mini".to_string(), server.url())
+            .expect("openai provider");
+    let output = LlmProvider::complete_with_role_and_model(
+        &openai,
+        &LlmRole::Scaffolding,
+        "hello",
+        &CompletionOpts {
+            temperature_millis: 100,
+            max_tokens: 32,
+        },
+        Some("gpt-4.1"),
+    )
+    .await
+    .expect("openai response");
+    assert_eq!(output.response, "openai-ok");
+    assert_eq!(output.model.as_deref(), Some("gpt-4.1"));
     request.assert_async().await;
 }
 
@@ -160,6 +225,46 @@ async fn anthropic_provider_makes_messages_request() {
 }
 
 #[tokio::test]
+async fn anthropic_provider_complete_with_role_and_model_overrides_model() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/v1/messages")
+        .match_header("x-api-key", "key")
+        .match_header("anthropic-version", "2023-06-01")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "claude-3-7-sonnet",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 48
+        })))
+        .with_status(200)
+        .with_body(r#"{"content":[{"type":"text","text":"anthropic-ok"}]}"#)
+        .create_async()
+        .await;
+
+    let anthropic = llm::AnthropicProvider::new(
+        "key".to_string(),
+        "claude-3-5-sonnet".to_string(),
+        server.url(),
+    )
+    .expect("anthropic provider");
+    let output = LlmProvider::complete_with_role_and_model(
+        &anthropic,
+        &LlmRole::SearchHints,
+        "hello",
+        &CompletionOpts {
+            temperature_millis: 200,
+            max_tokens: 48,
+        },
+        Some("claude-3-7-sonnet"),
+    )
+    .await
+    .expect("anthropic response");
+    assert_eq!(output.response, "anthropic-ok");
+    assert_eq!(output.model.as_deref(), Some("claude-3-7-sonnet"));
+    request.assert_async().await;
+}
+
+#[tokio::test]
 async fn ollama_provider_makes_generate_request() {
     let mut server = mockito::Server::new_async().await;
     let request = server
@@ -187,6 +292,40 @@ async fn ollama_provider_makes_generate_request() {
         .await
         .expect("ollama response");
     assert_eq!(response, "ollama-ok");
+    request.assert_async().await;
+}
+
+#[tokio::test]
+async fn ollama_provider_complete_with_role_and_model_overrides_model() {
+    let mut server = mockito::Server::new_async().await;
+    let request = server
+        .mock("POST", "/api/generate")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "model": "qwen2.5-coder",
+            "prompt": "hello",
+            "stream": false
+        })))
+        .with_status(200)
+        .with_body(r#"{"response":"ollama-ok"}"#)
+        .create_async()
+        .await;
+
+    let ollama =
+        llm::OllamaProvider::new(server.url(), "llama3".to_string()).expect("ollama provider");
+    let output = LlmProvider::complete_with_role_and_model(
+        &ollama,
+        &LlmRole::ProseRendering,
+        "hello",
+        &CompletionOpts {
+            temperature_millis: 350,
+            max_tokens: 24,
+        },
+        Some("qwen2.5-coder"),
+    )
+    .await
+    .expect("ollama response");
+    assert_eq!(output.response, "ollama-ok");
+    assert_eq!(output.model.as_deref(), Some("qwen2.5-coder"));
     request.assert_async().await;
 }
 
@@ -248,6 +387,34 @@ fn provider_selection_falls_back_to_template_when_requested_provider_unavailable
 
     assert_eq!(provider_from_env().name(), "template-fallback");
     restore_env(restore);
+}
+
+#[test]
+fn provider_from_name_supports_template_aliases() {
+    assert_eq!(provider_from_name("template").name(), "template-fallback");
+    assert_eq!(
+        provider_from_name("template-fallback").name(),
+        "template-fallback"
+    );
+}
+
+#[test]
+fn transient_error_classification_matches_resilience_policy() {
+    assert!(is_transient_error(&anyhow!(
+        "OpenAI request failed (429): rate limited"
+    )));
+    assert!(is_transient_error(&anyhow!(
+        "Anthropic request failed (503): service unavailable"
+    )));
+    assert!(is_transient_error(&anyhow!(
+        "request timed out while waiting for response"
+    )));
+    assert!(!is_transient_error(&anyhow!(
+        "OpenAI request failed (401): unauthorized"
+    )));
+    assert!(!is_transient_error(&anyhow!(
+        "OpenAI request failed (400): invalid request"
+    )));
 }
 
 fn compile_snippet(source: &str) {

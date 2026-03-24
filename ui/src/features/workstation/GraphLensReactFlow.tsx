@@ -6,6 +6,8 @@ import ReactFlow, {
   MarkerType,
   MiniMap,
   Position,
+  type NodeProps,
+  type ReactFlowInstance,
   type Edge,
   type Node,
 } from "reactflow";
@@ -14,6 +16,7 @@ import {
   loadDataflowGraph,
   loadFeatureGraph,
   loadFileGraph,
+  loadSymbolGraph,
   type GraphLensKind,
   type ProjectGraphNode,
   type ProjectGraphResponse,
@@ -25,6 +28,7 @@ const LENS_OPTIONS: Array<{ kind: GraphLensKind; label: string }> = [
   { kind: "file", label: "File Graph" },
   { kind: "feature", label: "Feature Graph" },
   { kind: "dataflow", label: "Dataflow Graph" },
+  { kind: "symbol", label: "Symbol Graph" },
 ];
 const elk = new ELK();
 
@@ -36,6 +40,8 @@ type FlowNodeData = {
   isModule: boolean;
   collapsed?: boolean;
   line?: number;
+  findingCount?: number;
+  maxSeverity?: string;
 };
 
 type FlowEdgeData = {
@@ -56,6 +62,23 @@ type HoveredNodeState = {
   y: number;
   data: FlowNodeData;
 };
+
+function GraphPlaceholder({
+  title,
+  detail,
+}: {
+  title: string;
+  detail: string;
+}): JSX.Element {
+  return (
+    <div className="flex items-center justify-center h-full text-gray-500">
+      <div className="text-center">
+        <p className="text-lg font-medium">{title}</p>
+        <p className="text-sm mt-1">{detail}</p>
+      </div>
+    </div>
+  );
+}
 
 function isJsdomRuntime(): boolean {
   return typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("jsdom");
@@ -89,6 +112,9 @@ function moduleLabel(moduleKey: string): string {
 }
 
 function parseLineFromNode(node: ProjectGraphNode): number | undefined {
+  if (typeof node.line === "number" && Number.isInteger(node.line) && node.line > 0) {
+    return node.line;
+  }
   const segments = node.id.split(":").reverse();
   for (const segment of segments) {
     if (!/^\d+$/.test(segment)) {
@@ -100,6 +126,36 @@ function parseLineFromNode(node: ProjectGraphNode): number | undefined {
     }
   }
   return undefined;
+}
+
+function normalizedSeverity(severity?: string): string | undefined {
+  if (!severity) {
+    return undefined;
+  }
+  const normalized = severity.trim().toLowerCase();
+  if (["critical", "high", "medium", "low", "observation"].includes(normalized)) {
+    return normalized;
+  }
+  return undefined;
+}
+
+function GraphNodeCard({ data }: NodeProps<FlowNodeData>): JSX.Element {
+  const severity = normalizedSeverity(data.maxSeverity);
+  const hasFindings = !!data.findingCount && data.findingCount > 0;
+
+  return (
+    <div className="graph-flow-node-content">
+      <span className="graph-flow-node-label">{data.label}</span>
+      {hasFindings ? (
+        <span
+          className={`graph-flow-node-badge severity-${severity ?? "low"}`}
+          aria-label={`${data.findingCount} findings`}
+        >
+          {data.findingCount}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function nodeSize(node: FlowNode): { width: number; height: number } {
@@ -150,11 +206,29 @@ async function layoutWithElk(nodes: FlowNode[], edges: FlowEdge[]): Promise<Flow
   };
 }
 
+function gridLayoutFallback(nodes: FlowNode[], edges: FlowEdge[]): FlowModel {
+  return {
+    nodes: nodes.map((node, index) => {
+      const column = index % 4;
+      const row = Math.floor(index / 4);
+      return {
+        ...node,
+        position: {
+          x: column * 320,
+          y: row * 100,
+        },
+      };
+    }),
+    edges,
+  };
+}
+
 function buildFlowModel(
   graph: ProjectGraphResponse,
   collapsedModules: Set<string>,
   selectedNodeIds: Set<string>,
-  focusedSymbol: string
+  focusedSymbol: string,
+  matchingNodeIds: Set<string> | null
 ): FlowModel {
   const nodes: FlowNode[] = [];
   const edges: FlowEdge[] = [];
@@ -176,6 +250,7 @@ function buildFlowModel(
     const collapsed = collapsedModules.has(moduleKey);
     nodes.push({
       id: moduleId(moduleKey),
+      type: "graphNode",
       position: { x: 0, y: 0 },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
@@ -204,14 +279,26 @@ function buildFlowModel(
     const selectedBySymbol =
       focusedSymbol.length > 0 && sourceNode.label.toLowerCase().includes(focusedSymbol);
     const selected = selectedNodeIds.has(sourceNode.id) || selectedBySymbol;
-    const className = selected ? "graph-flow-node selected" : "graph-flow-node";
+    const dimmed = matchingNodeIds ? !matchingNodeIds.has(sourceNode.id) : false;
+    const severity = normalizedSeverity(sourceNode.maxSeverity);
+    const className = [
+      "graph-flow-node",
+      selected ? "selected" : "",
+      dimmed ? "search-dimmed" : "",
+      severity ? `severity-${severity}` : "",
+      sourceNode.findingCount && sourceNode.findingCount > 0 ? "has-findings" : "",
+    ]
+      .filter((value) => value.length > 0)
+      .join(" ");
 
     nodes.push({
       id: sourceNode.id,
+      type: "graphNode",
       position: { x: 0, y: 0 },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
       className,
+      style: dimmed ? { opacity: 0.15 } : undefined,
       data: {
         label: sourceNode.label,
         kind: sourceNode.kind,
@@ -219,6 +306,8 @@ function buildFlowModel(
         moduleKey,
         isModule: false,
         line: parseLineFromNode(sourceNode),
+        findingCount: sourceNode.findingCount,
+        maxSeverity: severity,
       },
     });
   }
@@ -311,15 +400,19 @@ function GraphLensReactFlow({
   const [graph, setGraph] = useState<ProjectGraphResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [collapsedModules, setCollapsedModules] = useState<string[]>([]);
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   const [isLayouting, setIsLayouting] = useState(false);
+  const [layoutFallback, setLayoutFallback] = useState(false);
   const [hoveredNode, setHoveredNode] = useState<HoveredNodeState | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<FlowEdge | null>(null);
   const layoutRequestRef = useRef(0);
+  const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
 
   const jsdom = useMemo(() => isJsdomRuntime(), []);
+  const nodeTypes = useMemo(() => ({ graphNode: GraphNodeCard }), []);
   const collapsedModuleSet = useMemo(() => new Set(collapsedModules), [collapsedModules]);
   const sortedSelectedNodeIds = useMemo(
     () => [...selectedNodeIds].sort((left, right) => left.localeCompare(right)),
@@ -328,6 +421,20 @@ function GraphLensReactFlow({
   const selectedNodeSet = useMemo(() => new Set(sortedSelectedNodeIds), [sortedSelectedNodeIds]);
   const selectedNodeKey = sortedSelectedNodeIds.join("|");
   const focusedSymbol = (focusSymbolName ?? "").trim().toLowerCase();
+  const matchingNodeIds = useMemo(() => {
+    if (!graph || !searchQuery.trim()) {
+      return null;
+    }
+    const query = searchQuery.trim().toLowerCase();
+    return new Set(
+      graph.nodes
+        .filter(
+          (node) =>
+            node.label.toLowerCase().includes(query) || node.id.toLowerCase().includes(query)
+        )
+        .map((node) => node.id)
+    );
+  }, [graph, searchQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -340,7 +447,9 @@ function GraphLensReactFlow({
         ? loadFileGraph(sessionId)
         : lens === "feature"
           ? loadFeatureGraph(sessionId)
-          : loadDataflowGraph(sessionId, includeValues);
+          : lens === "dataflow"
+            ? loadDataflowGraph(sessionId, includeValues)
+            : loadSymbolGraph(sessionId);
 
     void request
       .then((response) => {
@@ -349,6 +458,7 @@ function GraphLensReactFlow({
         }
         setGraph(response);
         setCollapsedModules([]);
+        setLayoutFallback(false);
       })
       .catch(() => {
         if (!cancelled) {
@@ -356,6 +466,7 @@ function GraphLensReactFlow({
           setGraph(null);
           setNodes([]);
           setEdges([]);
+          setLayoutFallback(false);
         }
       })
       .finally(() => {
@@ -379,14 +490,22 @@ function GraphLensReactFlow({
     if (!graph) {
       setNodes([]);
       setEdges([]);
+      setLayoutFallback(false);
       return;
     }
 
-    const model = buildFlowModel(graph, collapsedModuleSet, selectedNodeSet, focusedSymbol);
+    const model = buildFlowModel(
+      graph,
+      collapsedModuleSet,
+      selectedNodeSet,
+      focusedSymbol,
+      matchingNodeIds
+    );
     if (jsdom) {
       setNodes(model.nodes);
       setEdges(model.edges);
       setIsLayouting(false);
+      setLayoutFallback(false);
       return;
     }
 
@@ -402,11 +521,15 @@ function GraphLensReactFlow({
         }
         setNodes(layouted.nodes);
         setEdges(layouted.edges);
+        setLayoutFallback(false);
       })
-      .catch(() => {
+      .catch((layoutError) => {
         if (!cancelled && layoutRequestRef.current === requestId) {
-          setNodes(model.nodes);
-          setEdges(model.edges);
+          console.warn("ELK layout failed, using grid fallback:", layoutError);
+          const fallback = gridLayoutFallback(model.nodes, model.edges);
+          setNodes(fallback.nodes);
+          setEdges(fallback.edges);
+          setLayoutFallback(true);
         }
       })
       .finally(() => {
@@ -418,7 +541,15 @@ function GraphLensReactFlow({
     return () => {
       cancelled = true;
     };
-  }, [collapsedModuleSet, focusedSymbol, graph, jsdom, selectedNodeKey, selectedNodeSet]);
+  }, [
+    collapsedModuleSet,
+    focusedSymbol,
+    graph,
+    jsdom,
+    matchingNodeIds,
+    selectedNodeKey,
+    selectedNodeSet,
+  ]);
 
   const title = displayTitle(lens);
 
@@ -447,6 +578,20 @@ function GraphLensReactFlow({
     });
   };
 
+  const fitToScreen = (): void => {
+    if (!flowInstanceRef.current) {
+      return;
+    }
+    if (matchingNodeIds && matchingNodeIds.size > 0) {
+      const matching = nodes.filter((node) => matchingNodeIds.has(node.id));
+      if (matching.length > 0) {
+        flowInstanceRef.current.fitView({ nodes: matching, padding: 0.2, duration: 180 });
+        return;
+      }
+    }
+    flowInstanceRef.current.fitView({ padding: 0.16, duration: 180 });
+  };
+
   const layoutSummary = `${nodes.length} nodes / ${edges.length} edges`;
 
   return (
@@ -456,45 +601,76 @@ function GraphLensReactFlow({
         <h2>{title}</h2>
       </div>
 
-      <div className="graph-lens-tabs" role="tablist" aria-label="Graph lens selector">
-        {LENS_OPTIONS.map((entry) => (
-          <button
-            key={entry.kind}
-            type="button"
-            className={`graph-lens-tab${lens === entry.kind ? " active" : ""}`}
-            onClick={() => setLens(entry.kind)}
-            role="tab"
-            aria-selected={lens === entry.kind}
-          >
-            {entry.label}
-          </button>
-        ))}
+      <div className="graph-lens-toolbar" role="tablist" aria-label="Graph lens selector">
+        <select
+          value={lens}
+          onChange={(event) => setLens(event.target.value as GraphLensKind)}
+          className="graph-lens-select"
+          aria-label="Select graph lens"
+        >
+          {LENS_OPTIONS.map((entry) => (
+            <option key={entry.kind} value={entry.kind}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              fitToScreen();
+            }
+          }}
+          className="graph-lens-search"
+        />
+        {lens === "dataflow" ? (
+          <label className="graph-lens-toggle">
+            <input
+              type="checkbox"
+              checked={includeValues}
+              onChange={(event) => setIncludeValues(event.target.checked)}
+            />
+            <span>Values</span>
+          </label>
+        ) : null}
+        {matchingNodeIds ? (
+          <span className="muted-text">
+            {matchingNodeIds.size} matches
+          </span>
+        ) : null}
+        <button type="button" className="graph-lens-fit-button" onClick={fitToScreen}>
+          Fit
+        </button>
       </div>
 
-      {lens === "dataflow" ? (
-        <div className="banner banner-info graph-lens-redaction">
-          <span>Value previews are redacted by default.</span>
-          <button
-            type="button"
-            className="inline-action"
-            onClick={() => setIncludeValues((value) => !value)}
-          >
-            {includeValues ? "Hide Value Previews" : "Approve Value Previews"}
-          </button>
-        </div>
-      ) : null}
-
       {isLoading ? <p className="muted-text">Loading graph...</p> : null}
-      {error ? <p className="banner banner-error">{error}</p> : null}
       {selectedNodeIds.length > 0 ? (
         <p className="muted-text">Review context selected {selectedNodeIds.length} node(s).</p>
       ) : null}
 
-      {!isLoading && !error && graph ? (
+      {!isLoading && error && !graph ? (
+        <GraphPlaceholder
+          title="No graph data available"
+          detail="Run the BuildProjectIr job to generate the code graph."
+        />
+      ) : null}
+
+      {!isLoading && !error && graph && graph.nodes.length === 0 ? (
+        <GraphPlaceholder
+          title="Graph is empty"
+          detail="Graph is empty - no source files found in the selected scope."
+        />
+      ) : null}
+
+      {!isLoading && !error && graph && graph.nodes.length > 0 ? (
         <>
           <p className="muted-text">
             {layoutSummary}
             {isLayouting ? " (layouting...)" : ""}
+            {layoutFallback ? " | Using simplified layout" : ""}
           </p>
 
           {jsdom ? (
@@ -502,9 +678,31 @@ function GraphLensReactFlow({
               <div className="graph-lens-block">
                 <h3>Nodes</h3>
                 <ul>
-                  {nodes.slice(0, 8).map((node) => (
-                    <li key={node.id} className={node.className?.includes("selected") ? "selected" : undefined}>
-                      <code>{node.data.label}</code>
+                  {nodes.slice(0, 32).map((node) => (
+                    <li
+                      key={node.id}
+                      data-testid="graph-node-row"
+                      className={node.className || undefined}
+                    >
+                      {node.data.filePath && onNavigateToSource ? (
+                        <button
+                          type="button"
+                          className="graph-node-link"
+                          onClick={() => onNavigateToSource(node.data.filePath!, node.data.line)}
+                        >
+                          <code>{node.data.label}</code>
+                        </button>
+                      ) : (
+                        <code>{node.data.label}</code>
+                      )}
+                      {node.data.findingCount && node.data.findingCount > 0 ? (
+                        <span
+                          data-testid="graph-node-finding-badge"
+                          className={`graph-node-finding-badge severity-${normalizedSeverity(node.data.maxSeverity) ?? "low"}`}
+                        >
+                          {node.data.findingCount}
+                        </span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -528,11 +726,15 @@ function GraphLensReactFlow({
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
+                nodeTypes={nodeTypes}
                 fitView
                 fitViewOptions={{ padding: 0.16 }}
                 minZoom={0.15}
                 maxZoom={2.8}
                 proOptions={{ hideAttribution: true }}
+                onInit={(instance) => {
+                  flowInstanceRef.current = instance;
+                }}
                 onPaneClick={() => {
                   setHoveredNode(null);
                   setSelectedEdge(null);

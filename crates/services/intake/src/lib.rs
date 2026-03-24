@@ -126,6 +126,8 @@ impl IntakeOrchestrator {
         }
 
         let llm_missing = std::env::var("LLM_API_KEY").is_err();
+        let llm_no_prose = optional.no_llm_prose || validated.llm.no_llm_prose.unwrap_or(false);
+        let llm_roles = validated.llm.roles.clone().unwrap_or_default();
 
         let mut warnings: Vec<IntakeWarning> = resolved_source
             .warnings
@@ -172,7 +174,8 @@ impl IntakeOrchestrator {
             llm: LlmConfig {
                 api_key_present: !llm_missing,
                 provider: std::env::var("LLM_PROVIDER").ok(),
-                no_llm_prose: optional.no_llm_prose,
+                no_llm_prose: llm_no_prose,
+                roles: llm_roles,
             },
             output_dir: validated.output_dir,
         };

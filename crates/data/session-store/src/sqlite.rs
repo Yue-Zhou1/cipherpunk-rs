@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -7,6 +8,7 @@ use audit_agent_core::session::{AuditRecord, AuditSession};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::schema;
 use crate::search::RecordSearchHit;
@@ -17,6 +19,18 @@ pub struct SessionEvent {
     pub event_type: String,
     pub payload: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmInteractionEvent {
+    pub provider: String,
+    pub model: Option<String>,
+    pub role: String,
+    pub duration_ms: u64,
+    pub prompt_chars: usize,
+    pub response_chars: usize,
+    pub attempt: u8,
+    pub succeeded: bool,
 }
 
 pub struct SessionStore {
@@ -263,6 +277,21 @@ impl SessionStore {
         Ok(())
     }
 
+    pub fn append_llm_interaction_event(
+        &self,
+        session_id: &str,
+        interaction: &LlmInteractionEvent,
+    ) -> Result<()> {
+        let event = SessionEvent {
+            event_id: format!("llm-interaction:{}:{}", session_id, Uuid::new_v4()),
+            event_type: "llm.interaction".to_string(),
+            payload: serde_json::to_string(interaction)
+                .context("serialize llm interaction event payload")?,
+            created_at: Utc::now(),
+        };
+        self.append_event(session_id, &event)
+    }
+
     pub fn list_events(&self, session_id: &str) -> Result<Vec<SessionEvent>> {
         let conn = self.conn.lock().expect("session-store mutex poisoned");
         let mut stmt = conn.prepare(
@@ -281,6 +310,61 @@ impl SessionStore {
             events.push(serde_json::from_str(&json).context("deserialize session event")?);
         }
         Ok(events)
+    }
+
+    /// List events filtered by type.
+    pub fn list_events_by_type(
+        &self,
+        session_id: &str,
+        event_type: &str,
+    ) -> Result<Vec<SessionEvent>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT event_json
+            FROM session_events
+            WHERE session_id = ?1
+              AND json_extract(event_json, '$.event_type') = ?2
+            ORDER BY created_at ASC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![session_id, event_type], |row| {
+            row.get::<_, String>(0)
+        })?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            let json = row?;
+            events.push(serde_json::from_str(&json).context("deserialize session event")?);
+        }
+        Ok(events)
+    }
+
+    /// Count events by type for a session.
+    pub fn count_events_by_type(&self, session_id: &str) -> Result<HashMap<String, usize>> {
+        let conn = self.conn.lock().expect("session-store mutex poisoned");
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                CAST(json_extract(event_json, '$.event_type') AS TEXT) AS event_type,
+                COUNT(*) AS event_count
+            FROM session_events
+            WHERE session_id = ?1
+            GROUP BY CAST(json_extract(event_json, '$.event_type') AS TEXT)
+            "#,
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            let event_type: String = row.get(0)?;
+            let event_count: usize = row.get(1)?;
+            Ok((event_type, event_count))
+        })?;
+
+        let mut counts = HashMap::<String, usize>::new();
+        for row in rows {
+            let (event_type, event_count) = row?;
+            counts.insert(event_type, event_count);
+        }
+        Ok(counts)
     }
 
     pub fn search_records(&self, query: &str) -> Result<Vec<RecordSearchHit>> {

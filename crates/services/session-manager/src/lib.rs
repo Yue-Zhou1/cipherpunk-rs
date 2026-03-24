@@ -69,6 +69,9 @@ fn map_state_error(err: AnyhowError) -> SessionManagerError {
     if message.contains("unknown audit session") || message.contains("No session with id") {
         return SessionManagerError::NotFound { message };
     }
+    if message.contains("ProjectIR has not been built for this session") {
+        return SessionManagerError::NotFound { message };
+    }
     if message.contains("not found") || message.contains("path does not exist") {
         return SessionManagerError::NotFound { message };
     }
@@ -138,7 +141,9 @@ impl SessionManager {
         state.parse_config(&path)
     }
 
-    pub async fn detect_workspace(&self) -> SessionResult<intake::confirmation::ConfirmationSummary> {
+    pub async fn detect_workspace(
+        &self,
+    ) -> SessionResult<intake::confirmation::ConfirmationSummary> {
         self.detect_workspace_with_wizard(None).await
     }
 
@@ -191,12 +196,21 @@ impl SessionManager {
         session_id: &str,
     ) -> SessionResult<Option<OpenAuditSessionResponse>> {
         let mut state = self.inner.lock().await;
-        state.open_audit_session(session_id).await.map_err(map_state_error)
+        state
+            .open_audit_session(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
-    pub async fn get_project_tree(&self, session_id: &str) -> SessionResult<GetProjectTreeResponse> {
+    pub async fn get_project_tree(
+        &self,
+        session_id: &str,
+    ) -> SessionResult<GetProjectTreeResponse> {
         let mut state = self.inner.lock().await;
-        state.get_project_tree(session_id).await.map_err(map_state_error)
+        state
+            .get_project_tree(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
     pub async fn read_source_file(
@@ -213,10 +227,16 @@ impl SessionManager {
 
     pub async fn load_file_graph(&self, session_id: &str) -> SessionResult<ProjectGraphResponse> {
         let mut state = self.inner.lock().await;
-        state.load_file_graph(session_id).await.map_err(map_state_error)
+        state
+            .load_file_graph(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
-    pub async fn load_feature_graph(&self, session_id: &str) -> SessionResult<ProjectGraphResponse> {
+    pub async fn load_feature_graph(
+        &self,
+        session_id: &str,
+    ) -> SessionResult<ProjectGraphResponse> {
         let mut state = self.inner.lock().await;
         state
             .load_feature_graph(session_id)
@@ -232,6 +252,14 @@ impl SessionManager {
         let mut state = self.inner.lock().await;
         state
             .load_dataflow_graph(session_id, include_values)
+            .await
+            .map_err(map_state_error)
+    }
+
+    pub async fn load_symbol_graph(&self, session_id: &str) -> SessionResult<ProjectGraphResponse> {
+        let mut state = self.inner.lock().await;
+        state
+            .load_symbol_graph(session_id)
             .await
             .map_err(map_state_error)
     }
@@ -252,7 +280,10 @@ impl SessionManager {
         session_id: &str,
     ) -> SessionResult<LoadChecklistPlanResponse> {
         let mut state = self.inner.lock().await;
-        state.load_checklist_plan(session_id).await.map_err(map_state_error)
+        state
+            .load_checklist_plan(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
     pub async fn load_toolbench_context(
@@ -267,9 +298,15 @@ impl SessionManager {
             .map_err(map_state_error)
     }
 
-    pub async fn load_review_queue(&self, session_id: &str) -> SessionResult<LoadReviewQueueResponse> {
+    pub async fn load_review_queue(
+        &self,
+        session_id: &str,
+    ) -> SessionResult<LoadReviewQueueResponse> {
         let mut state = self.inner.lock().await;
-        state.load_review_queue(session_id).await.map_err(map_state_error)
+        state
+            .load_review_queue(session_id)
+            .await
+            .map_err(map_state_error)
     }
 
     pub async fn apply_review_decision(
@@ -295,7 +332,21 @@ impl SessionManager {
             .map_err(map_state_error)
     }
 
-    pub async fn get_audit_manifest(&self) -> SessionResult<audit_agent_core::output::AuditManifest> {
+    pub async fn load_activity_summary(&self, session_id: &str) -> SessionResult<ActivitySummary> {
+        let state = self.inner.lock().await;
+        state
+            .load_activity_summary(session_id)
+            .map_err(map_state_error)
+    }
+
+    pub async fn load_audit_plan(&self, session_id: &str) -> SessionResult<AuditPlanResponse> {
+        let mut state = self.inner.lock().await;
+        state.load_audit_plan(session_id).map_err(map_state_error)
+    }
+
+    pub async fn get_audit_manifest(
+        &self,
+    ) -> SessionResult<audit_agent_core::output::AuditManifest> {
         let state = self.inner.lock().await;
         state.get_audit_manifest().map_err(map_state_error)
     }
@@ -351,7 +402,12 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
-    use super::{ConfirmWorkspaceRequest, SessionManager, SourceInputIpc, SourceKind};
+    use anyhow::anyhow;
+
+    use super::{
+        ConfirmWorkspaceRequest, SessionManager, SessionManagerError, SourceInputIpc, SourceKind,
+        map_state_error,
+    };
 
     #[tokio::test(flavor = "current_thread")]
     async fn confirm_workspace_requires_resolve_source_first() {
@@ -444,5 +500,13 @@ mod tests {
             err.to_string().contains("resolve_source must be called"),
             "wizard state should be isolated per wizard_id"
         );
+    }
+
+    #[test]
+    fn project_ir_not_built_message_maps_to_not_found() {
+        let err = map_state_error(anyhow!(
+            "ProjectIR has not been built for this session. Run BuildProjectIr first."
+        ));
+        assert!(matches!(err, SessionManagerError::NotFound { .. }));
     }
 }

@@ -12,14 +12,14 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use session_manager::{
-    ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditSessionSummary,
-    ConfigParseResponse, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
-    CreateAuditSessionResponse, CrateDecision, GetProjectTreeResponse,
-    LoadChecklistPlanResponse, LoadReviewQueueResponse, LoadSecurityOverviewResponse,
-    LoadToolbenchContextResponse, OpenAuditSessionResponse, OutputType, ProjectGraphResponse,
-    ReadSourceFileResponse, SessionConsoleEntry, SessionConsoleLevel, SessionManager,
-    SessionManagerError, SourceInputIpc, TailSessionConsoleResponse, ToolbenchSelectionRequest,
-    branch_resolution_banner, warning_message,
+    ActivitySummary, ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditPlanResponse,
+    AuditSessionSummary, ConfigParseResponse, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
+    CrateDecision, CreateAuditSessionResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
+    LoadReviewQueueResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
+    OpenAuditSessionResponse, OutputType, ProjectGraphResponse, ReadSourceFileResponse,
+    SessionConsoleEntry, SessionConsoleLevel, SessionManager, SessionManagerError, SourceInputIpc,
+    TailSessionConsoleResponse, ToolbenchSelectionRequest, branch_resolution_banner,
+    warning_message,
 };
 use tokio::time::{self, Duration};
 use tower_http::cors::{Any, CorsLayer};
@@ -198,7 +198,13 @@ impl IntoResponse for AppError {
 fn map_session_error(err: SessionManagerError) -> AppError {
     match err {
         SessionManagerError::BadRequest { message } => AppError::bad_request(message),
-        SessionManagerError::NotFound { message } => AppError::not_found("NOT_FOUND", message),
+        SessionManagerError::NotFound { message } => {
+            if message.contains("ProjectIR has not been built for this session") {
+                AppError::not_found("PROJECT_IR_NOT_BUILT", message)
+            } else {
+                AppError::not_found("NOT_FOUND", message)
+            }
+        }
         SessionManagerError::SessionNotFound { session_id } => AppError::not_found(
             "SESSION_NOT_FOUND",
             format!("No session with id '{session_id}'"),
@@ -242,6 +248,11 @@ pub fn build_app(
             "/api/sessions/:session_id/console",
             get(tail_session_console),
         )
+        .route(
+            "/api/sessions/:session_id/activity",
+            get(load_activity_summary),
+        )
+        .route("/api/sessions/:session_id/plan", get(load_audit_plan))
         .route(
             "/api/sessions/:session_id/checklist",
             get(load_checklist_plan),
@@ -519,6 +530,7 @@ async fn load_graph(
                 .load_dataflow_graph(&session_id, query.include_values)
                 .await
         }
+        "symbol" => state.manager.load_symbol_graph(&session_id).await,
         _ => {
             return Err(AppError::bad_request(format!(
                 "unknown graph lens '{lens}'"
@@ -582,6 +594,30 @@ async fn tail_session_console(
     let response = state
         .manager
         .tail_session_console(&session_id, query.limit.max(1))
+        .await
+        .map_err(map_session_error)?;
+    Ok(Json(response))
+}
+
+async fn load_activity_summary(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<ActivitySummary>, AppError> {
+    let response = state
+        .manager
+        .load_activity_summary(&session_id)
+        .await
+        .map_err(map_session_error)?;
+    Ok(Json(response))
+}
+
+async fn load_audit_plan(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<AuditPlanResponse>, AppError> {
+    let response = state
+        .manager
+        .load_audit_plan(&session_id)
         .await
         .map_err(map_session_error)?;
     Ok(Json(response))
@@ -773,9 +809,13 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderMap, Request, StatusCode};
+    use axum::response::IntoResponse;
     use tower::ServiceExt;
 
-    use super::{AppState, SessionManager, WizardQuery, build_app, wizard_id_from_request};
+    use super::{
+        AppState, SessionManager, SessionManagerError, WizardQuery, build_app, map_session_error,
+        wizard_id_from_request,
+    };
 
     #[tokio::test(flavor = "current_thread")]
     async fn open_unknown_session_returns_error_envelope() {
@@ -792,6 +832,66 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/sessions/sess-missing")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), 1024 * 32)
+            .await
+            .expect("body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["error"]["code"], "SESSION_NOT_FOUND");
+        assert_eq!(payload["error"]["status"], 404);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_activity_summary_unknown_session_returns_error_envelope() {
+        let app = build_app(
+            AppState {
+                manager: Arc::new(SessionManager::new(".audit-work".into())),
+                events_poll_interval: super::default_events_poll_interval(),
+            },
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/sess-missing/activity")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), 1024 * 32)
+            .await
+            .expect("body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["error"]["code"], "SESSION_NOT_FOUND");
+        assert_eq!(payload["error"]["status"], 404);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_audit_plan_unknown_session_returns_error_envelope() {
+        let app = build_app(
+            AppState {
+                manager: Arc::new(SessionManager::new(".audit-work".into())),
+                events_poll_interval: super::default_events_poll_interval(),
+            },
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/sess-missing/plan")
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -904,5 +1004,24 @@ mod tests {
             wizard_id_from_request(&headers, &query_none).as_deref(),
             Some("wizard-header")
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn project_ir_not_built_error_uses_dedicated_error_code() {
+        let response = map_session_error(SessionManagerError::NotFound {
+            message: "ProjectIR has not been built for this session. Run BuildProjectIr first."
+                .to_string(),
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let payload: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 1024 * 32)
+                .await
+                .expect("body"),
+        )
+        .expect("json");
+        assert_eq!(payload["error"]["code"], "PROJECT_IR_NOT_BUILT");
+        assert_eq!(payload["error"]["status"], 404);
     }
 }

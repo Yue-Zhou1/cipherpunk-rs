@@ -81,13 +81,89 @@ export type TailSessionConsoleResponse = {
   entries: SessionConsoleEntry[];
 };
 
-export type GraphLensKind = "file" | "feature" | "dataflow";
+export type LlmCallSummary = {
+  role: string;
+  count: number;
+  avgDurationMs: number;
+  totalPromptChars: number;
+  totalResponseChars: number;
+  providersUsed: string[];
+  succeeded: number;
+  failed: number;
+};
+
+export type ToolActionSummary = {
+  toolFamily: string;
+  count: number;
+  succeeded: number;
+  failed: number;
+  avgDurationMs: number;
+};
+
+export type ReviewDecisionSummary = {
+  action: string;
+  count: number;
+};
+
+export type EngineOutcomeView = {
+  engine: string;
+  status: string;
+  findingsCount: number;
+  durationMs: number;
+};
+
+export type ActivitySummary = {
+  sessionId: string;
+  llmCalls: LlmCallSummary[];
+  toolActions: ToolActionSummary[];
+  reviewDecisions: ReviewDecisionSummary[];
+  engineOutcomes: EngineOutcomeView[];
+  totalEvents: number;
+  totalDurationMs: number;
+};
+
+export type AuditPlanOverviewView = {
+  assets: string[];
+  trustBoundaries: string[];
+  hotspots: string[];
+};
+
+export type AuditPlanDomainView = {
+  id: string;
+  rationale: string;
+};
+
+export type ToolRecommendationView = {
+  tool: string;
+  rationale: string;
+};
+
+export type EngineSelectionView = {
+  cryptoZk: boolean;
+  distributed: boolean;
+};
+
+export type AuditPlanResponse = {
+  sessionId: string;
+  planId: string;
+  overview: AuditPlanOverviewView;
+  domains: AuditPlanDomainView[];
+  recommendedTools: ToolRecommendationView[];
+  engines: EngineSelectionView;
+  rationale: string;
+  createdAt: string;
+};
+
+export type GraphLensKind = "file" | "feature" | "dataflow" | "symbol";
 
 export type ProjectGraphNode = {
   id: string;
   label: string;
   kind: string;
   filePath?: string;
+  line?: number;
+  findingCount?: number;
+  maxSeverity?: string;
 };
 
 export type ProjectGraphEdge = {
@@ -286,6 +362,32 @@ async function tauriInvoke<T>(
   }
 }
 
+function isGraphTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /request timed out/i.test(error.message);
+}
+
+async function invokeGraphCommand<T>(
+  command: string,
+  args: Record<string, unknown>,
+  fallback: () => Promise<T>
+): Promise<T> {
+  try {
+    return await tauriInvoke(command, args, fallback);
+  } catch (error) {
+    if (!isGraphTimeoutError(error)) {
+      throw error;
+    }
+
+    if (import.meta.env.DEV) {
+      return fallback();
+    }
+
+    throw new Error(
+      "Graph request timed out. Check backend connectivity and try again."
+    );
+  }
+}
+
 export function isTauriRuntime(): boolean {
   return hasTauriBridge();
 }
@@ -360,14 +462,28 @@ export async function tailSessionConsole(
   );
 }
 
+export async function loadActivitySummary(
+  sessionId: string
+): Promise<ActivitySummary> {
+  return tauriInvoke("load_activity_summary", { session_id: sessionId }, async () =>
+    (await loadCommandFixtures()).loadActivitySummaryFallback(sessionId)
+  );
+}
+
+export async function loadAuditPlan(sessionId: string): Promise<AuditPlanResponse> {
+  return tauriInvoke("load_audit_plan", { session_id: sessionId }, async () =>
+    (await loadCommandFixtures()).loadAuditPlanFallback(sessionId)
+  );
+}
+
 export async function loadFileGraph(sessionId: string): Promise<ProjectGraphResponse> {
-  return tauriInvoke("load_file_graph", { session_id: sessionId }, async () =>
+  return invokeGraphCommand("load_file_graph", { session_id: sessionId }, async () =>
     (await loadCommandFixtures()).loadFileGraphFallback(sessionId)
   );
 }
 
 export async function loadFeatureGraph(sessionId: string): Promise<ProjectGraphResponse> {
-  return tauriInvoke("load_feature_graph", { session_id: sessionId }, async () =>
+  return invokeGraphCommand("load_feature_graph", { session_id: sessionId }, async () =>
     (await loadCommandFixtures()).loadFeatureGraphFallback(sessionId)
   );
 }
@@ -376,10 +492,16 @@ export async function loadDataflowGraph(
   sessionId: string,
   includeValues = false
 ): Promise<ProjectGraphResponse> {
-  return tauriInvoke(
+  return invokeGraphCommand(
     "load_dataflow_graph",
     { session_id: sessionId, include_values: includeValues },
     async () => (await loadCommandFixtures()).loadDataflowGraphFallback(sessionId, includeValues)
+  );
+}
+
+export async function loadSymbolGraph(sessionId: string): Promise<ProjectGraphResponse> {
+  return invokeGraphCommand("load_symbol_graph", { session_id: sessionId }, async () =>
+    (await loadCommandFixtures()).loadSymbolGraphFallback(sessionId)
   );
 }
 

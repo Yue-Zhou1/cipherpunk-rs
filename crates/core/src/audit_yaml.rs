@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +9,7 @@ pub struct AuditYaml {
     pub scope: Option<AuditYamlScope>,
     pub engines: Option<AuditYamlEngines>,
     pub budget: Option<AuditYamlBudget>,
+    pub llm: Option<AuditYamlLlm>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -37,4 +40,19 @@ pub struct AuditYamlBudget {
     pub madsim_ticks: Option<u64>,
     pub max_llm_retries: Option<u8>,
     pub semantic_index_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditYamlLlm {
+    pub no_llm_prose: Option<bool>,
+    pub roles: Option<HashMap<String, AuditYamlRoleConfig>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AuditYamlRoleConfig {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    #[serde(rename = "temperature", alias = "temperature_millis")]
+    pub temperature: Option<u16>,
+    pub max_tokens: Option<u32>,
 }

@@ -150,6 +150,13 @@ pub fn harness() {
         result.passed,
         "fix loop should validate against the rule-derived assertion, not a dummy literal: {result:?}"
     );
+    let provenance = result
+        .provenance
+        .as_ref()
+        .expect("fix-loop result should carry llm provenance");
+    assert_eq!(provenance.provider, "corrected");
+    assert_eq!(provenance.role, "Scaffolding");
+    assert_eq!(provenance.attempt, 1);
 }
 
 #[tokio::test]
