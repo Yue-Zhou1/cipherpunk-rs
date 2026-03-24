@@ -10,6 +10,12 @@ pub struct ResearchCache {
     ttl: Duration,
 }
 
+impl Default for ResearchCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct CacheEntry {
     result: ResearchResult,
     inserted_at: Instant,

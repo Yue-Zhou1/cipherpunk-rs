@@ -20,9 +20,7 @@ pub fn is_allowed_url(url: &str) -> bool {
 pub fn validate_url(url: &str) -> anyhow::Result<()> {
     if !is_allowed_url(url) {
         anyhow::bail!(
-            "URL '{}' is not on the research allowlist. Allowed prefixes: {:?}",
-            url,
-            ALLOWED_PREFIXES
+            "URL '{url}' is not on the research allowlist. Allowed prefixes: {ALLOWED_PREFIXES:?}"
         );
     }
     Ok(())
