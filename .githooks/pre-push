@@ -5,6 +5,6 @@ echo "[pre-push] cargo fmt check..."
 cargo fmt --all -- --check
 
 echo "[pre-push] cargo clippy..."
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace -- -D warnings
 
 echo "[pre-push] all checks passed"
