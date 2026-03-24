@@ -15,11 +15,15 @@ use audit_agent_core::finding::{
     Severity, VerificationStatus,
 };
 use audit_agent_core::output::{EngineOutcome, EngineStatus};
+use knowledge::LongTermMemory;
 use llm::{
     AdviserService, CompletionOpts, LlmProvider as ServiceLlmProvider, ProviderFailoverRecord,
 };
+use mockito::Matcher;
 use orchestrator::{AuditEvent, AuditEventSink, AuditOrchestrator};
+use research::ResearchService;
 use tempfile::tempdir;
+use tokio::sync::Mutex as AsyncMutex;
 
 fn write_workspace(root: &Path) {
     std::fs::write(
@@ -397,6 +401,120 @@ async fn run_executes_engines_and_returns_outputs() {
     assert_eq!(outputs.manifest.audit_id, "audit-orchestrator-test");
     assert_eq!(outputs.manifest.engine_outcomes.len(), 1);
     assert!(outputs.manifest.coverage.is_some());
+}
+
+#[tokio::test]
+async fn run_updates_llm_assist_context_from_working_memory() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let orchestrator =
+        AuditOrchestrator::new(output_dir.clone(), evidence_zip).with_engines(vec![Box::new(
+            StaticEngine {
+                findings: vec![sample_finding()],
+            },
+        )]);
+    let config = sample_config(dir.path(), &output_dir);
+    orchestrator.run(&config).await.expect("run orchestrator");
+
+    let adviser_context = orchestrator
+        .llm_assist_context("adviser")
+        .expect("adviser context should be available");
+    assert!(
+        adviser_context.contains("Duplicate finding"),
+        "adviser context should include relevant findings"
+    );
+}
+
+#[tokio::test]
+async fn run_persists_long_term_memory_entry_when_configured() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let long_term = Arc::new(AsyncMutex::new(LongTermMemory::new()));
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip)
+        .with_long_term_memory(Arc::clone(&long_term))
+        .with_engines(vec![Box::new(StaticEngine {
+            findings: vec![sample_finding()],
+        })]);
+    let config = sample_config(dir.path(), &output_dir);
+    orchestrator.run(&config).await.expect("run orchestrator");
+
+    let memory = long_term.lock().await;
+    assert_eq!(memory.entries().len(), 1);
+    assert_eq!(memory.entries()[0].audit_id, "audit-orchestrator-test");
+    assert!(
+        memory.entries()[0].tags.iter().any(|tag| tag == "sp1"),
+        "detected framework tags should be persisted"
+    );
+}
+
+#[tokio::test]
+async fn run_tool_action_research_reuses_service_cache_across_calls() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let mut server = mockito::Server::new_async().await;
+    let _rustsec = server
+        .mock(
+            "GET",
+            Matcher::Regex(r"^/api/v1/crates/openssl$".to_string()),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"vulnerabilities":[]}"#)
+        .expect(1)
+        .create();
+
+    let research = Arc::new(
+        ResearchService::with_base_urls_for_tests(
+            format!("{}/api/v1/crates", server.url()),
+            format!("{}/advisories", server.url()),
+            format!("{}/rest/json/cves/2.0", server.url()),
+            10,
+            std::time::Duration::from_secs(3600),
+        )
+        .expect("research service"),
+    );
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip)
+        .with_research_service(Arc::clone(&research));
+
+    let request = audit_agent_core::tooling::ToolActionRequest {
+        session_id: "sess-research-cache".to_string(),
+        workspace_root: None,
+        tool_family: audit_agent_core::tooling::ToolFamily::Research,
+        target: audit_agent_core::tooling::ToolTarget::Symbol {
+            id: "openssl".to_string(),
+        },
+        budget: audit_agent_core::tooling::ToolBudget::default(),
+    };
+
+    let first = orchestrator
+        .run_tool_action(request.clone())
+        .await
+        .expect("first research action");
+    let second = orchestrator
+        .run_tool_action(request)
+        .await
+        .expect("second research action");
+
+    assert!(matches!(
+        first.status,
+        audit_agent_core::tooling::ToolActionStatus::Completed
+    ));
+    assert!(matches!(
+        second.status,
+        audit_agent_core::tooling::ToolActionStatus::Completed
+    ));
 }
 
 #[tokio::test]

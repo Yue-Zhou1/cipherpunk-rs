@@ -28,6 +28,13 @@ pub fn plan_tool_action(request: &ToolActionRequest) -> ToolExecutionPlan {
         ToolFamily::CircomZ3 => {
             engine_crypto::tool_actions::z3::plan_circom(&request.session_id, &request.target)
         }
+        ToolFamily::Research => external_plan(
+            "research-adapter",
+            ToolFamily::Research,
+            &request.session_id,
+            &request.target,
+            "Bounded research action against allowlisted advisory sources",
+        ),
         ToolFamily::CairoExternal => external_plan(
             "cairo-external-adapter",
             ToolFamily::CairoExternal,

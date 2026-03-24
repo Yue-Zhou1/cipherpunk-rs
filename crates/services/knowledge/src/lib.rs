@@ -4,16 +4,21 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub mod loader;
+pub mod long_term;
 #[cfg(feature = "memory-block")]
 pub mod memory_block;
 pub mod models;
 pub mod store;
+pub mod working_memory;
 
 use loader::{load_domains, load_playbooks};
 #[cfg(feature = "memory-block")]
 use memory_block::MemoryBlock;
 use models::{AdjudicatedCase, DomainChecklist, ReproPattern, ToolPlaybook, ToolSequence};
 use store::KnowledgeStore;
+
+pub use long_term::{AuditMemoryEntry, FindingSeverityCounts, LongTermMemory};
+pub use working_memory::WorkingMemory;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolRecommendation {

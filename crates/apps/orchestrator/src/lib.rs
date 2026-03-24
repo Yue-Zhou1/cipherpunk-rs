@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use audit_agent_core::audit_config::{AuditConfig, ParsedPreviousAudit};
 use audit_agent_core::engine::{AuditContext, AuditEngine, EvidenceWriter, SandboxRunner};
 use audit_agent_core::finding::Finding;
@@ -18,11 +18,13 @@ use findings::pipeline::{
 use intake::diff::AnalysisCache;
 use intake::summarize_optional_inputs;
 use intake::workspace::WorkspaceAnalyzer;
+use knowledge::{AuditMemoryEntry, FindingSeverityCounts, LongTermMemory, WorkingMemory};
 use llm::{
     AdviserAction, AdviserBudgetSnapshot, AdviserContext, AdviserService, LlmProvider,
     ProviderFailoverRecord,
 };
 use report::generator::{ReportGenerator, ReportGeneratorOptions};
+use research::{ResearchQuery, ResearchService};
 use session_store::{SessionEvent, SessionStore};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -76,6 +78,9 @@ pub struct AuditOrchestrator {
     pub event_sink: Option<Arc<dyn AuditEventSink>>,
     pub adviser: Option<AdviserService>,
     pub failover_events: Arc<Mutex<Vec<ProviderFailoverRecord>>>,
+    working_memory: Arc<Mutex<WorkingMemory>>,
+    pub long_term_memory: Option<Arc<tokio::sync::Mutex<LongTermMemory>>>,
+    research_service: Option<Arc<ResearchService>>,
     run_lock: Arc<AsyncMutex<()>>,
 }
 
@@ -93,6 +98,9 @@ impl AuditOrchestrator {
             event_sink: None,
             adviser: None,
             failover_events: Arc::new(Mutex::new(Vec::new())),
+            working_memory: Arc::new(Mutex::new(WorkingMemory::new())),
+            long_term_memory: None,
+            research_service: ResearchService::new().ok().map(Arc::new),
             run_lock: Arc::new(AsyncMutex::new(())),
         }
     }
@@ -159,6 +167,26 @@ impl AuditOrchestrator {
         self
     }
 
+    pub fn with_long_term_memory(
+        mut self,
+        memory: Arc<tokio::sync::Mutex<LongTermMemory>>,
+    ) -> Self {
+        self.long_term_memory = Some(memory);
+        self
+    }
+
+    pub fn with_research_service(mut self, research_service: Arc<ResearchService>) -> Self {
+        self.research_service = Some(research_service);
+        self
+    }
+
+    pub fn llm_assist_context(&self, role_name: &str) -> Option<String> {
+        self.working_memory
+            .lock()
+            .ok()
+            .map(|working_memory| working_memory.context_for_role(role_name))
+    }
+
     pub async fn bootstrap_jobs(&self, session: &AuditSession) -> Result<Vec<AuditJob>> {
         let mut jobs = Vec::<AuditJob>::new();
         jobs.push(AuditJob::queued(
@@ -220,6 +248,60 @@ impl AuditOrchestrator {
             .join("tool-runs")
             .join(request.session_id.clone());
 
+        if request.tool_family == ToolFamily::Research {
+            let _ = std::fs::create_dir_all(&artifact_root);
+            let research = self
+                .research_service
+                .as_ref()
+                .ok_or_else(|| anyhow!("research service is unavailable"))?;
+            let target = request.target.display_value().to_string();
+            let result = research
+                .query(&ResearchQuery::RustSecAdvisory {
+                    crate_name: target.clone(),
+                })
+                .await?;
+            let artifact_path =
+                artifact_root.join(format!("research-{}.json", request.target.slug()));
+            std::fs::write(&artifact_path, serde_json::to_vec_pretty(&result)?)?;
+
+            let action_result = ToolActionResult {
+                action_id: format!("action-{}", Utc::now().timestamp_micros()),
+                session_id: request.session_id.clone(),
+                tool_family: ToolFamily::Research,
+                target: request.target,
+                command: vec!["research".to_string(), target],
+                artifact_refs: vec![artifact_path.to_string_lossy().to_string()],
+                rationale: "Queried bounded advisory sources for target crate".to_string(),
+                status: ToolActionStatus::Completed,
+                stdout_preview: Some(format!(
+                    "Research completed with {} finding(s)",
+                    result.findings.len()
+                )),
+                stderr_preview: None,
+            };
+
+            if let Ok(mut working_memory) = self.working_memory.lock() {
+                working_memory.record_tool_result(
+                    "Research",
+                    action_result.target.display_value(),
+                    "completed",
+                );
+            }
+
+            if let Some(store) = &self.session_store {
+                let payload = serde_json::to_string(&action_result)?;
+                let event = SessionEvent {
+                    event_id: format!("tool-action:{}", action_result.action_id),
+                    event_type: "tool.action".to_string(),
+                    payload,
+                    created_at: Utc::now(),
+                };
+                store.append_event(&action_result.session_id, &event)?;
+            }
+
+            return Ok(action_result);
+        }
+
         if request.tool_family == ToolFamily::LeanExternal {
             let base_url = std::env::var("AXLE_API_URL")
                 .unwrap_or_else(|_| engine_lean::types::AXLE_BASE_URL.to_string());
@@ -264,6 +346,17 @@ impl AuditOrchestrator {
             stderr_preview: optional_preview(&sandbox_result.stderr),
         };
 
+        if let Ok(mut working_memory) = self.working_memory.lock() {
+            working_memory.record_tool_result(
+                &format!("{:?}", result.tool_family),
+                result.target.display_value(),
+                match result.status {
+                    ToolActionStatus::Completed => "completed",
+                    ToolActionStatus::Failed => "failed",
+                },
+            );
+        }
+
         if let Some(store) = &self.session_store {
             let payload = serde_json::to_string(&result)?;
             let event = SessionEvent {
@@ -280,13 +373,54 @@ impl AuditOrchestrator {
 
     pub async fn run(&self, config: &AuditConfig) -> Result<AuditOutputs> {
         let _run_guard = self.run_lock.lock().await;
+        if let Ok(mut working_memory) = self.working_memory.lock() {
+            *working_memory = WorkingMemory::new();
+        }
         self.failover_events
             .lock()
             .expect("failover events lock")
             .clear();
         let dag = self.build_dag(config);
         let (findings, outcomes) = self.execute_dag(&dag, config).await?;
-        self.produce_outputs(&findings, &outcomes, config).await
+        let outputs = self.produce_outputs(&findings, &outcomes, config).await?;
+
+        if let Some(long_term) = &self.long_term_memory {
+            let entry = AuditMemoryEntry {
+                audit_id: config.audit_id.clone(),
+                timestamp: Utc::now().to_rfc3339(),
+                source_description: format!("{:?}", config.source.origin),
+                findings_by_severity: FindingSeverityCounts {
+                    critical: outputs.manifest.finding_counts.critical,
+                    high: outputs.manifest.finding_counts.high,
+                    medium: outputs.manifest.finding_counts.medium,
+                    low: outputs.manifest.finding_counts.low,
+                    observation: outputs.manifest.finding_counts.observation,
+                },
+                engines_used: outcomes
+                    .iter()
+                    .map(|outcome| outcome.engine.clone())
+                    .collect(),
+                key_findings: outputs
+                    .findings
+                    .iter()
+                    .take(5)
+                    .map(|finding| finding.title.clone())
+                    .collect(),
+                tags: config
+                    .scope
+                    .detected_frameworks
+                    .iter()
+                    .map(|framework| format!("{framework:?}").to_ascii_lowercase())
+                    .collect(),
+            };
+            let mut memory = long_term.lock().await;
+            memory.record_audit_outcome(entry);
+            if let Err(err) = memory.persist() {
+                tracing::warn!(error = %err, "failed to persist long-term memory");
+            }
+        }
+
+        Ok(outputs)
     }
 
     pub fn build_dag(&self, _config: &AuditConfig) -> AuditDag {
@@ -313,6 +447,7 @@ impl AuditOrchestrator {
             llm: self.runtime.context_llm.clone(),
         };
 
+        let mut working_memory = WorkingMemory::new();
         let mut findings = Vec::<Finding>::new();
         let mut outcomes = Vec::<EngineOutcome>::new();
         let mut adviser_calls_remaining = MAX_ADVISER_CALLS_PER_AUDIT;
@@ -321,6 +456,7 @@ impl AuditOrchestrator {
             let started_at = std::time::Instant::now();
 
             if !engine.supports(&ctx).await {
+                working_memory.record_engine_outcome(&engine_name, "skipped", 0);
                 outcomes.push(EngineOutcome {
                     engine: engine_name,
                     status: EngineStatus::Skipped {
@@ -348,6 +484,10 @@ impl AuditOrchestrator {
                     Ok(engine_findings) => {
                         let count = engine_findings.len();
                         let duration_ms = started_at.elapsed().as_millis() as u64;
+                        for finding in &engine_findings {
+                            working_memory.record_finding(finding);
+                        }
+                        working_memory.record_engine_outcome(&engine_name, "completed", count);
                         findings.extend(engine_findings);
 
                         if let Some(sink) = &self.event_sink {
@@ -464,6 +604,9 @@ impl AuditOrchestrator {
                             });
                         }
 
+                        working_memory.record_engine_outcome(&engine_name, "failed", 0);
+                        working_memory
+                            .record_adviser_note(&format!("{} failed: {}", engine_name, err));
                         outcomes.push(EngineOutcome {
                             engine: engine_name,
                             status: EngineStatus::Failed {
@@ -479,6 +622,9 @@ impl AuditOrchestrator {
                     }
                 }
             }
+        }
+        if let Ok(mut state) = self.working_memory.lock() {
+            *state = working_memory;
         }
         Ok((findings, outcomes))
     }

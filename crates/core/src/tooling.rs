@@ -12,6 +12,7 @@ pub enum ToolFamily {
     MadSim,
     Chaos,
     CircomZ3,
+    Research,
     CairoExternal,
     LeanExternal,
 }

@@ -33,6 +33,7 @@ use project_ir::{
     ChecklistPlan as IrChecklistPlan, ProjectIr, ProjectIrBuilder,
     SecurityOverview as IrSecurityOverview,
 };
+use research::{ResearchQuery, ResearchService};
 use serde::{Deserialize, Serialize};
 use session_store::{LlmInteractionEvent, SessionStore};
 
@@ -263,6 +264,16 @@ pub struct ToolbenchSimilarCaseResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResearchAdvisoryView {
+    pub source: String,
+    pub id: String,
+    pub title: String,
+    pub severity: Option<String>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoadToolbenchContextResponse {
     pub session_id: String,
     pub selection: ToolbenchSelectionResponse,
@@ -270,6 +281,8 @@ pub struct LoadToolbenchContextResponse {
     pub domains: Vec<ChecklistDomainPlanResponse>,
     pub overview_notes: Vec<String>,
     pub similar_cases: Vec<ToolbenchSimilarCaseResponse>,
+    #[serde(default)]
+    pub advisories: Vec<ResearchAdvisoryView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +346,7 @@ pub struct UiSessionState {
     review_records_cache: HashMap<String, Vec<AuditRecord>>,
     graph_overlay_cache: HashMap<String, GraphOverlayCacheEntry>,
     session_store: Option<Arc<SessionStore>>,
+    research_service: Option<Arc<ResearchService>>,
 }
 
 #[derive(Debug, Clone)]
@@ -361,6 +375,7 @@ impl UiSessionState {
             review_records_cache: HashMap::new(),
             graph_overlay_cache: HashMap::new(),
             session_store,
+            research_service: ResearchService::new().ok().map(Arc::new),
         }
     }
 
@@ -1055,6 +1070,8 @@ impl UiSessionState {
             recommended_tools = fallback_tool_recommendations(&checklist);
         }
 
+        let advisories = self.load_research_advisories(&session).await;
+
         if let Some(config) = self.audit_config.as_ref() {
             let should_persist_plan = if let Some(store) = &self.session_store {
                 store
@@ -1085,6 +1102,7 @@ impl UiSessionState {
             domains: checklist_domain_responses(&checklist),
             overview_notes: overview.review_notes,
             similar_cases,
+            advisories,
         })
     }
 
@@ -1524,6 +1542,66 @@ impl UiSessionState {
         }
     }
 
+    async fn load_research_advisories(&self, session: &AuditSession) -> Vec<ResearchAdvisoryView> {
+        let Some(research_service) = &self.research_service else {
+            return Vec::new();
+        };
+
+        let workspace = match WorkspaceAnalyzer::analyze(&session.snapshot.source.local_path) {
+            Ok(workspace) => workspace,
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session.session_id,
+                    error = %err,
+                    "failed to analyze workspace for research advisories"
+                );
+                return Vec::new();
+            }
+        };
+
+        let mut advisories = Vec::<ResearchAdvisoryView>::new();
+        let mut seen_dependencies = HashSet::<String>::new();
+        let mut seen_advisories = HashSet::<String>::new();
+
+        'deps: for member in workspace.members {
+            for dependency in member.dependencies {
+                if !seen_dependencies.insert(dependency.name.clone()) {
+                    continue;
+                }
+
+                match research_service
+                    .query(&ResearchQuery::RustSecAdvisory {
+                        crate_name: dependency.name.clone(),
+                    })
+                    .await
+                {
+                    Ok(result) => {
+                        for finding in result.findings {
+                            let key = format!("{}:{}", finding.source, finding.id);
+                            if !seen_advisories.insert(key) {
+                                continue;
+                            }
+                            advisories.push(ResearchAdvisoryView {
+                                source: finding.source,
+                                id: finding.id,
+                                title: finding.title,
+                                severity: finding.severity,
+                                url: finding.url,
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        if err.to_string().to_ascii_lowercase().contains("rate limit") {
+                            break 'deps;
+                        }
+                    }
+                }
+            }
+        }
+
+        advisories
+    }
+
     fn load_knowledge_base(&self) -> Result<KnowledgeBase> {
         let mut knowledge_base =
             KnowledgeBase::load_from_repo_root_with_store(self.knowledge_feedback_store_path())?;
@@ -1691,6 +1769,7 @@ fn tool_family_name(tool_family: &ToolFamily) -> &'static str {
         ToolFamily::MadSim => "madsim",
         ToolFamily::Chaos => "chaos",
         ToolFamily::CircomZ3 => "circom_z3",
+        ToolFamily::Research => "research",
         ToolFamily::CairoExternal => "cairo_external",
         ToolFamily::LeanExternal => "lean_external",
     }
