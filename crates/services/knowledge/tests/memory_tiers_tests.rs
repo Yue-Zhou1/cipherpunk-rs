@@ -128,6 +128,37 @@ fn long_term_memory_persist_and_reload_from_path() {
     assert_eq!(reloaded.entries()[0].audit_id, "audit-persist");
 }
 
+#[cfg(unix)]
+#[test]
+fn long_term_memory_persist_overwrites_read_only_existing_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut memory = LongTermMemory::load_from_path(temp.path()).expect("load memory");
+    memory.record_audit_outcome(sample_memory_entry(
+        "audit-initial",
+        vec!["halo2".to_string()],
+    ));
+    memory.persist().expect("initial persist");
+
+    let memory_path = temp.path().join("long_term_memory.json");
+    let mut perms = std::fs::metadata(&memory_path)
+        .expect("metadata")
+        .permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&memory_path, perms).expect("set readonly");
+
+    memory.record_audit_outcome(sample_memory_entry(
+        "audit-after-readonly",
+        vec!["sp1".to_string()],
+    ));
+    memory
+        .persist()
+        .expect("persist should atomically replace readonly file");
+
+    let reloaded = LongTermMemory::load_from_path(temp.path()).expect("reload memory");
+    assert_eq!(reloaded.entries().len(), 2);
+    assert_eq!(reloaded.entries()[1].audit_id, "audit-after-readonly");
+}
+
 fn sample_finding(
     idx: usize,
     severity: Severity,

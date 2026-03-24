@@ -10,7 +10,7 @@ use audit_agent_core::output::{
     AuditManifest, AuditOutputs, CoverageReport, EngineOutcome, EngineStatus, FindingCounts,
 };
 use audit_agent_core::session::AuditSession;
-use audit_agent_core::tooling::ToolActionStatus;
+use audit_agent_core::tooling::{ToolActionStatus, ToolTarget};
 use chrono::Utc;
 use findings::pipeline::{
     deduplicate_findings, mark_regression_checks as mark_regression_checks_by_key,
@@ -255,11 +255,8 @@ impl AuditOrchestrator {
                 .as_ref()
                 .ok_or_else(|| anyhow!("research service is unavailable"))?;
             let target = request.target.display_value().to_string();
-            let result = research
-                .query(&ResearchQuery::RustSecAdvisory {
-                    crate_name: target.clone(),
-                })
-                .await?;
+            let query = parse_research_query(&request.target)?;
+            let result = research.query(&query).await?;
             let artifact_path =
                 artifact_root.join(format!("research-{}.json", request.target.slug()));
             std::fs::write(&artifact_path, serde_json::to_vec_pretty(&result)?)?;
@@ -269,9 +266,9 @@ impl AuditOrchestrator {
                 session_id: request.session_id.clone(),
                 tool_family: ToolFamily::Research,
                 target: request.target,
-                command: vec!["research".to_string(), target],
+                command: vec!["research".to_string(), target.clone()],
                 artifact_refs: vec![artifact_path.to_string_lossy().to_string()],
-                rationale: "Queried bounded advisory sources for target crate".to_string(),
+                rationale: research_rationale(&query),
                 status: ToolActionStatus::Completed,
                 stdout_preview: Some(format!(
                     "Research completed with {} finding(s)",
@@ -516,8 +513,7 @@ impl AuditOrchestrator {
                             if let Some(adviser) = &self.adviser {
                                 adviser_calls_remaining = adviser_calls_remaining.saturating_sub(1);
                                 let adviser_context = AdviserContext {
-                                    engine_name: adviser_engine_label(engine_name.as_str())
-                                        .to_string(),
+                                    engine_name: adviser_engine_label(engine_name.as_str()),
                                     error_message: err.to_string(),
                                     attempt_number: attempt,
                                     elapsed_ms: duration_ms,
@@ -790,6 +786,89 @@ fn optional_preview(value: &str) -> Option<String> {
     Some(format!("{preview}..."))
 }
 
+fn parse_research_query(target: &ToolTarget) -> Result<ResearchQuery> {
+    let raw = target.display_value().trim();
+    if raw.is_empty() {
+        anyhow::bail!("research target cannot be empty");
+    }
+
+    if let Some(crate_name) = raw.strip_prefix("rustsec:") {
+        let crate_name = crate_name.trim();
+        if crate_name.is_empty() {
+            anyhow::bail!("rustsec query requires a crate name");
+        }
+        return Ok(ResearchQuery::RustSecAdvisory {
+            crate_name: crate_name.to_string(),
+        });
+    }
+
+    if let Some(crate_name) = raw.strip_prefix("github:") {
+        let crate_name = crate_name.trim();
+        if crate_name.is_empty() {
+            anyhow::bail!("github query requires a crate name");
+        }
+        return Ok(ResearchQuery::GithubAdvisory {
+            crate_name: crate_name.to_string(),
+        });
+    }
+
+    if let Some(cve_query) = raw.strip_prefix("cve:") {
+        let cve_query = cve_query.trim();
+        if cve_query.is_empty() {
+            anyhow::bail!("cve query requires a crate name");
+        }
+        let (crate_name, version) = match cve_query.split_once('@') {
+            Some((name, version)) if !version.trim().is_empty() => {
+                (name.trim().to_string(), Some(version.trim().to_string()))
+            }
+            Some((name, _)) => (name.trim().to_string(), None),
+            None => (cve_query.to_string(), None),
+        };
+        if crate_name.is_empty() {
+            anyhow::bail!("cve query requires a crate name");
+        }
+        return Ok(ResearchQuery::CveSearch {
+            crate_name,
+            version,
+        });
+    }
+
+    if let Some(url) = raw.strip_prefix("spec:") {
+        let url = url.trim();
+        if url.is_empty() {
+            anyhow::bail!("spec query requires a URL");
+        }
+        return Ok(ResearchQuery::SpecFetch {
+            url: url.to_string(),
+        });
+    }
+
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        return Ok(ResearchQuery::SpecFetch {
+            url: raw.to_string(),
+        });
+    }
+
+    Ok(ResearchQuery::RustSecAdvisory {
+        crate_name: raw.to_string(),
+    })
+}
+
+fn research_rationale(query: &ResearchQuery) -> String {
+    match query {
+        ResearchQuery::RustSecAdvisory { .. } => {
+            "Queried RustSec advisory data for the target crate".to_string()
+        }
+        ResearchQuery::GithubAdvisory { .. } => {
+            "Queried GitHub Advisory API for the target crate".to_string()
+        }
+        ResearchQuery::CveSearch { .. } => "Queried NVD CVE data for the target crate".to_string(),
+        ResearchQuery::SpecFetch { .. } => {
+            "Fetched an allowlisted specification document".to_string()
+        }
+    }
+}
+
 fn is_retryable_engine_failure(err: &anyhow::Error) -> bool {
     let message = err.to_string().to_ascii_lowercase();
     if message.contains("unsupported")
@@ -843,14 +922,20 @@ fn engine_supports_budget_adjustment(engine_name: &str) -> bool {
     budget_adjustment_target(engine_name).is_some()
 }
 
-fn adviser_engine_label(engine_name: &str) -> &'static str {
+fn adviser_engine_label(engine_name: &str) -> String {
     match budget_adjustment_target(engine_name) {
-        Some(BudgetAdjustmentTarget::Kani) => "kani",
-        Some(BudgetAdjustmentTarget::Z3Like) => "smt",
-        Some(BudgetAdjustmentTarget::Fuzz) => "fuzz",
-        Some(BudgetAdjustmentTarget::Madsim) => "madsim",
-        Some(BudgetAdjustmentTarget::Semantic) => "semantic-index",
-        None => "generic-engine",
+        Some(BudgetAdjustmentTarget::Kani) => "kani".to_string(),
+        Some(BudgetAdjustmentTarget::Z3Like) => "smt".to_string(),
+        Some(BudgetAdjustmentTarget::Fuzz) => "fuzz".to_string(),
+        Some(BudgetAdjustmentTarget::Madsim) => "madsim".to_string(),
+        Some(BudgetAdjustmentTarget::Semantic) => "semantic-index".to_string(),
+        None => {
+            tracing::warn!(
+                engine = %engine_name,
+                "unmapped engine name for adviser label; preserving identity under 'other:' prefix"
+            );
+            format!("other:{engine_name}")
+        }
     }
 }
 
@@ -919,4 +1004,61 @@ fn failover_warning_messages(
     warnings.sort();
     warnings.dedup();
     warnings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{adviser_engine_label, parse_research_query};
+    use audit_agent_core::tooling::ToolTarget;
+    use research::ResearchQuery;
+
+    #[test]
+    fn parse_research_query_defaults_to_rustsec_for_plain_target() {
+        let query = parse_research_query(&ToolTarget::Symbol {
+            id: "openssl".to_string(),
+        })
+        .expect("parse query");
+
+        assert!(matches!(
+            query,
+            ResearchQuery::RustSecAdvisory { crate_name } if crate_name == "openssl"
+        ));
+    }
+
+    #[test]
+    fn parse_research_query_supports_all_prefixed_sources() {
+        let github = parse_research_query(&ToolTarget::Symbol {
+            id: "github:openssl".to_string(),
+        })
+        .expect("github query");
+        assert!(matches!(
+            github,
+            ResearchQuery::GithubAdvisory { crate_name } if crate_name == "openssl"
+        ));
+
+        let cve = parse_research_query(&ToolTarget::Symbol {
+            id: "cve:openssl@3.2.1".to_string(),
+        })
+        .expect("cve query");
+        assert!(matches!(
+            cve,
+            ResearchQuery::CveSearch { crate_name, version }
+                if crate_name == "openssl" && version.as_deref() == Some("3.2.1")
+        ));
+
+        let spec = parse_research_query(&ToolTarget::File {
+            path: "spec:https://eips.ethereum.org/EIPS/eip-155".to_string(),
+        })
+        .expect("spec query");
+        assert!(matches!(
+            spec,
+            ResearchQuery::SpecFetch { url } if url == "https://eips.ethereum.org/EIPS/eip-155"
+        ));
+    }
+
+    #[test]
+    fn adviser_engine_label_preserves_unknown_engine_name() {
+        assert_eq!(adviser_engine_label("z3-budget"), "smt");
+        assert_eq!(adviser_engine_label("new-prover-x"), "other:new-prover-x");
+    }
 }

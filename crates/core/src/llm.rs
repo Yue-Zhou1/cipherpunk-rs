@@ -23,7 +23,7 @@ pub struct CompletionOpts {
 impl Default for CompletionOpts {
     fn default() -> Self {
         Self {
-            temperature_millis: 200,
+            temperature_millis: 100,
             max_tokens: 1024,
         }
     }

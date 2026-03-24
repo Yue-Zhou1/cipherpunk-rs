@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use audit_agent_core::finding::{Finding, Severity};
+use audit_agent_core::finding::{Finding, FindingCategory, Severity};
 
 const MAX_SUMMARY_CHARS: usize = 2_000;
 const NO_CONTEXT_MESSAGE: &str = "No additional working-memory context available.";
@@ -20,7 +20,7 @@ struct FindingSummary {
     id: String,
     title: String,
     severity: Severity,
-    category: String,
+    category: FindingCategory,
     file_path: Option<String>,
 }
 
@@ -48,7 +48,7 @@ impl WorkingMemory {
             id: finding.id.to_string(),
             title: finding.title.clone(),
             severity: finding.severity.clone(),
-            category: format!("{:?}", finding.category),
+            category: finding.category.clone(),
             file_path: finding
                 .affected_components
                 .first()
@@ -158,8 +158,10 @@ impl WorkingMemory {
                     .iter()
                     .filter(|finding| {
                         matches!(
-                            finding.category.as_str(),
-                            "CryptoMisuse" | "Replay" | "Race"
+                            &finding.category,
+                            FindingCategory::CryptoMisuse
+                                | FindingCategory::Replay
+                                | FindingCategory::Race
                         )
                     })
                     .take(3)

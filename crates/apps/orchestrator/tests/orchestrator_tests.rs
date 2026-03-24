@@ -21,7 +21,7 @@ use llm::{
 };
 use mockito::Matcher;
 use orchestrator::{AuditEvent, AuditEventSink, AuditOrchestrator};
-use research::ResearchService;
+use research::{ResearchResult, ResearchService};
 use tempfile::tempdir;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -518,6 +518,72 @@ async fn run_tool_action_research_reuses_service_cache_across_calls() {
 }
 
 #[tokio::test]
+async fn run_tool_action_research_routes_to_github_query_when_prefixed() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let mut server = mockito::Server::new_async().await;
+    let _github = server
+        .mock("GET", "/advisories?ecosystem=cargo&affects=openssl")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"[
+                {
+                    "ghsa_id": "GHSA-xxxx-yyyy-zzzz",
+                    "summary": "OpenSSL issue",
+                    "description": "Potential vulnerability",
+                    "severity": "high",
+                    "html_url": "https://github.com/advisories/GHSA-xxxx-yyyy-zzzz"
+                }
+            ]"#,
+        )
+        .expect(1)
+        .create();
+
+    let research = Arc::new(
+        ResearchService::with_base_urls_for_tests(
+            format!("{}/api/v1/crates", server.url()),
+            format!("{}/advisories", server.url()),
+            format!("{}/rest/json/cves/2.0", server.url()),
+            10,
+            std::time::Duration::from_secs(3600),
+        )
+        .expect("research service"),
+    );
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip)
+        .with_research_service(Arc::clone(&research));
+
+    let request = audit_agent_core::tooling::ToolActionRequest {
+        session_id: "sess-research-github".to_string(),
+        workspace_root: None,
+        tool_family: audit_agent_core::tooling::ToolFamily::Research,
+        target: audit_agent_core::tooling::ToolTarget::Symbol {
+            id: "github:openssl".to_string(),
+        },
+        budget: audit_agent_core::tooling::ToolBudget::default(),
+    };
+
+    let result = orchestrator
+        .run_tool_action(request)
+        .await
+        .expect("research action");
+    assert!(matches!(
+        result.status,
+        audit_agent_core::tooling::ToolActionStatus::Completed
+    ));
+    let artifact = result.artifact_refs.first().expect("artifact path");
+    let content = std::fs::read_to_string(artifact).expect("read artifact");
+    let research_result: ResearchResult =
+        serde_json::from_str(&content).expect("parse research result");
+    assert_eq!(research_result.query, "GitHub Advisory for 'openssl'");
+    assert_eq!(research_result.findings.len(), 1);
+}
+
+#[tokio::test]
 async fn execute_dag_continues_after_engine_failure_and_records_outcomes() {
     let dir = tempdir().expect("tempdir");
     write_workspace(dir.path());
@@ -933,6 +999,51 @@ async fn execute_dag_redacts_engine_name_in_adviser_prompt_context() {
         .expect("prompt should be captured");
     assert!(prompt.contains("Engine: smt"));
     assert!(!prompt.contains("z3-internal-budget-sensitive-v2"));
+}
+
+#[tokio::test]
+async fn execute_dag_preserves_unknown_engine_identity_in_adviser_prompt_context() {
+    let dir = tempdir().expect("tempdir");
+    write_workspace(dir.path());
+    let output_dir = dir.path().join("audit-output");
+    let evidence_zip = dir.path().join("evidence-pack.zip");
+    std::fs::write(&evidence_zip, "zip").expect("write evidence zip");
+
+    let captured_prompt = Arc::new(Mutex::new(None::<String>));
+    let adviser_response =
+        r#"{"action":{"type":"NoSuggestion"},"rationale":"no deterministic recovery available"}"#;
+    let adviser_provider = PromptCapturingAdviserProvider {
+        prompt: Arc::clone(&captured_prompt),
+        response: adviser_response.to_string(),
+    };
+    let adviser = AdviserService::new(Arc::new(adviser_provider));
+
+    let engine = AlwaysFailEngine {
+        name: "new-prover-x".to_string(),
+        reason: "timeout while solving".to_string(),
+        calls: Arc::new(Mutex::new(0_u32)),
+    };
+
+    let orchestrator = AuditOrchestrator::new(output_dir.clone(), evidence_zip)
+        .with_adviser(adviser)
+        .with_engines(vec![Box::new(engine)]);
+    let config = sample_config(dir.path(), &output_dir);
+    let dag = orchestrator.build_dag(&config);
+    let (_findings, _outcomes) = orchestrator
+        .execute_dag(&dag, &config)
+        .await
+        .expect("execute dag");
+
+    let prompt = captured_prompt
+        .lock()
+        .expect("prompt lock")
+        .clone()
+        .expect("prompt should be captured");
+    assert!(
+        prompt.contains("Engine: other:new-prover-x"),
+        "prompt should keep unknown engine identity for triage, got: {prompt}"
+    );
+    assert!(!prompt.contains("Engine: generic-engine"));
 }
 
 #[tokio::test]

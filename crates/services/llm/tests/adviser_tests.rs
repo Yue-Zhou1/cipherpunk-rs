@@ -98,3 +98,21 @@ async fn adviser_service_falls_back_to_no_suggestion_on_invalid_json() {
     assert!(matches!(suggestion.action, AdviserAction::NoSuggestion));
     assert!(suggestion.rationale.contains("could not produce"));
 }
+
+#[tokio::test]
+async fn adviser_service_handles_utf8_error_messages_without_panicking() {
+    let provider = SequenceProvider::new(vec![Ok(
+        r#"{"action":{"type":"NoSuggestion"},"rationale":"no recovery"}"#.to_string(),
+    )]);
+    let service = AdviserService::new(std::sync::Arc::new(provider));
+
+    let mut context = context();
+    context.error_message = "€".repeat(600);
+
+    let suggestion = service
+        .suggest_on_failure(&context)
+        .await
+        .expect("adviser should tolerate utf-8 truncation");
+
+    assert!(matches!(suggestion.action, AdviserAction::NoSuggestion));
+}

@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -109,11 +111,42 @@ impl LongTermMemory {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(&self.entries)?;
-        std::fs::write(path, content)?;
+        atomic_write(path, content.as_bytes())?;
         Ok(())
     }
 
     pub fn entries(&self) -> &[AuditMemoryEntry] {
         &self.entries
     }
+}
+
+fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
+    let temp_path = make_temp_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    drop(file);
+
+    if let Err(err) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(err.into());
+    }
+
+    Ok(())
+}
+
+fn make_temp_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("long_term_memory.json");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temp_name = format!("{file_name}.{nanos}.tmp");
+    path.with_file_name(temp_name)
 }

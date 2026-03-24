@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::jobs::{AuditJob, AuditJobStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 pub enum AuditEvent {
     EngineCompleted {
         engine: String,
@@ -196,5 +196,67 @@ mod tests {
         );
         assert!(session_event.payload.contains("\"action_id\":\"action-2\""));
         assert!(session_event.payload.contains("\"status\":\"Failed\""));
+    }
+
+    #[test]
+    fn audit_event_serializes_with_explicit_type_tag_and_roundtrips() {
+        let cases = vec![
+            AuditEvent::EngineCompleted {
+                engine: "crypto-zk".to_string(),
+                findings_count: 3,
+                duration_ms: 44,
+            },
+            AuditEvent::EngineFailed {
+                engine: "distributed".to_string(),
+                reason: "timeout".to_string(),
+            },
+            AuditEvent::AuditCompleted {
+                audit_id: "audit-1".to_string(),
+                output_dir: std::path::PathBuf::from("/tmp/out"),
+                finding_count: 9,
+            },
+            AuditEvent::LlmInteraction {
+                role: "Advisory".to_string(),
+                provider: "openai".to_string(),
+                model: Some("gpt-4.1".to_string()),
+                prompt_chars: 300,
+                response_chars: 120,
+                duration_ms: 200,
+                succeeded: true,
+            },
+            AuditEvent::ToolActionCompleted {
+                action_id: "action-123".to_string(),
+                tool_family: "research".to_string(),
+                target: "openssl".to_string(),
+                status: "Completed".to_string(),
+                duration_ms: 8,
+            },
+            AuditEvent::ReviewDecisionApplied {
+                record_id: "cand-42".to_string(),
+                action: "confirm".to_string(),
+                analyst_note: Some("verified by trace replay".to_string()),
+            },
+            AuditEvent::ProviderFailover {
+                from: "openai".to_string(),
+                to: "template-fallback".to_string(),
+                role: "SearchHints".to_string(),
+                reason: "transient 503".to_string(),
+            },
+            AuditEvent::AdviserConsulted {
+                engine: "z3".to_string(),
+                suggestion: "NoSuggestion".to_string(),
+                applied: false,
+            },
+        ];
+
+        for event in cases {
+            let json = serde_json::to_string(&event).expect("serialize audit event");
+            assert!(
+                json.contains("\"type\""),
+                "serialized event should include type tag: {json}"
+            );
+            let decoded: AuditEvent = serde_json::from_str(&json).expect("deserialize audit event");
+            assert_eq!(decoded, event);
+        }
     }
 }

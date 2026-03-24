@@ -295,18 +295,32 @@ impl SandboxExecutor {
         }
 
         let inspect = self.docker.inspect_container(&container_name, None).await?;
-        let oom_killed = inspect
+        let mut oom_killed = inspect
             .state
             .as_ref()
             .and_then(|s| s.oom_killed)
             .unwrap_or(false);
-        let error_mentions_oom = inspect
-            .state
-            .as_ref()
-            .and_then(|s| s.error.as_ref())
-            .map(|error| error.to_ascii_lowercase().contains("oom"))
-            .unwrap_or(false);
-        if oom_killed || (exit_code == 137 && error_mentions_oom) {
+        let mut state_error = inspect.state.as_ref().and_then(|s| s.error.clone());
+
+        // Some Docker environments may report SIGKILL exit 137 before OOM metadata
+        // has fully propagated into inspect state. Retry once before classifying.
+        if exit_code == 137 && !is_oom_exit(exit_code, oom_killed, state_error.as_deref()) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if let Ok(reinspect) = self.docker.inspect_container(&container_name, None).await {
+                oom_killed = reinspect
+                    .state
+                    .as_ref()
+                    .and_then(|s| s.oom_killed)
+                    .unwrap_or(oom_killed);
+                state_error = reinspect
+                    .state
+                    .as_ref()
+                    .and_then(|s| s.error.clone())
+                    .or(state_error);
+            }
+        }
+
+        if is_oom_exit(exit_code, oom_killed, state_error.as_deref()) {
             self.cleanup_container(&container_name).await;
             eprintln!("{{\"event\":\"sandbox.oom_killed\",\"container\":\"{container_name}\"}}");
             return Err(SandboxError::OomKilled);
@@ -452,6 +466,23 @@ fn extract_host_token(token: &str) -> Option<&str> {
     None
 }
 
+fn is_oom_exit(exit_code: i32, oom_killed: bool, state_error: Option<&str>) -> bool {
+    if oom_killed {
+        return true;
+    }
+
+    let error_mentions_oom = state_error
+        .map(|error| error.to_ascii_lowercase().contains("oom"))
+        .unwrap_or(false);
+    if error_mentions_oom {
+        return true;
+    }
+
+    // Exit 137 is SIGKILL. In our sandbox flow timeout is handled earlier and
+    // returns SandboxError::Timeout, so remaining 137 exits should be treated as OOM.
+    exit_code == 137
+}
+
 fn from_core_image(image: SandboxImage) -> ToolImage {
     match image {
         SandboxImage::Kani => ToolImage::Kani,
@@ -498,5 +529,30 @@ impl ImageRegistry {
             ToolImage::Fuzz => self.fuzz.clone(),
             ToolImage::Custom(value) => value.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_oom_exit;
+
+    #[test]
+    fn oom_exit_detects_explicit_oom_flag() {
+        assert!(is_oom_exit(1, true, None));
+    }
+
+    #[test]
+    fn oom_exit_detects_oom_from_state_error_text() {
+        assert!(is_oom_exit(1, false, Some("container encountered OOM condition")));
+    }
+
+    #[test]
+    fn oom_exit_treats_exit_137_as_oom_when_metadata_missing() {
+        assert!(is_oom_exit(137, false, None));
+    }
+
+    #[test]
+    fn non_oom_exit_without_signals_is_not_oom() {
+        assert!(!is_oom_exit(1, false, None));
     }
 }
