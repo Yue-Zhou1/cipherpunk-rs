@@ -543,7 +543,11 @@ mod tests {
 
     #[test]
     fn oom_exit_detects_oom_from_state_error_text() {
-        assert!(is_oom_exit(1, false, Some("container encountered OOM condition")));
+        assert!(is_oom_exit(
+            1,
+            false,
+            Some("container encountered OOM condition")
+        ));
     }
 
     #[test]
