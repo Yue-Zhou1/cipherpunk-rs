@@ -605,8 +605,7 @@ impl AuditOrchestrator {
                         }
 
                         working_memory.record_engine_outcome(&engine_name, "failed", 0);
-                        working_memory
-                            .record_adviser_note(&format!("{engine_name} failed: {err}"));
+                        working_memory.record_adviser_note(&format!("{engine_name} failed: {err}"));
                         outcomes.push(EngineOutcome {
                             engine: engine_name,
                             status: EngineStatus::Failed {
