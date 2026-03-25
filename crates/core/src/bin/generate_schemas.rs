@@ -10,7 +10,7 @@ fn main() {
         .and_then(|p| p.parent())
         .expect("workspace root")
         .to_path_buf();
-    let docs_dir = repo_root.join("docs");
+    let docs_dir = repo_root.join("docs/schemas");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
 
     let finding_path = docs_dir.join("finding-schema.json");

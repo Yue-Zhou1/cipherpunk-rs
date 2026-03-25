@@ -15,7 +15,7 @@ fn repo_root() -> PathBuf {
 
 #[test]
 fn finding_schema_matches_committed_file() {
-    let path = repo_root().join("docs/finding-schema.json");
+    let path = repo_root().join("docs/schemas/finding-schema.json");
     let expected = fs::read_to_string(path).expect("read finding schema");
     let generated = serde_json::to_string_pretty(&finding_json_schema_value())
         .expect("serialize finding schema");
@@ -24,7 +24,7 @@ fn finding_schema_matches_committed_file() {
 
 #[test]
 fn audit_yaml_schema_matches_committed_file() {
-    let path = repo_root().join("docs/audit-yaml-schema.json");
+    let path = repo_root().join("docs/schemas/audit-yaml-schema.json");
     let expected = fs::read_to_string(path).expect("read audit schema");
     let generated = serde_json::to_string_pretty(&audit_yaml_json_schema_value())
         .expect("serialize audit schema");

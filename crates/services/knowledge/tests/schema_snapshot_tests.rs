@@ -21,7 +21,7 @@ fn repo_root() -> PathBuf {
 
 #[test]
 fn vulnerability_signature_schema_matches_committed_snapshot() {
-    let path = repo_root().join("docs/memory-block-vulnerability-signature-schema.json");
+    let path = repo_root().join("docs/schemas/memory-block-vulnerability-signature-schema.json");
     let expected = fs::read_to_string(path).expect("read vulnerability signature schema snapshot");
     let generated = serde_json::to_string_pretty(&vulnerability_signature_json_schema_value())
         .expect("serialize vulnerability signature schema");
@@ -30,7 +30,7 @@ fn vulnerability_signature_schema_matches_committed_snapshot() {
 
 #[test]
 fn artifact_metadata_schema_matches_committed_snapshot() {
-    let path = repo_root().join("docs/memory-block-artifact-metadata-schema.json");
+    let path = repo_root().join("docs/schemas/memory-block-artifact-metadata-schema.json");
     let expected = fs::read_to_string(path).expect("read artifact metadata schema snapshot");
     let generated = serde_json::to_string_pretty(&artifact_metadata_json_schema_value())
         .expect("serialize artifact metadata schema");
