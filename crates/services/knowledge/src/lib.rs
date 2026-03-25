@@ -44,8 +44,8 @@ impl KnowledgeBase {
             .context("resolve repository root")?
             .to_path_buf();
 
-        let playbooks = load_playbooks(&repo_root.join("knowledge/playbooks"))?;
-        let domains = load_domains(&repo_root.join("knowledge/domains"))?
+        let playbooks = load_playbooks(&repo_root.join("data/knowledge/playbooks"))?;
+        let domains = load_domains(&repo_root.join("data/knowledge/domains"))?
             .into_iter()
             .map(|domain| (domain.id.clone(), domain))
             .collect::<BTreeMap<_, _>>();

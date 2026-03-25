@@ -1669,7 +1669,7 @@ fn crypto_rule_pack_dir() -> Result<PathBuf> {
         .and_then(|value| value.parent())
         .and_then(|value| value.parent())
         .context("resolve repository root from session-manager manifest")?;
-    Ok(repo_root.join("rules/crypto-misuse"))
+    Ok(repo_root.join("data/rules/crypto-misuse"))
 }
 
 fn job_to_view(job: &AuditJob) -> SessionJobView {

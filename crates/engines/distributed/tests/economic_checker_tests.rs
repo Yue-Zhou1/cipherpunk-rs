@@ -31,7 +31,7 @@ fn economic_rules_dir() -> std::path::PathBuf {
         .expect("crates/")
         .parent()
         .expect("repo root")
-        .join("rules/economic")
+        .join("data/rules/economic")
 }
 
 fn write_file(path: &Path, content: &str) {
