@@ -17,7 +17,7 @@ fn main() {
         .and_then(|value| value.parent())
         .expect("resolve repository root")
         .to_path_buf();
-    let docs_dir = repo_root.join("docs");
+    let docs_dir = repo_root.join("docs/schemas");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
 
     let vulnerability_path = docs_dir.join("memory-block-vulnerability-signature-schema.json");

@@ -144,7 +144,7 @@ budget:
         entries: None,
         output_dir: Some(output_dir.clone()),
         evidence_pack_zip: Some(dir.path().join("seed-evidence-pack.zip")),
-        rules_dir: repo_root().join("rules"),
+        rules_dir: repo_root().join("data/rules"),
         no_llm_prose: true,
     };
 

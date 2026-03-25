@@ -7,3 +7,11 @@ tools/pdf_foundry/data/signatures.jsonl
 tools/pdf_foundry/output/knowledge.bin
 .venv-pdf-foundry/
 *.egg-info/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Frontend build output
+ui/dist/

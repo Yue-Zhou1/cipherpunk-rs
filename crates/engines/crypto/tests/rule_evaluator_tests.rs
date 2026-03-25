@@ -18,7 +18,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn rule_dir() -> PathBuf {
-    repo_root().join("rules/crypto-misuse")
+    repo_root().join("data/rules/crypto-misuse")
 }
 
 fn fixture_dir() -> PathBuf {

@@ -162,8 +162,8 @@ fn findings_json_validates_against_committed_finding_schema() {
         .parent()
         .expect("repo root")
         .to_path_buf();
-    let schema_text =
-        fs::read_to_string(repo_root.join("docs/finding-schema.json")).expect("read schema file");
+    let schema_text = fs::read_to_string(repo_root.join("docs/schemas/finding-schema.json"))
+        .expect("read schema file");
     let schema: serde_json::Value = serde_json::from_str(&schema_text).expect("valid schema json");
 
     let validator = JSONSchema::options()

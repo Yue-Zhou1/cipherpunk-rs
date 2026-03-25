@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSIONS_FILE="${ROOT_DIR}/containers/versions.toml"
-DIGESTS_FILE="${ROOT_DIR}/containers/image-digests.json"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VERSIONS_FILE="${ROOT_DIR}/deploy/containers/versions.toml"
+DIGESTS_FILE="${ROOT_DIR}/deploy/containers/image-digests.json"
 
 toml_get() {
   local section="$1"
@@ -82,32 +82,32 @@ build_image() {
 }
 
 build_image \
-  "${ROOT_DIR}/containers/kani/Dockerfile" \
+  "${ROOT_DIR}/deploy/containers/kani/Dockerfile" \
   "${KANI_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
   --build-arg KANI_VERSION="${KANI_VERSION}" \
   --build-arg KANI_RUSTC_TOOLCHAIN="${KANI_TOOLCHAIN}"
 
 build_image \
-  "${ROOT_DIR}/containers/z3/Dockerfile" \
+  "${ROOT_DIR}/deploy/containers/z3/Dockerfile" \
   "${Z3_TAG}" \
   --build-arg UBUNTU_BASE_IMAGE="${UBUNTU_BASE}" \
   --build-arg Z3_VERSION="${Z3_VERSION}"
 
 build_image \
-  "${ROOT_DIR}/containers/madsim/Dockerfile" \
+  "${ROOT_DIR}/deploy/containers/madsim/Dockerfile" \
   "${MADSIM_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
   --build-arg MADSIM_VERSION="${MADSIM_VERSION}"
 
 build_image \
-  "${ROOT_DIR}/containers/miri/Dockerfile" \
+  "${ROOT_DIR}/deploy/containers/miri/Dockerfile" \
   "${MIRI_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
   --build-arg MIRI_RUSTC_TOOLCHAIN="${MIRI_TOOLCHAIN}"
 
 build_image \
-  "${ROOT_DIR}/containers/fuzz/Dockerfile" \
+  "${ROOT_DIR}/deploy/containers/fuzz/Dockerfile" \
   "${FUZZ_TAG}" \
   --build-arg RUST_BASE_IMAGE="${RUST_BASE}" \
   --build-arg CARGO_FUZZ_VERSION="${CARGO_FUZZ_VERSION}" \

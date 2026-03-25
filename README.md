@@ -13,6 +13,33 @@ and economic attack surfaces — backed by formal verification evidence (Z3, Kan
 ## Workspace Structure
 
 ```
+crates/                Rust workspace (core, engines, services, workers, apps)
+ui/                    React + Vite frontend, Tauri v2 app shell
+tools/
+  pdf_foundry/         Python companion tool
+data/
+  rules/               YAML rule packs (crypto-misuse/, economic/)
+  knowledge/           domain checklists and tool playbooks
+  baselines/           LLM eval baselines
+deploy/
+  Dockerfile           web-server image build
+  docker-compose.yml   local dev compose
+  containers/          pinned tool images (kani/z3/madsim/miri/fuzz)
+scripts/
+  start-web-http.sh    local backend + frontend launcher
+tests/
+  regression/          regression scenario fixtures
+docs/
+  schemas/             JSON schema snapshots
+  design/              implementation plans and design docs
+  superpowers/specs/   brainstorm design specs
+.github/               CI workflows
+.githooks/             repository hooks
+```
+
+Workspace internals:
+
+```
 crates/
   core/                shared types: AuditConfig, Finding, AuditManifest, engine traits
   engines/
@@ -37,9 +64,6 @@ crates/
     cli/               audit-agent binary (clap)
     orchestrator/      DAG execution, finding deduplication, output production
     tauri-ui/          IPC session layer for the desktop app
-ui/                    React + Vite frontend, Tauri v2 app shell
-rules/                 YAML rule packs (crypto-misuse/, economic/)
-docs/                  design docs, schemas, UI layout spec
 ```
 
 ## Prerequisites
@@ -113,12 +137,12 @@ Use fixture-based LLM regression checks and save a baseline:
 # TemplateFallback floor baseline
 cargo run -p audit-agent-cli -- eval \
   --provider template \
-  --baseline baselines/template-fallback.json
+  --baseline data/baselines/template-fallback.json
 
 # Compare current provider output against an existing baseline
 cargo run -p audit-agent-cli -- eval \
   --provider openai \
-  --compare baselines/template-fallback.json
+  --compare data/baselines/template-fallback.json
 ```
 
 By default, `eval` reads fixtures from
@@ -220,7 +244,7 @@ cd ui && npm run build
 
 ## Crypto Rule Schema
 
-Crypto misuse rules live under `rules/crypto-misuse/*.yaml`. The deterministic
+Crypto misuse rules live under `data/rules/crypto-misuse/*.yaml`. The deterministic
 engine validates rule files at load time and rejects unsupported fields.
 
 Supported `detection.patterns[*].type` values:
@@ -257,7 +281,7 @@ backend; remote execution can be enabled per sandbox runtime as rollout hardenin
 advances.
 
 Manual rollout checks are documented in
-[docs/plans/2026-03-12-v3-rollout-checklist.md](docs/plans/2026-03-12-v3-rollout-checklist.md).
+[docs/design/plans/2026-03-12-v3-rollout-checklist.md](docs/design/plans/2026-03-12-v3-rollout-checklist.md).
 
 ## Troubleshooting
 
