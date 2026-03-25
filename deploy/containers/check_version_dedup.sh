@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSIONS_FILE="${ROOT_DIR}/containers/versions.toml"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VERSIONS_FILE="${ROOT_DIR}/deploy/containers/versions.toml"
 
 mapfile -t VERSION_VALUES < <(
   awk -F'=' '
@@ -18,7 +18,7 @@ mapfile -t VERSION_VALUES < <(
 )
 
 for version in "${VERSION_VALUES[@]}"; do
-  if grep -R --line-number --fixed-strings "${version}" "${ROOT_DIR}/containers" \
+  if grep -R --line-number --fixed-strings "${version}" "${ROOT_DIR}/deploy/containers" \
     | grep -v "versions.toml" \
     | grep -v "check_version_dedup.sh" \
     >/dev/null; then
@@ -27,4 +27,4 @@ for version in "${VERSION_VALUES[@]}"; do
   fi
 done
 
-echo "Version strings are centralized in containers/versions.toml"
+echo "Version strings are centralized in deploy/containers/versions.toml"

@@ -56,16 +56,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ hashFiles('containers/**') }}
+          key: ${{ runner.os }}-buildx-${{ hashFiles('deploy/containers/**') }}
           restore-keys: |
             ${{ runner.os }}-buildx-
       - name: Validate version centralization
-        run: bash containers/check_version_dedup.sh
+        run: bash deploy/containers/check_version_dedup.sh
       - name: Build containers and verify pinned versions
         env:
           USE_BUILDX_CACHE: "1"
           DOCKER_CACHE_DIR: /tmp/.buildx-cache
-        run: bash containers/build_and_verify.sh
+        run: bash deploy/containers/build_and_verify.sh
 
   sarif-validate:
     runs-on: ubuntu-latest
