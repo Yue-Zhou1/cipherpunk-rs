@@ -1,8 +1,6 @@
-# Cryptographic Rust Audit Checklist
+# Cryptographic Rust Audit Checklist (Human)
 
-> Canonical source for generated checklist variants.
-> Outputs: `checklist_human.md`, `checklist_llm.md`.
-> Edit this file only, then run `python3 scripts/render_checklists.py`.
+> Generated from `data/rules/checklist.md`. Do not edit directly.
 
 ## 0. Dimensional Analysis
 
@@ -36,7 +34,7 @@ Coverage anchors that should stay in mind while auditing include:
 - `curve25519-dalek`, `ed25519-dalek`, `x25519-dalek`, `bulletproofs`, `merlin`, `subtle`, and `schnorrkel`
 - `halo2`, `bellman`, `bellperson`, `librustzcash`, `jubjub`, `pasta_curves`, and adjacent Pasta/Jubjub systems
 - curve and commitment ecosystems such as `decaf377` and `banderwagon` when reviewing privacy or Verkle-style constructions
-- threshold and MPC families such as `frost`, threshold BLS, `threshold_crypto`, threshold ECDSA, `multi-party-ecdsa`, and `synedrion`
+- threshold and MPC families such as `frost`, `threshold_crypto`, threshold BLS, threshold ECDSA, `multi-party-ecdsa`, and `synedrion`
 - hash and sponge families such as `sha2`, `sha3`, `blake2`, `blake3`, `ark-sponge`, `neptune`, and Poseidon variants embedded in proof systems
 - STARK, Plonkish, folding, and recursion systems such as `Plonky3`, `plonky2`, `starky`, `winterfell`, `stwo`, `boojum`, `Nova`, `Sonobe`, `kimchi`, and `jellyfish`
 - zkVM systems such as `risc0`, `sp1`, `Jolt`, and `nexus-zkvm`
