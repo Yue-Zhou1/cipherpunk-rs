@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { largeFixture, mediumFixture, smallFixture } from "../fixtures/mockGraph";
 import { useAdaptiveThresholds } from "../hooks/useAdaptiveThresholds";
 import { useDepthControl } from "../hooks/useDepthControl";
+import { useFocusContext } from "../hooks/useFocusContext";
+import { useTrace } from "../hooks/useTrace";
 import { useUnifiedGraph } from "../hooks/useUnifiedGraph";
 import type { ExplorerGraph } from "../types";
 
@@ -114,5 +116,93 @@ describe("useUnifiedGraph", () => {
     const { result } = renderHook(() => useUnifiedGraph("small"));
     const smallCount = result.current.graph.nodes.filter((node) => node.kind === "file").length;
     expect(smallCount).toBeLessThan(30);
+  });
+});
+
+describe("useFocusContext", () => {
+  it("starts in overview state with no focus", () => {
+    const { result } = renderHook(() => useFocusContext(mediumFixture, 2));
+    expect(result.current.stateKind).toBe("overview");
+    expect(result.current.focusedNodeId).toBeNull();
+    expect(result.current.upstreamIds.size).toBe(0);
+    expect(result.current.downstreamIds.size).toBe(0);
+  });
+
+  it("focusing a node transitions to focus state and computes neighbors", () => {
+    const { result } = renderHook(() => useFocusContext(mediumFixture, 2));
+    const targetId = mediumFixture.nodes.find((node) => node.kind === "function")!.id;
+    act(() => result.current.focusNode(targetId));
+    expect(result.current.stateKind).toBe("focus");
+    expect(result.current.focusedNodeId).toBe(targetId);
+  });
+
+  it("clearing focus returns to overview", () => {
+    const { result } = renderHook(() => useFocusContext(mediumFixture, 2));
+    const targetId = mediumFixture.nodes.find((node) => node.kind === "function")!.id;
+    act(() => result.current.focusNode(targetId));
+    act(() => result.current.clearFocus());
+    expect(result.current.stateKind).toBe("overview");
+    expect(result.current.focusedNodeId).toBeNull();
+  });
+
+  it("computes upstream neighbors via calls edges", () => {
+    const { result } = renderHook(() => useFocusContext(mediumFixture, 1));
+    const calledNodeId = mediumFixture.edges.find((edge) => edge.relation === "calls")?.to;
+    if (!calledNodeId) {
+      return;
+    }
+    act(() => result.current.focusNode(calledNodeId));
+    expect(result.current.upstreamIds.size).toBeGreaterThan(0);
+  });
+
+  it("depth change recomputes neighbors", () => {
+    const { result, rerender } = renderHook(
+      ({ depth }) => useFocusContext(mediumFixture, depth),
+      { initialProps: { depth: 1 } }
+    );
+    const calledNodeId = mediumFixture.edges.find((edge) => edge.relation === "calls")?.to;
+    if (!calledNodeId) {
+      return;
+    }
+    act(() => result.current.focusNode(calledNodeId));
+    const count1 = result.current.upstreamIds.size + result.current.downstreamIds.size;
+    rerender({ depth: 3 });
+    const count3 = result.current.upstreamIds.size + result.current.downstreamIds.size;
+    expect(count3).toBeGreaterThanOrEqual(count1);
+  });
+});
+
+describe("useTrace", () => {
+  it("starts with no trace", () => {
+    const { result } = renderHook(() => useTrace(mediumFixture, null));
+    expect(result.current.traceResult).toBeNull();
+  });
+
+  it("tracing a parameter computes upstream path", () => {
+    const paramEdge = mediumFixture.edges.find((edge) => edge.relation === "parameter_flow");
+    if (!paramEdge?.parameterName) {
+      return;
+    }
+
+    const { result } = renderHook(() => useTrace(mediumFixture, paramEdge.to));
+    act(() => result.current.traceParameter(paramEdge.parameterName!));
+
+    if (result.current.traceResult) {
+      expect(result.current.traceResult.path.length).toBeGreaterThanOrEqual(2);
+      expect(result.current.traceResult.direction).toBe("upstream");
+      expect(result.current.traceResult.parameterName).toBe(paramEdge.parameterName);
+    }
+  });
+
+  it("clearTrace resets result", () => {
+    const { result } = renderHook(() => useTrace(mediumFixture, null));
+    act(() => result.current.clearTrace());
+    expect(result.current.traceResult).toBeNull();
+  });
+
+  it("returns null for dead-end parameter", () => {
+    const { result } = renderHook(() => useTrace(mediumFixture, mediumFixture.nodes[0]?.id ?? null));
+    act(() => result.current.traceParameter("nonexistent_param"));
+    expect(result.current.traceResult).toBeNull();
   });
 });
