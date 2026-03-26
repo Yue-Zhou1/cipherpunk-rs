@@ -87,9 +87,10 @@ function ExplorerLayout() {
   );
 }
 
-export default function CodebaseExplorer({ sessionId, onNavigateToSource }: CodebaseExplorerProps) {
-  void sessionId;
-
+export default function CodebaseExplorer({
+  sessionId: _sessionId,
+  onNavigateToSource,
+}: CodebaseExplorerProps) {
   return (
     <ExplorerProvider onNavigateToSource={onNavigateToSource}>
       <ExplorerLayout />

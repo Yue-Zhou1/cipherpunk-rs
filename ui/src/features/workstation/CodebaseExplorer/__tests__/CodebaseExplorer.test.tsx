@@ -128,4 +128,36 @@ describe("CodebaseExplorer", () => {
       expect(screen.getByText("OVERVIEW")).toBeTruthy();
     });
   });
+
+  it("transitions OVERVIEW -> FOCUS -> TRACE and Esc returns to FOCUS", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    fireEvent.change(screen.getByLabelText("View granularity"), {
+      target: { value: "files" },
+    });
+
+    fireEvent.click(
+      await screen.findByTestId(
+        "rf-node-symbol:crates/engine-crypto/src/signature/verify.rs::verify_signature"
+      )
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("FOCUS")).toBeTruthy();
+      expect(screen.getByLabelText("Node context")).toBeTruthy();
+    });
+
+    fireEvent.click(await screen.findByTitle("Trace origin of msg"));
+
+    await waitFor(() => {
+      expect(screen.getByText("TRACE")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.getByText("FOCUS")).toBeTruthy();
+      expect(screen.queryByText("TRACE")).toBeNull();
+    });
+  });
 });
