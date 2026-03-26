@@ -53,16 +53,16 @@ vi.mock("./CodeEditorPane", () => ({
   ),
 }));
 
-vi.mock("./GraphLens", () => ({
+vi.mock("./CodebaseExplorer", () => ({
   default: ({
-    selectedNodeIds,
+    sessionId,
     onNavigateToSource,
   }: {
-    selectedNodeIds?: string[];
+    sessionId: string;
     onNavigateToSource?: (filePath: string, line?: number) => void;
   }) => (
     <section>
-      <div data-testid="graph-selection-state">{(selectedNodeIds ?? []).join("|")}</div>
+      <div data-testid="codebase-explorer-state">{sessionId}</div>
       <button
         type="button"
         onClick={() => onNavigateToSource?.("rollup-core/src/lib.rs", 12)}
@@ -153,9 +153,6 @@ describe("WorkstationShell", () => {
     render(<WorkstationShell sessionId="sess-1" />);
     fireEvent.click(screen.getByRole("button", { name: /select review item/i }));
 
-    expect(screen.getByTestId("graph-selection-state").textContent).toContain(
-      "file:/tmp/repo/rollup-core/src/lib.rs"
-    );
     expect(selectFileSpy).toHaveBeenCalledWith("rollup-core/src/lib.rs");
   });
 
@@ -175,9 +172,9 @@ describe("WorkstationShell", () => {
     expect(screen.getByRole("tab", { name: /^security$/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /audit plan/i })).toBeInTheDocument();
 
-    expect(screen.queryByTestId("graph-selection-state")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("codebase-explorer-state")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
-    expect(screen.getByTestId("graph-selection-state")).toBeInTheDocument();
+    expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
   });
 
   it("switches to code tab and forwards line when graph navigation is requested in http mode", () => {
