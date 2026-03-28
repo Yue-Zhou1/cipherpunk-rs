@@ -14,10 +14,11 @@ use serde_json::json;
 use session_manager::{
     ActivitySummary, ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditPlanResponse,
     AuditSessionSummary, ConfigParseResponse, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
-    CrateDecision, CreateAuditSessionResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
-    LoadReviewQueueResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
-    OpenAuditSessionResponse, OutputType, ProjectGraphResponse, ReadSourceFileResponse,
-    SessionConsoleEntry, SessionConsoleLevel, SessionManager, SessionManagerError, SourceInputIpc,
+    CrateDecision, CreateAuditSessionResponse, ExplorerDepth, ExplorerGraphResponse,
+    GetProjectTreeResponse, LoadChecklistPlanResponse, LoadReviewQueueResponse,
+    LoadSecurityOverviewResponse, LoadToolbenchContextResponse, OpenAuditSessionResponse,
+    OutputType, ProjectGraphResponse, ReadSourceFileResponse, SessionConsoleEntry,
+    SessionConsoleLevel, SessionManager, SessionManagerError, SourceInputIpc,
     TailSessionConsoleResponse, ToolbenchSelectionRequest, branch_resolution_banner,
     warning_message,
 };
@@ -89,6 +90,13 @@ pub struct DetectWorkspaceResponse {
 pub struct GraphQuery {
     #[serde(default)]
     include_values: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExplorerGraphQuery {
+    #[serde(default = "default_explorer_depth")]
+    depth: String,
+    cluster: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -201,6 +209,8 @@ fn map_session_error(err: SessionManagerError) -> AppError {
         SessionManagerError::NotFound { message } => {
             if message.contains("ProjectIR has not been built for this session") {
                 AppError::not_found("PROJECT_IR_NOT_BUILT", message)
+            } else if message.contains("Unknown cluster node ID") {
+                AppError::not_found("UNKNOWN_CLUSTER", message)
             } else {
                 AppError::not_found("NOT_FOUND", message)
             }
@@ -234,6 +244,10 @@ pub fn build_app(
             get(read_source_file),
         )
         .route("/api/sessions/:session_id/graphs/:lens", get(load_graph))
+        .route(
+            "/api/sessions/:session_id/explorer-graph",
+            get(load_explorer_graph),
+        )
         .route(
             "/api/sessions/:session_id/security",
             get(load_security_overview),
@@ -306,6 +320,10 @@ fn default_console_limit() -> usize {
 
 pub fn default_events_poll_interval() -> Duration {
     Duration::from_secs(2)
+}
+
+fn default_explorer_depth() -> String {
+    "overview".to_string()
 }
 
 fn normalized_wizard_id(value: Option<&str>) -> Option<String> {
@@ -542,6 +560,31 @@ async fn load_graph(
     Ok(Json(graph))
 }
 
+async fn load_explorer_graph(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Query(query): Query<ExplorerGraphQuery>,
+) -> Result<Json<ExplorerGraphResponse>, AppError> {
+    let depth = match query.depth.as_str() {
+        "full" => ExplorerDepth::Full,
+        _ => ExplorerDepth::Overview,
+    };
+
+    if depth == ExplorerDepth::Full && query.cluster.is_some() {
+        return Err(AppError::bad_request(
+            "Cannot specify both depth=full and cluster parameter",
+        ));
+    }
+
+    let response = state
+        .manager
+        .load_explorer_graph(&session_id, depth, query.cluster.as_deref())
+        .await
+        .map_err(map_session_error)?;
+
+    Ok(Json(response))
+}
+
 async fn load_security_overview(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -736,6 +779,7 @@ async fn stream_session_events(
     let mut ticker = time::interval(poll_interval);
     ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     let mut last_payload = String::new();
+    let mut last_stale_marker = String::new();
 
     loop {
         tokio::select! {
@@ -752,6 +796,19 @@ async fn stream_session_events(
                     .ok()
                     .map(|response| response.entries)
                     .unwrap_or_default();
+                if let Some(marker) = latest_explorer_graph_stale_marker(&console)
+                    && marker != last_stale_marker
+                {
+                    last_stale_marker = marker;
+                    let stale_payload = json!({
+                        "event": "explorer_graph_stale",
+                        "sessionId": &session_id,
+                    })
+                    .to_string();
+                    if socket.send(Message::Text(stale_payload)).await.is_err() {
+                        break;
+                    }
+                }
                 let payload = execution_payload(&session_id, &console).to_string();
                 if payload == last_payload {
                     continue;
@@ -763,6 +820,14 @@ async fn stream_session_events(
             }
         }
     }
+}
+
+fn latest_explorer_graph_stale_marker(entries: &[SessionConsoleEntry]) -> Option<String> {
+    entries
+        .iter()
+        .rev()
+        .find(|entry| entry.source == "explorer_graph_stale")
+        .map(|entry| format!("{}|{}|{}", entry.timestamp, entry.source, entry.message))
 }
 
 fn execution_payload(session_id: &str, entries: &[SessionConsoleEntry]) -> serde_json::Value {

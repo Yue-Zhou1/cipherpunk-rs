@@ -10,7 +10,7 @@ import ActivityConsole from "./ActivityConsole";
 import AuditPlanPanel from "./AuditPlanPanel";
 import ChecklistPanel from "./ChecklistPanel";
 import CodeEditorPane from "./CodeEditorPane";
-import GraphLens from "./GraphLens";
+import CodebaseExplorer from "./CodebaseExplorer";
 import ProjectExplorer from "./ProjectExplorer";
 import ReviewQueue from "./ReviewQueue";
 import SecurityOverviewPanel from "./SecurityOverviewPanel";
@@ -122,14 +122,12 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
     !webMode;
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
-  const [focusedSymbolName, setFocusedSymbolName] = useState<string | null>(null);
   const [targetLine, setTargetLine] = useState<number | null>(null);
   const [activeMainTab, setActiveMainTab] = useState<WorkstationMainTab>("code");
   const useTabbedWebLayout = !useSplitLayout && webMode;
 
   const handleSelectFile = useCallback(
     (path: string) => {
-      setFocusedSymbolName(null);
       setTargetLine(null);
       if (useTabbedWebLayout) {
         setActiveMainTab("code");
@@ -141,7 +139,6 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
 
   const handleNavigateToSource = useCallback(
     (filePath: string, line?: number) => {
-      setFocusedSymbolName(null);
       setTargetLine(typeof line === "number" ? line : null);
       if (useTabbedWebLayout) {
         setActiveMainTab("code");
@@ -156,7 +153,6 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
       setSelectedReviewRecordId(item.recordId);
       const nodeIds = item.irNodeIds ?? [];
       setSelectedGraphNodeIds(nodeIds);
-      setFocusedSymbolName(null);
 
       const matchedFilePath = resolveSelectedFilePath(nodeIds, projectTree);
       if (matchedFilePath) {
@@ -244,14 +240,11 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                       focusedRecordId={selectedReviewRecordId}
                       focusedNodeCount={selectedGraphNodeIds.length}
                       targetLine={targetLine}
-                      onSymbolFocus={setFocusedSymbolName}
                     />
                   </Allotment.Pane>
                   <Allotment.Pane minSize={180}>
-                    <GraphLens
+                    <CodebaseExplorer
                       sessionId={sessionId}
-                      selectedNodeIds={selectedGraphNodeIds}
-                      focusSymbolName={focusedSymbolName}
                       onNavigateToSource={handleNavigateToSource}
                     />
                   </Allotment.Pane>
@@ -294,7 +287,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
               isLoading={treeLoading}
               error={treeError}
             />
-            <section className="vscode-editor-column">
+            <section className={`vscode-editor-column${useTabbedWebLayout ? " tabbed" : ""}`}>
               <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
                 <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
                   {fileTabLabel(selectedFilePath)}
@@ -327,7 +320,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     ))}
                   </div>
                   <div className="workstation-view-panel">
-                    {activeMainTab === "code" ? (
+                    {activeMainTab === "code" && (
                       <CodeEditorPane
                         filePath={selectedFilePath}
                         content={fileContent}
@@ -337,25 +330,20 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                         focusedRecordId={selectedReviewRecordId}
                         focusedNodeCount={selectedGraphNodeIds.length}
                         targetLine={targetLine}
-                        onSymbolFocus={setFocusedSymbolName}
                       />
-                    ) : null}
-                    {activeMainTab === "graph" ? (
-                      <div className="workstation-graph-tab-panel">
-                        <GraphLens
-                          sessionId={sessionId}
-                          selectedNodeIds={selectedGraphNodeIds}
-                          focusSymbolName={focusedSymbolName}
-                          onNavigateToSource={handleNavigateToSource}
-                        />
-                      </div>
-                    ) : null}
-                    {activeMainTab === "security" ? (
+                    )}
+                    {activeMainTab === "graph" && (
+                      <CodebaseExplorer
+                        sessionId={sessionId}
+                        onNavigateToSource={handleNavigateToSource}
+                      />
+                    )}
+                    {activeMainTab === "security" && (
                       <SecurityOverviewPanel sessionId={sessionId} />
-                    ) : null}
-                    {activeMainTab === "plan" ? (
+                    )}
+                    {activeMainTab === "plan" && (
                       <AuditPlanPanel sessionId={sessionId} />
-                    ) : null}
+                    )}
                   </div>
                 </>
               ) : (
@@ -369,12 +357,9 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     focusedRecordId={selectedReviewRecordId}
                     focusedNodeCount={selectedGraphNodeIds.length}
                     targetLine={targetLine}
-                    onSymbolFocus={setFocusedSymbolName}
                   />
-                  <GraphLens
+                  <CodebaseExplorer
                     sessionId={sessionId}
-                    selectedNodeIds={selectedGraphNodeIds}
-                    focusSymbolName={focusedSymbolName}
                     onNavigateToSource={handleNavigateToSource}
                   />
                 </div>

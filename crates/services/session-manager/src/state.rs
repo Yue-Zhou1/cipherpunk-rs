@@ -37,6 +37,7 @@ use research::{ResearchQuery, ResearchService};
 use serde::{Deserialize, Serialize};
 use session_store::{LlmInteractionEvent, SessionStore};
 
+use crate::explorer_graph::{ExplorerDepth, ExplorerGraphBuilder, ExplorerGraphResponse};
 use crate::{
     ActivitySummary, AuditPlanDomainView, AuditPlanOverviewView, AuditPlanResponse,
     ConfigParseResponse, EngineOutcomeView, EngineSelectionView, LlmCallSummary, OutputType,
@@ -960,6 +961,33 @@ impl UiSessionState {
         Ok(response)
     }
 
+    pub async fn load_explorer_graph(
+        &mut self,
+        session_id: &str,
+        depth: ExplorerDepth,
+        cluster: Option<&str>,
+    ) -> Result<ExplorerGraphResponse> {
+        let source_root = self
+            .ensure_session_loaded(session_id)?
+            .snapshot
+            .source
+            .local_path
+            .clone();
+        let ir = if depth == ExplorerDepth::Overview && cluster.is_none() {
+            self.load_or_refresh_project_ir_for_explorer(session_id)
+                .await
+                .map_err(map_project_ir_build_error)?
+        } else {
+            self.load_or_build_project_ir(session_id, false)
+                .await
+                .map_err(map_project_ir_build_error)?
+        };
+        let builder = ExplorerGraphBuilder::new(&ir, &source_root);
+        builder
+            .build(session_id, depth, cluster)
+            .map_err(|err| anyhow!(err))
+    }
+
     pub async fn load_security_overview(
         &mut self,
         session_id: &str,
@@ -1197,6 +1225,28 @@ impl UiSessionState {
         Ok(built)
     }
 
+    async fn load_or_refresh_project_ir_for_explorer(
+        &mut self,
+        session_id: &str,
+    ) -> Result<ProjectIr> {
+        let session = self.ensure_session_loaded(session_id)?.clone();
+        let previous = self.project_ir_cache.get(session_id).cloned();
+        let rebuilt = build_project_ir_for_session(&session, false).await?;
+
+        if let Some(cached) = previous {
+            if cached != rebuilt {
+                self.project_ir_cache
+                    .insert(session_id.to_string(), rebuilt.clone());
+                self.append_explorer_graph_stale_event(session_id)?;
+            }
+            return Ok(rebuilt);
+        }
+
+        self.project_ir_cache
+            .insert(session_id.to_string(), rebuilt.clone());
+        Ok(rebuilt)
+    }
+
     fn load_candidate_records(&self, session_id: &str) -> Result<Vec<AuditRecord>> {
         if let Some(store) = &self.session_store {
             return store.list_records(session_id, Some("candidate"));
@@ -1314,6 +1364,28 @@ impl UiSessionState {
                 .entry(session_id.to_string())
                 .or_default();
         }
+        Ok(())
+    }
+
+    fn append_explorer_graph_stale_event(&self, session_id: &str) -> Result<()> {
+        let Some(store) = &self.session_store else {
+            return Ok(());
+        };
+
+        let payload = serde_json::json!({
+            "event": "explorer_graph_stale"
+        });
+        let event = session_store::SessionEvent {
+            event_id: format!(
+                "explorer-graph-stale:{}:{}",
+                session_id,
+                Utc::now().timestamp_micros()
+            ),
+            event_type: "explorer_graph_stale".to_string(),
+            payload: payload.to_string(),
+            created_at: Utc::now(),
+        };
+        store.append_event(session_id, &event)?;
         Ok(())
     }
 

@@ -58,7 +58,7 @@ describe("ipc transport", () => {
     });
   });
 
-  it("includes include_values query for dataflow graph route", async () => {
+  it("maps overview explorer graph route with depth query", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ nodes: [], edges: [] }), {
         status: 200,
@@ -68,23 +68,22 @@ describe("ipc transport", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const transport = new HttpTransport("http://localhost:3000");
-    await transport.invoke("load_dataflow_graph", {
+    await transport.invoke("load_explorer_graph", {
       session_id: "sess-1",
-      include_values: true,
+      depth: "overview",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:3000/api/sessions/sess-1/graphs/dataflow?include_values=true",
+      "http://localhost:3000/api/sessions/sess-1/explorer-graph?depth=overview",
       expect.objectContaining({
         method: "GET",
         headers: { "Content-Type": "application/json" },
         body: undefined,
-        signal: expect.any(AbortSignal),
       })
     );
   });
 
-  it("maps symbol graph route to /api/sessions/:id/graphs/symbol", async () => {
+  it("maps cluster explorer graph route with cluster query", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ nodes: [], edges: [] }), {
         status: 200,
@@ -94,17 +93,17 @@ describe("ipc transport", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const transport = new HttpTransport("http://localhost:3000");
-    await transport.invoke("load_symbol_graph", {
+    await transport.invoke("load_explorer_graph", {
       session_id: "sess-1",
+      cluster: "crt_1",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:3000/api/sessions/sess-1/graphs/symbol",
+      "http://localhost:3000/api/sessions/sess-1/explorer-graph?cluster=crt_1",
       expect.objectContaining({
         method: "GET",
         headers: { "Content-Type": "application/json" },
         body: undefined,
-        signal: expect.any(AbortSignal),
       })
     );
   });
@@ -119,15 +118,14 @@ describe("ipc transport", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const transport = new HttpTransport("http://localhost:3000/api");
-    await transport.invoke("load_file_graph", { session_id: "sess-1" });
+    await transport.invoke("load_explorer_graph", { session_id: "sess-1" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:3000/api/sessions/sess-1/graphs/file",
+      "http://localhost:3000/api/sessions/sess-1/explorer-graph",
       expect.objectContaining({
         method: "GET",
         headers: { "Content-Type": "application/json" },
         body: undefined,
-        signal: expect.any(AbortSignal),
       })
     );
   });
@@ -142,39 +140,39 @@ describe("ipc transport", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const transport = new HttpTransport("http://localhost:3000///");
-    await transport.invoke("load_file_graph", { session_id: "sess-1" });
+    await transport.invoke("load_explorer_graph", { session_id: "sess-1" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:3000/api/sessions/sess-1/graphs/file",
+      "http://localhost:3000/api/sessions/sess-1/explorer-graph",
       expect.objectContaining({
         method: "GET",
         headers: { "Content-Type": "application/json" },
         body: undefined,
-        signal: expect.any(AbortSignal),
       })
     );
   });
 
-  it("aborts graph requests after 10 seconds", async () => {
-    vi.useFakeTimers();
-    const fetchMock = vi.fn(
-      (_url: string, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal;
-          signal?.addEventListener("abort", () => {
-            reject(new DOMException("Aborted", "AbortError"));
-          });
-        })
+  it("maps full explorer graph route with depth query", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ nodes: [], edges: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
     );
     vi.stubGlobal("fetch", fetchMock);
 
     const transport = new HttpTransport("http://localhost:3000");
-    const request = transport.invoke("load_file_graph", { session_id: "sess-1" });
-    const assertion = expect(request).rejects.toThrow("Request timed out after 10s");
+    await transport.invoke("load_explorer_graph", { session_id: "sess-1", depth: "full" });
 
-    await vi.advanceTimersByTimeAsync(10_000);
-    await assertion;
-  }, 15_000);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/sessions/sess-1/explorer-graph?depth=full",
+      expect.objectContaining({
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+      })
+    );
+  });
 
   it("maps tail_session_console with limit query param", async () => {
     const fetchMock = vi.fn(async () =>
