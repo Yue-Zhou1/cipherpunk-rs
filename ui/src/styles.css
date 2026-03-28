@@ -939,6 +939,10 @@ pre code {
   border-right: 1px solid #252526;
 }
 
+.vscode-editor-column.tabbed {
+  grid-template-rows: 35px auto minmax(0, 1fr);
+}
+
 .vscode-editor-stack {
   min-height: 0;
   display: grid;
@@ -962,6 +966,7 @@ pre code {
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
+  transition: border-color 150ms ease-out, color 150ms ease-out, background 150ms ease-out;
 }
 
 .workstation-view-tab.active,
@@ -973,14 +978,17 @@ pre code {
 
 .workstation-view-panel {
   min-height: 0;
-  display: flex;
-  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.workstation-graph-tab-panel {
-  min-height: 400px;
-  min-width: min(500px, 100%);
-  width: 100%;
+.workstation-view-panel > * {
+  min-height: 0;
+  overflow: auto;
 }
 
 .vscode-editor-tabs {

@@ -287,7 +287,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
               isLoading={treeLoading}
               error={treeError}
             />
-            <section className="vscode-editor-column">
+            <section className={`vscode-editor-column${useTabbedWebLayout ? " tabbed" : ""}`}>
               <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
                 <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
                   {fileTabLabel(selectedFilePath)}
@@ -320,7 +320,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     ))}
                   </div>
                   <div className="workstation-view-panel">
-                    {activeMainTab === "code" ? (
+                    {activeMainTab === "code" && (
                       <CodeEditorPane
                         filePath={selectedFilePath}
                         content={fileContent}
@@ -331,21 +331,19 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                         focusedNodeCount={selectedGraphNodeIds.length}
                         targetLine={targetLine}
                       />
-                    ) : null}
-                    {activeMainTab === "graph" ? (
-                      <div className="workstation-graph-tab-panel">
-                        <CodebaseExplorer
-                          sessionId={sessionId}
-                          onNavigateToSource={handleNavigateToSource}
-                        />
-                      </div>
-                    ) : null}
-                    {activeMainTab === "security" ? (
+                    )}
+                    {activeMainTab === "graph" && (
+                      <CodebaseExplorer
+                        sessionId={sessionId}
+                        onNavigateToSource={handleNavigateToSource}
+                      />
+                    )}
+                    {activeMainTab === "security" && (
                       <SecurityOverviewPanel sessionId={sessionId} />
-                    ) : null}
-                    {activeMainTab === "plan" ? (
+                    )}
+                    {activeMainTab === "plan" && (
                       <AuditPlanPanel sessionId={sessionId} />
-                    ) : null}
+                    )}
                   </div>
                 </>
               ) : (
