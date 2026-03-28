@@ -7,13 +7,13 @@ use tauri::State;
 use tauri_ui::ConfigParseResponse;
 use tauri_ui::OutputType;
 use tauri_ui::ipc::{
-    ActivitySummary, AuditPlanResponse,
-    ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditSessionSummary,
-    ConfirmWorkspaceRequest, ConfirmWorkspaceResponse, CreateAuditSessionResponse,
-    DownloadOutputResponse, GetProjectTreeResponse, LoadChecklistPlanResponse,
-    LoadReviewQueueResponse, LoadSecurityOverviewResponse, LoadToolbenchContextResponse,
-    OpenAuditSessionResponse, ProjectGraphResponse, ReadSourceFileResponse, SourceInputIpc,
-    TailSessionConsoleResponse, ToolbenchSelectionRequest,
+    ActivitySummary, ApplyReviewDecisionRequest, ApplyReviewDecisionResponse, AuditPlanResponse,
+    AuditSessionSummary, ConfirmWorkspaceRequest, ConfirmWorkspaceResponse,
+    CreateAuditSessionResponse, DownloadOutputResponse, ExplorerDepth, ExplorerGraphResponse,
+    GetProjectTreeResponse, LoadChecklistPlanResponse, LoadReviewQueueResponse,
+    LoadSecurityOverviewResponse, LoadToolbenchContextResponse, OpenAuditSessionResponse,
+    ProjectGraphResponse, ReadSourceFileResponse, SourceInputIpc, TailSessionConsoleResponse,
+    ToolbenchSelectionRequest,
 };
 use tauri_ui::{branch_resolution_banner, warning_message};
 
@@ -276,6 +276,29 @@ pub async fn load_audit_plan(
     let session = state.session.lock().await;
     session
         .load_audit_plan(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn load_explorer_graph(
+    state: State<'_, AppState>,
+    session_id: String,
+    depth: Option<String>,
+    cluster: Option<String>,
+) -> Result<ExplorerGraphResponse, String> {
+    let resolved_depth = match depth.as_deref() {
+        Some("full") => ExplorerDepth::Full,
+        _ => ExplorerDepth::Overview,
+    };
+
+    if resolved_depth == ExplorerDepth::Full && cluster.is_some() {
+        return Err("Cannot specify both depth=full and cluster parameter".to_string());
+    }
+
+    let mut session = state.session.lock().await;
+    session
+        .load_explorer_graph(&session_id, resolved_depth, cluster.as_deref())
         .await
         .map_err(|err| err.to_string())
 }

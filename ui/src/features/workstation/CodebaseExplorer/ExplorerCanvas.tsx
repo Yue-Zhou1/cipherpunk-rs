@@ -131,6 +131,7 @@ export function ExplorerCanvas() {
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       if (node.type === "clusterNode") {
+        ctx.expandCluster(node.id);
         ctx.toggleCluster(node.id);
         return;
       }

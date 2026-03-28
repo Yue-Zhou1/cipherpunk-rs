@@ -1,7 +1,7 @@
 import { useExplorer } from "./ExplorerContext";
 
 export function TraceOverlay() {
-  const { focusNode, stateKind, traceResult } = useExplorer();
+  const { focusNode, nodeMap, stateKind, traceResult } = useExplorer();
 
   if (stateKind !== "trace" || !traceResult) {
     return null;
@@ -18,7 +18,7 @@ export function TraceOverlay() {
           <span key={nodeId}>
             {index > 0 ? <span className="explorer-trace-arrow"> -&gt; </span> : null}
             <button className="explorer-trace-step" onClick={() => focusNode(nodeId)} type="button">
-              {nodeId.split("::").pop() ?? nodeId}
+              {nodeMap.get(nodeId)?.label ?? nodeId}
             </button>
           </span>
         ))}

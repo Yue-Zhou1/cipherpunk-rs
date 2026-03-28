@@ -1961,6 +1961,27 @@ pre code {
   background: #111827;
 }
 
+.explorer-stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #3a3d41;
+  border-bottom: 1px solid #252526;
+  font-size: 12px;
+  color: #cccccc;
+}
+
+.explorer-stale-banner button {
+  border: 1px solid #0e639c;
+  border-radius: 3px;
+  background: #094771;
+  color: #ffffff;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .explorer-granularity-select {
   background: #1e293b;
   color: #e2e8f0;
@@ -2040,6 +2061,47 @@ pre code {
   display: flex;
   flex: 1;
   overflow: hidden;
+}
+
+.explorer-loading,
+.explorer-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  color: #8b8b8b;
+  font-size: 13px;
+}
+
+.explorer-error {
+  color: #f48771;
+}
+
+.explorer-error button {
+  border: 1px solid #f48771;
+  border-radius: 3px;
+  background: transparent;
+  color: #f48771;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.explorer-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #3c3c3c;
+  border-top-color: #0e639c;
+  border-radius: 50%;
+  animation: explorer-spin 0.8s linear infinite;
+}
+
+@keyframes explorer-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .explorer-canvas-container {

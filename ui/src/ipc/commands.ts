@@ -154,31 +154,32 @@ export type AuditPlanResponse = {
   createdAt: string;
 };
 
-export type GraphLensKind = "file" | "feature" | "dataflow" | "symbol";
-
-export type ProjectGraphNode = {
+export type ExplorerNodeResponse = {
   id: string;
   label: string;
   kind: string;
   filePath?: string;
   line?: number;
-  findingCount?: number;
-  maxSeverity?: string;
+  signature?: {
+    parameters: { name: string; typeAnnotation?: string; position: number }[];
+    returnType?: string;
+  };
+  childCount?: number;
 };
 
-export type ProjectGraphEdge = {
+export type ExplorerEdgeResponse = {
   from: string;
   to: string;
   relation: string;
+  parameterName?: string;
+  parameterPosition?: number;
   valuePreview?: string;
 };
 
-export type ProjectGraphResponse = {
+export type ExplorerGraphResponse = {
   sessionId: string;
-  lens: GraphLensKind;
-  redactedValues: boolean;
-  nodes: ProjectGraphNode[];
-  edges: ProjectGraphEdge[];
+  nodes: ExplorerNodeResponse[];
+  edges: ExplorerEdgeResponse[];
 };
 
 export type SecurityOverviewResponse = {
@@ -362,32 +363,6 @@ async function tauriInvoke<T>(
   }
 }
 
-function isGraphTimeoutError(error: unknown): boolean {
-  return error instanceof Error && /request timed out/i.test(error.message);
-}
-
-async function invokeGraphCommand<T>(
-  command: string,
-  args: Record<string, unknown>,
-  fallback: () => Promise<T>
-): Promise<T> {
-  try {
-    return await tauriInvoke(command, args, fallback);
-  } catch (error) {
-    if (!isGraphTimeoutError(error)) {
-      throw error;
-    }
-
-    if (import.meta.env.DEV) {
-      return fallback();
-    }
-
-    throw new Error(
-      "Graph request timed out. Check backend connectivity and try again."
-    );
-  }
-}
-
 export function isTauriRuntime(): boolean {
   return hasTauriBridge();
 }
@@ -476,33 +451,31 @@ export async function loadAuditPlan(sessionId: string): Promise<AuditPlanRespons
   );
 }
 
-export async function loadFileGraph(sessionId: string): Promise<ProjectGraphResponse> {
-  return invokeGraphCommand("load_file_graph", { session_id: sessionId }, async () =>
-    (await loadCommandFixtures()).loadFileGraphFallback(sessionId)
-  );
-}
-
-export async function loadFeatureGraph(sessionId: string): Promise<ProjectGraphResponse> {
-  return invokeGraphCommand("load_feature_graph", { session_id: sessionId }, async () =>
-    (await loadCommandFixtures()).loadFeatureGraphFallback(sessionId)
-  );
-}
-
-export async function loadDataflowGraph(
+export async function loadExplorerGraph(
   sessionId: string,
-  includeValues = false
-): Promise<ProjectGraphResponse> {
-  return invokeGraphCommand(
-    "load_dataflow_graph",
-    { session_id: sessionId, include_values: includeValues },
-    async () => (await loadCommandFixtures()).loadDataflowGraphFallback(sessionId, includeValues)
-  );
-}
-
-export async function loadSymbolGraph(sessionId: string): Promise<ProjectGraphResponse> {
-  return invokeGraphCommand("load_symbol_graph", { session_id: sessionId }, async () =>
-    (await loadCommandFixtures()).loadSymbolGraphFallback(sessionId)
-  );
+  depth?: "overview" | "full",
+  cluster?: string
+): Promise<ExplorerGraphResponse> {
+  const timeoutMs = cluster ? 5_000 : depth === "full" ? 15_000 : 3_000;
+  const result = tauriInvoke<ExplorerGraphResponse>("load_explorer_graph", {
+    session_id: sessionId,
+    depth,
+    cluster,
+  });
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = globalThis.setTimeout(
+      () => reject(new Error(`Request timed out after ${timeoutMs / 1000}s`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([result, timeout]);
+  } finally {
+    if (timeoutId !== null) {
+      globalThis.clearTimeout(timeoutId);
+    }
+  }
 }
 
 export async function loadSecurityOverview(
@@ -575,17 +548,31 @@ export async function getAuditManifest(): Promise<AuditManifestResponse> {
   );
 }
 
+function isExecutionUpdateEvent(payload: unknown): payload is ExecutionUpdateEvent {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const candidate = payload as Partial<ExecutionUpdateEvent>;
+  return (
+    typeof candidate.auditId === "string" &&
+    Array.isArray(candidate.nodes) &&
+    !!candidate.counts &&
+    Array.isArray(candidate.logs) &&
+    typeof candidate.latestFinding === "string"
+  );
+}
+
 export function subscribeExecutionUpdates(
   auditId: string,
   onUpdate: (update: ExecutionUpdateEvent) => void
 ): () => void {
   const transport = getTransport();
   if (transport.kind === "http") {
-    return transport.subscribe<ExecutionUpdateEvent>(
+    return transport.subscribe<unknown>(
       "audit_execution_update",
       auditId,
       (payload) => {
-        if (!payload.auditId || payload.auditId === auditId) {
+        if (isExecutionUpdateEvent(payload) && payload.auditId === auditId) {
           onUpdate(payload);
         }
       }
@@ -593,11 +580,11 @@ export function subscribeExecutionUpdates(
   }
 
   if (isTauriRuntime()) {
-    return transport.subscribe<ExecutionUpdateEvent>(
+    return transport.subscribe<unknown>(
       "audit_execution_update",
       auditId,
       (payload) => {
-        if (payload.auditId === auditId) {
+        if (isExecutionUpdateEvent(payload) && payload.auditId === auditId) {
           onUpdate(payload);
         }
       }

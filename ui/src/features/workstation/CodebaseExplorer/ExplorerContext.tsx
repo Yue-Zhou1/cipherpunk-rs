@@ -26,11 +26,17 @@ export function useExplorer(): ExplorerContextValue {
 
 type ExplorerProviderProps = {
   children: ReactNode;
+  sessionId: string;
   onNavigateToSource?: (filePath: string, line?: number) => void;
 };
 
-export function ExplorerProvider({ children, onNavigateToSource }: ExplorerProviderProps) {
-  const { graph } = useUnifiedGraph();
+export function ExplorerProvider({
+  children,
+  sessionId,
+  onNavigateToSource,
+}: ExplorerProviderProps) {
+  const { graph, nodeMap, isLoading, loadingClusters, error, isStale, expandCluster, reload } =
+    useUnifiedGraph(sessionId);
   const { depth, setDepth } = useDepthControl();
 
   const fileCount = useMemo(
@@ -100,6 +106,13 @@ export function ExplorerProvider({ children, onNavigateToSource }: ExplorerProvi
   const value: ExplorerContextValue = {
     graph,
     stateKind,
+    nodeMap,
+    isLoading,
+    loadingClusters,
+    error,
+    isStale,
+    expandCluster,
+    reload,
     focusedNodeId: focus.focusedNodeId,
     upstreamIds: focus.upstreamIds,
     downstreamIds: focus.downstreamIds,

@@ -24,6 +24,7 @@ export type ExplorerNode = {
   filePath?: string;
   line?: number;
   signature?: FunctionSignature;
+  childCount?: number;
 };
 
 export type ExplorerEdgeRelation =
@@ -62,6 +63,13 @@ export type TraceResult = {
 export type ExplorerContextValue = {
   graph: ExplorerGraph;
   stateKind: ExplorerStateKind;
+  nodeMap: Map<string, ExplorerNode>;
+  isLoading: boolean;
+  loadingClusters: Set<string>;
+  error: string | null;
+  isStale: boolean;
+  expandCluster: (clusterId: string) => void;
+  reload: () => void;
 
   focusedNodeId: string | null;
   upstreamIds: Set<string>;

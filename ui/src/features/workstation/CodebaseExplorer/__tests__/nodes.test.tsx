@@ -6,6 +6,12 @@ vi.mock("reactflow", () => ({
   Position: { Top: "top", Bottom: "bottom" },
 }));
 
+vi.mock("../ExplorerContext", () => ({
+  useExplorer: () => ({
+    loadingClusters: new Set<string>(),
+  }),
+}));
+
 import { ClusterNode } from "../nodes/ClusterNode";
 import { FileNode } from "../nodes/FileNode";
 import { SymbolNode } from "../nodes/SymbolNode";
@@ -13,14 +19,26 @@ import { SymbolNode } from "../nodes/SymbolNode";
 describe("ClusterNode", () => {
   it("renders module name and child count", () => {
     render(
-      <ClusterNode data={{ label: "engine-crypto", childCount: 12, expanded: false, kind: "crate" }} />
+      <ClusterNode
+        {...({
+          id: "crt_1",
+          data: { label: "engine-crypto", childCount: 12, expanded: false, kind: "crate" },
+        } as any)}
+      />
     );
     expect(screen.getByText("engine-crypto")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
   });
 
   it("shows expand indicator when collapsed", () => {
-    render(<ClusterNode data={{ label: "intake", childCount: 5, expanded: false, kind: "module" }} />);
+    render(
+      <ClusterNode
+        {...({
+          id: "mod_1",
+          data: { label: "intake", childCount: 5, expanded: false, kind: "module" },
+        } as any)}
+      />
+    );
     expect(screen.getByLabelText("expand")).toBeTruthy();
   });
 });

@@ -1,6 +1,6 @@
 import { MarkerType, Position, type Edge, type Node } from "reactflow";
 
-import type { ExplorerGraph, ExplorerNode } from "./types";
+import type { ExplorerEdge, ExplorerGraph, ExplorerNode } from "./types";
 
 type LayoutConfig = {
   resolvedGranularity: "files" | "modules" | "crates";
@@ -18,35 +18,35 @@ export type FlowModel = {
   edges: Edge[];
 };
 
-function parentModuleId(node: ExplorerNode): string | null {
-  if (!node.filePath) {
-    return null;
+/**
+ * Build a parent lookup from "contains" edges.
+ * key = child node ID, value = parent node ID.
+ */
+function buildParentMap(edges: ExplorerEdge[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const edge of edges) {
+    if (edge.relation === "contains") {
+      map.set(edge.to, edge.from);
+    }
   }
-  const lastSlash = node.filePath.lastIndexOf("/");
-  if (lastSlash <= 0) {
-    return null;
-  }
-  return `module:${node.filePath.slice(0, lastSlash)}`;
+  return map;
 }
 
-function parentCrateId(node: ExplorerNode): string | null {
-  if (node.kind === "module") {
-    const marker = "/src/";
-    const markerIndex = node.id.indexOf(marker);
-    if (markerIndex <= 0) {
-      return null;
+function findAncestorByKind(
+  nodeId: string,
+  kind: ExplorerNode["kind"],
+  parentMap: Map<string, string>,
+  nodeById: Map<string, ExplorerNode>
+): string | null {
+  let current = parentMap.get(nodeId);
+  while (current) {
+    const node = nodeById.get(current);
+    if (node?.kind === kind) {
+      return current;
     }
-    return node.id.slice(0, markerIndex);
+    current = parentMap.get(current);
   }
-  if (!node.filePath) {
-    return null;
-  }
-
-  const parts = node.filePath.split("/");
-  if (parts.length < 2) {
-    return null;
-  }
-  return `module:${parts[0]}/${parts[1]}`;
+  return null;
 }
 
 function nodeHighlightClass(nodeId: string, config: LayoutConfig): string {
@@ -73,11 +73,19 @@ function nodeHighlightClass(nodeId: string, config: LayoutConfig): string {
   return classes.join(" ");
 }
 
-function countChildren(nodeId: string, graph: ExplorerGraph): number {
-  return graph.edges.filter((edge) => edge.relation === "contains" && edge.from === nodeId).length;
+function countChildren(node: ExplorerNode, edges: ExplorerEdge[]): number {
+  if (node.childCount != null) {
+    return node.childCount;
+  }
+  return edges.filter((edge) => edge.relation === "contains" && edge.from === node.id).length;
 }
 
-function isVisibleNode(node: ExplorerNode, config: LayoutConfig): boolean {
+function isVisibleNode(
+  node: ExplorerNode,
+  config: LayoutConfig,
+  parentMap: Map<string, string>,
+  nodeById: Map<string, ExplorerNode>
+): boolean {
   switch (config.resolvedGranularity) {
     case "files": {
       return node.kind !== "crate" && node.kind !== "module";
@@ -89,23 +97,23 @@ function isVisibleNode(node: ExplorerNode, config: LayoutConfig): boolean {
       if (node.kind === "module") {
         return true;
       }
-      const parent = parentModuleId(node);
-      return !parent || config.expandedClusters.has(parent);
+      const parentModule = findAncestorByKind(node.id, "module", parentMap, nodeById);
+      return !parentModule || config.expandedClusters.has(parentModule);
     }
     case "crates": {
       if (node.kind === "crate") {
         return true;
       }
       if (node.kind === "module") {
-        const crate = parentCrateId(node);
-        return !!crate && config.expandedClusters.has(crate);
+        const parentCrate = findAncestorByKind(node.id, "crate", parentMap, nodeById);
+        return !!parentCrate && config.expandedClusters.has(parentCrate);
       }
-      const crate = parentCrateId(node);
-      const module = parentModuleId(node);
-      if (module && config.expandedClusters.has(module)) {
+      const parentModule = findAncestorByKind(node.id, "module", parentMap, nodeById);
+      const parentCrate = findAncestorByKind(node.id, "crate", parentMap, nodeById);
+      if (parentModule && config.expandedClusters.has(parentModule)) {
         return true;
       }
-      return !!crate && config.expandedClusters.has(crate) && !module;
+      return !!parentCrate && config.expandedClusters.has(parentCrate) && !parentModule;
     }
     default: {
       return true;
@@ -117,9 +125,11 @@ export function buildFlowModel(graph: ExplorerGraph, config: LayoutConfig): Flow
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const visibleNodeIds = new Set<string>();
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const parentMap = buildParentMap(graph.edges);
 
   for (const node of graph.nodes) {
-    if (!isVisibleNode(node, config)) {
+    if (!isVisibleNode(node, config, parentMap, nodeById)) {
       continue;
     }
 
@@ -140,7 +150,7 @@ export function buildFlowModel(graph: ExplorerGraph, config: LayoutConfig): Flow
         filePath: node.filePath,
         line: node.line,
         signature: node.signature,
-        childCount: isCluster ? countChildren(node.id, graph) : undefined,
+        childCount: isCluster ? countChildren(node, graph.edges) : undefined,
         expanded: config.expandedClusters.has(node.id),
       },
     });

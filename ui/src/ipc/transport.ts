@@ -133,27 +133,20 @@ const COMMAND_ROUTES: Record<string, RouteDef> = {
     path: (args) =>
       `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/files/${encodePath(String(args.path ?? ""))}`,
   },
-  load_file_graph: {
-    method: "GET",
-    path: (args) =>
-      `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/graphs/file`,
-  },
-  load_feature_graph: {
-    method: "GET",
-    path: (args) =>
-      `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/graphs/feature`,
-  },
-  load_dataflow_graph: {
+  load_explorer_graph: {
     method: "GET",
     path: (args) => {
-      const includeValues = args.include_values === true ? "?include_values=true" : "";
-      return `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/graphs/dataflow${includeValues}`;
+      const sid = encodeURIComponent(String(args.session_id ?? ""));
+      const params = new URLSearchParams();
+      if (args.depth) {
+        params.set("depth", String(args.depth));
+      }
+      if (args.cluster) {
+        params.set("cluster", String(args.cluster));
+      }
+      const query = params.toString();
+      return `/api/sessions/${sid}/explorer-graph${query ? `?${query}` : ""}`;
     },
-  },
-  load_symbol_graph: {
-    method: "GET",
-    path: (args) =>
-      `/api/sessions/${encodeURIComponent(String(args.session_id ?? ""))}/graphs/symbol`,
   },
   load_security_overview: {
     method: "GET",
@@ -208,14 +201,6 @@ const COMMAND_ROUTES: Record<string, RouteDef> = {
     path: () => "/api/manifest",
   },
 };
-
-const GRAPH_TIMEOUT_MS = 10_000;
-const GRAPH_COMMANDS = new Set([
-  "load_file_graph",
-  "load_feature_graph",
-  "load_dataflow_graph",
-  "load_symbol_graph",
-]);
 
 export class TauriTransport implements Transport {
   readonly kind: TransportKind = "tauri";
@@ -290,13 +275,6 @@ export class HttpTransport implements Transport {
     }
 
     const url = joinBaseUrlAndPath(this.baseUrl, route.path(args));
-    const shouldTimeout = GRAPH_COMMANDS.has(command);
-    const controller = shouldTimeout ? new AbortController() : null;
-    const timeoutHandle = shouldTimeout
-      ? globalThis.setTimeout(() => {
-          controller?.abort();
-        }, GRAPH_TIMEOUT_MS)
-      : null;
 
     let response: Response;
     try {
@@ -304,17 +282,9 @@ export class HttpTransport implements Transport {
         method: route.method,
         headers,
         body: route.method === "POST" ? JSON.stringify(args) : undefined,
-        signal: controller?.signal,
       });
     } catch (error) {
-      if (controller?.signal.aborted) {
-        throw new Error("Request timed out after 10s");
-      }
       throw error instanceof Error ? error : new Error("Network request failed");
-    } finally {
-      if (timeoutHandle !== null) {
-        globalThis.clearTimeout(timeoutHandle);
-      }
     }
 
     if (!response.ok) {

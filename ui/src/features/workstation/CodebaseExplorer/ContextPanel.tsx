@@ -7,8 +7,8 @@ export function ContextPanel() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   const focusedNode = useMemo(
-    () => ctx.graph.nodes.find((node) => node.id === ctx.focusedNodeId) ?? null,
-    [ctx.graph.nodes, ctx.focusedNodeId]
+    () => (ctx.focusedNodeId ? ctx.nodeMap.get(ctx.focusedNodeId) ?? null : null),
+    [ctx.focusedNodeId, ctx.nodeMap]
   );
 
   if (ctx.stateKind === "overview" || !focusedNode) {
@@ -32,12 +32,12 @@ export function ContextPanel() {
 
   const callers = ctx.graph.edges
     .filter((edge) => edge.relation === "calls" && edge.to === focusedNode.id)
-    .map((edge) => ctx.graph.nodes.find((node) => node.id === edge.from))
+    .map((edge) => ctx.nodeMap.get(edge.from))
     .filter((node): node is NonNullable<typeof node> => Boolean(node));
 
   const callees = ctx.graph.edges
     .filter((edge) => edge.relation === "calls" && edge.from === focusedNode.id)
-    .map((edge) => ctx.graph.nodes.find((node) => node.id === edge.to))
+    .map((edge) => ctx.nodeMap.get(edge.to))
     .filter((node): node is NonNullable<typeof node> => Boolean(node));
 
   return (
@@ -102,7 +102,7 @@ export function ContextPanel() {
           </div>
           <div className="explorer-ctx-trace-path">
             {ctx.traceResult.path.map((id, index) => {
-              const node = ctx.graph.nodes.find((candidate) => candidate.id === id);
+              const node = ctx.nodeMap.get(id);
               return (
                 <span key={id}>
                   {index > 0 ? " -> " : ""}
@@ -163,7 +163,7 @@ export function ContextPanel() {
                   <span className="explorer-ctx-dataflow-arrow"> &lt;- </span>
                   {inEdges.length > 0
                     ? inEdges.map((edge) => {
-                        const source = ctx.graph.nodes.find((node) => node.id === edge.from);
+                        const source = ctx.nodeMap.get(edge.from);
                         return (
                           <span key={edge.from} className="explorer-ctx-dataflow-src">
                             {source?.label ?? edge.from}

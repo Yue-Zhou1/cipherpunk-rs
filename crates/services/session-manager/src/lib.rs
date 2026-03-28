@@ -1,3 +1,4 @@
+mod explorer_graph;
 mod state;
 mod workflow;
 
@@ -10,6 +11,7 @@ use anyhow::Error as AnyhowError;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
+pub use explorer_graph::*;
 pub use intake::confirmation::CrateDecision;
 pub use state::*;
 pub use workflow::*;
@@ -70,6 +72,9 @@ fn map_state_error(err: AnyhowError) -> SessionManagerError {
         return SessionManagerError::NotFound { message };
     }
     if message.contains("ProjectIR has not been built for this session") {
+        return SessionManagerError::NotFound { message };
+    }
+    if message.contains("Unknown cluster node ID") {
         return SessionManagerError::NotFound { message };
     }
     if message.contains("not found") || message.contains("path does not exist") {
@@ -260,6 +265,19 @@ impl SessionManager {
         let mut state = self.inner.lock().await;
         state
             .load_symbol_graph(session_id)
+            .await
+            .map_err(map_state_error)
+    }
+
+    pub async fn load_explorer_graph(
+        &self,
+        session_id: &str,
+        depth: ExplorerDepth,
+        cluster: Option<&str>,
+    ) -> SessionResult<ExplorerGraphResponse> {
+        let mut state = self.inner.lock().await;
+        state
+            .load_explorer_graph(session_id, depth, cluster)
             .await
             .map_err(map_state_error)
     }

@@ -15,7 +15,6 @@ import type {
   GetProjectTreeResponse,
   LoadReviewQueueResponse,
   OpenAuditSessionResponse,
-  ProjectGraphResponse,
   ReadSourceFileResponse,
   ResolveSourceResponse,
   ReviewQueueItem,
@@ -144,126 +143,6 @@ const FALLBACK_AUDIT_PLAN: Omit<AuditPlanResponse, "sessionId"> = {
   rationale:
     "Generated from deterministic workspace analysis and checklist/tool recommendation synthesis.",
   createdAt: new Date("2026-03-23T10:00:00Z").toISOString(),
-};
-
-const FALLBACK_FILE_GRAPH: ProjectGraphResponse = {
-  sessionId: "sess-fallback",
-  lens: "file",
-  redactedValues: true,
-  nodes: [
-    {
-      id: "f1",
-      label: "crates/core/src/session.rs",
-      kind: "file",
-      filePath: "crates/core/src/session.rs",
-    },
-    {
-      id: "f2",
-      label: "crates/apps/tauri-ui/src/ipc.rs",
-      kind: "file",
-      filePath: "crates/apps/tauri-ui/src/ipc.rs",
-    },
-    {
-      id: "f3",
-      label: "ui/src/features/workstation/WorkstationShell.tsx",
-      kind: "file",
-      filePath: "ui/src/features/workstation/WorkstationShell.tsx",
-    },
-  ],
-  edges: [
-    { from: "f2", to: "f1", relation: "reads-session" },
-    { from: "f3", to: "f2", relation: "ipc-calls" },
-  ],
-};
-
-const FALLBACK_FEATURE_GRAPH: ProjectGraphResponse = {
-  sessionId: "sess-fallback",
-  lens: "feature",
-  redactedValues: true,
-  nodes: [
-    { id: "feat1", label: "wizard-session-creation", kind: "feature" },
-    { id: "feat2", label: "workstation-shell", kind: "feature" },
-    { id: "feat3", label: "graph-lens", kind: "feature" },
-  ],
-  edges: [
-    { from: "feat1", to: "feat2", relation: "handoff" },
-    { from: "feat2", to: "feat3", relation: "enables" },
-  ],
-};
-
-const FALLBACK_DATAFLOW_GRAPH_REDACTED: ProjectGraphResponse = {
-  sessionId: "sess-fallback",
-  lens: "dataflow",
-  redactedValues: true,
-  nodes: [
-    { id: "d1", label: "source-input", kind: "dataflow" },
-    { id: "d2", label: "workspace-summary", kind: "dataflow" },
-    { id: "d3", label: "session-store", kind: "dataflow" },
-  ],
-  edges: [
-    { from: "d1", to: "d2", relation: "normalize" },
-    { from: "d2", to: "d3", relation: "persist" },
-  ],
-};
-
-const FALLBACK_DATAFLOW_GRAPH_VALUES: ProjectGraphResponse = {
-  ...FALLBACK_DATAFLOW_GRAPH_REDACTED,
-  redactedValues: false,
-  edges: [
-    {
-      from: "d1",
-      to: "d2",
-      relation: "normalize",
-      valuePreview: "git:url + pinned-sha",
-    },
-    {
-      from: "d2",
-      to: "d3",
-      relation: "persist",
-      valuePreview: "session_id=sess-...",
-    },
-  ],
-};
-
-const FALLBACK_SYMBOL_GRAPH: ProjectGraphResponse = {
-  sessionId: "sess-fallback",
-  lens: "symbol",
-  redactedValues: true,
-  nodes: [
-    {
-      id: "symbol:crates/core/src/session.rs::create_session",
-      label: "create_session",
-      kind: "function",
-      filePath: "crates/core/src/session.rs",
-      line: 18,
-    },
-    {
-      id: "symbol:crates/core/src/session.rs::persist_session",
-      label: "persist_session",
-      kind: "function",
-      filePath: "crates/core/src/session.rs",
-      line: 47,
-    },
-    {
-      id: "symbol:crates/apps/tauri-ui/src/ipc.rs::load_file_graph",
-      label: "load_file_graph",
-      kind: "function",
-      filePath: "crates/apps/tauri-ui/src/ipc.rs",
-      line: 22,
-    },
-  ],
-  edges: [
-    {
-      from: "symbol:crates/apps/tauri-ui/src/ipc.rs::load_file_graph",
-      to: "symbol:crates/core/src/session.rs::create_session",
-      relation: "calls",
-    },
-    {
-      from: "symbol:crates/core/src/session.rs::create_session",
-      to: "symbol:crates/core/src/session.rs::persist_session",
-      relation: "calls",
-    },
-  ],
 };
 
 const FALLBACK_SECURITY_OVERVIEW: Omit<SecurityOverviewResponse, "sessionId"> = {
@@ -580,28 +459,6 @@ export function loadActivitySummaryFallback(sessionId: string): ActivitySummary 
 
 export function loadAuditPlanFallback(sessionId: string): AuditPlanResponse {
   return { sessionId, ...FALLBACK_AUDIT_PLAN };
-}
-
-export function loadFileGraphFallback(sessionId: string): ProjectGraphResponse {
-  return { ...FALLBACK_FILE_GRAPH, sessionId };
-}
-
-export function loadFeatureGraphFallback(sessionId: string): ProjectGraphResponse {
-  return { ...FALLBACK_FEATURE_GRAPH, sessionId };
-}
-
-export function loadDataflowGraphFallback(
-  sessionId: string,
-  includeValues: boolean
-): ProjectGraphResponse {
-  return {
-    ...(includeValues ? FALLBACK_DATAFLOW_GRAPH_VALUES : FALLBACK_DATAFLOW_GRAPH_REDACTED),
-    sessionId,
-  };
-}
-
-export function loadSymbolGraphFallback(sessionId: string): ProjectGraphResponse {
-  return { ...FALLBACK_SYMBOL_GRAPH, sessionId };
 }
 
 export function loadSecurityOverviewFallback(sessionId: string): SecurityOverviewResponse {

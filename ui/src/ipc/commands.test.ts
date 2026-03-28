@@ -7,6 +7,7 @@ import {
   downloadOutput,
   getAuditManifest,
   isTauriRuntime,
+  loadExplorerGraph,
   resolveSource,
   subscribeExecutionUpdates,
 } from "./commands";
@@ -20,6 +21,7 @@ describe("ipc commands", () => {
   afterEach(() => {
     setTransportForTests(null);
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("reports non-tauri runtime when invoke bridge is missing", () => {
@@ -84,6 +86,55 @@ describe("ipc commands", () => {
       decisions: { confirmed: true, ambiguousCrates: { "bridge-adapter": false } },
     });
     expect(response.auditId).toBe("audit-from-tauri");
+  });
+
+  it("invokes load_explorer_graph through transport with optional depth/cluster", async () => {
+    const invoke = vi.fn(async <T>() => ({ sessionId: "sess-1", nodes: [], edges: [] } as T));
+    const transport: Transport = {
+      kind: "http",
+      invoke,
+      subscribe: () => () => undefined,
+    };
+    setTransportForTests(transport);
+
+    await loadExplorerGraph("sess-1", "overview");
+    await loadExplorerGraph("sess-1", undefined, "crt_1");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "load_explorer_graph", {
+      session_id: "sess-1",
+      depth: "overview",
+      cluster: undefined,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "load_explorer_graph", {
+      session_id: "sess-1",
+      depth: undefined,
+      cluster: "crt_1",
+    });
+  });
+
+  it("applies tiered loadExplorerGraph request timeouts", async () => {
+    vi.useFakeTimers();
+    const transport: Transport = {
+      kind: "http",
+      invoke: async <T>() => new Promise<T>(() => undefined),
+      subscribe: () => () => undefined,
+    };
+    setTransportForTests(transport);
+
+    const overviewRequest = loadExplorerGraph("sess-1", "overview");
+    const overviewAssertion = expect(overviewRequest).rejects.toThrow("Request timed out after 3s");
+    await vi.advanceTimersByTimeAsync(3_000);
+    await overviewAssertion;
+
+    const clusterRequest = loadExplorerGraph("sess-1", undefined, "crt_1");
+    const clusterAssertion = expect(clusterRequest).rejects.toThrow("Request timed out after 5s");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await clusterAssertion;
+
+    const fullRequest = loadExplorerGraph("sess-1", "full");
+    const fullAssertion = expect(fullRequest).rejects.toThrow("Request timed out after 15s");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await fullAssertion;
   });
 
   it("uses transport subscription when http transport is configured", () => {

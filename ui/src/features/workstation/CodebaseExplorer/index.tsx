@@ -11,6 +11,7 @@ type CodebaseExplorerProps = {
 
 function ExplorerToolbar() {
   const ctx = useExplorer();
+  const controlsDisabled = ctx.isLoading || !!ctx.error;
 
   return (
     <div className="explorer-toolbar" role="toolbar" aria-label="Explorer controls">
@@ -19,6 +20,7 @@ function ExplorerToolbar() {
         onChange={(event) => ctx.setGranularity(event.target.value as GranularityLevel)}
         className="explorer-granularity-select"
         aria-label="View granularity"
+        disabled={controlsDisabled}
       >
         <option value="auto">Auto</option>
         <option value="files">Files</option>
@@ -33,7 +35,7 @@ function ExplorerToolbar() {
         onChange={(event) => ctx.setSearchQuery(event.target.value)}
         className="explorer-search"
         aria-label="Search nodes"
-        disabled={ctx.stateKind === "trace"}
+        disabled={controlsDisabled || ctx.stateKind === "trace"}
       />
       {ctx.matchingNodeIds ? (
         <span className="explorer-match-count">{ctx.matchingNodeIds.size} matches</span>
@@ -43,7 +45,7 @@ function ExplorerToolbar() {
         <div className="explorer-depth-control" role="group" aria-label="Depth control">
           <button
             onClick={() => ctx.setDepth(ctx.depth - 1)}
-            disabled={ctx.depth <= 1}
+            disabled={controlsDisabled || ctx.depth <= 1}
             type="button"
             aria-label="Decrease depth"
           >
@@ -52,7 +54,7 @@ function ExplorerToolbar() {
           <span className="explorer-depth-value">{ctx.depth}</span>
           <button
             onClick={() => ctx.setDepth(ctx.depth + 1)}
-            disabled={ctx.depth >= 10}
+            disabled={controlsDisabled || ctx.depth >= 10}
             type="button"
             aria-label="Increase depth"
           >
@@ -67,32 +69,54 @@ function ExplorerToolbar() {
 }
 
 function ExplorerLayout() {
-  const ctx = useExplorer();
+  const { isLoading, error, isStale, reload, stateKind } = useExplorer();
 
   return (
     <section className="explorer-root" aria-label="Codebase Explorer">
-      <ExplorerToolbar />
-      <div className="explorer-body">
-        <div className="explorer-canvas-container">
-          <ExplorerCanvas />
-          <TraceOverlay />
+      {isStale ? (
+        <div className="explorer-stale-banner" role="status">
+          <span>Graph data has been updated.</span>
+          <button type="button" onClick={reload}>
+            Reload
+          </button>
         </div>
-        {ctx.stateKind !== "overview" ? (
-          <div className="explorer-panel-container">
-            <ContextPanel />
+      ) : null}
+      <ExplorerToolbar />
+      {isLoading ? (
+        <div className="explorer-loading" role="status" aria-label="Loading graph">
+          <div className="explorer-spinner" />
+          <p>Loading project graph...</p>
+        </div>
+      ) : error ? (
+        <div className="explorer-error" role="alert">
+          <p>{error}</p>
+          <button type="button" onClick={reload}>
+            Retry
+          </button>
+        </div>
+      ) : (
+        <div className="explorer-body">
+          <div className="explorer-canvas-container">
+            <ExplorerCanvas />
+            <TraceOverlay />
           </div>
-        ) : null}
-      </div>
+          {stateKind !== "overview" ? (
+            <div className="explorer-panel-container">
+              <ContextPanel />
+            </div>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }
 
 export default function CodebaseExplorer({
-  sessionId: _sessionId,
+  sessionId,
   onNavigateToSource,
 }: CodebaseExplorerProps) {
   return (
-    <ExplorerProvider onNavigateToSource={onNavigateToSource}>
+    <ExplorerProvider sessionId={sessionId} onNavigateToSource={onNavigateToSource}>
       <ExplorerLayout />
     </ExplorerProvider>
   );
