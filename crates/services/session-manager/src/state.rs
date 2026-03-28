@@ -1225,7 +1225,10 @@ impl UiSessionState {
         Ok(built)
     }
 
-    async fn load_or_refresh_project_ir_for_explorer(&mut self, session_id: &str) -> Result<ProjectIr> {
+    async fn load_or_refresh_project_ir_for_explorer(
+        &mut self,
+        session_id: &str,
+    ) -> Result<ProjectIr> {
         let session = self.ensure_session_loaded(session_id)?.clone();
         let previous = self.project_ir_cache.get(session_id).cloned();
         let rebuilt = build_project_ir_for_session(&session, false).await?;
