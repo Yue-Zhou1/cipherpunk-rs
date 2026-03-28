@@ -340,8 +340,8 @@ impl<'a> ExplorerGraphBuilder<'a> {
     /// Replace temporary IDs with stable hash IDs.
     fn assign_hash_ids(
         &self,
-        nodes: &mut Vec<ExplorerNodeResponse>,
-        edges: &mut Vec<ExplorerEdgeResponse>,
+        nodes: &mut [ExplorerNodeResponse],
+        edges: &mut [ExplorerEdgeResponse],
     ) {
         let mut id_map: HashMap<String, String> = HashMap::new();
 
