@@ -193,7 +193,7 @@ describe("CodebaseExplorer", () => {
     });
   });
 
-  it("transitions OVERVIEW -> FOCUS -> TRACE and Esc returns to FOCUS", async () => {
+  it("shows neighborhood highlight summary and Esc clears highlight", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
@@ -204,17 +204,17 @@ describe("CodebaseExplorer", () => {
       expect(screen.getByLabelText("Node context")).toBeInTheDocument();
     });
 
-    fireEvent.click(await screen.findByTitle("Trace origin of msg"));
+    fireEvent.click(await screen.findByRole("button", { name: /show callees/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("TRACE")).toBeInTheDocument();
+      expect(screen.getByText(/highlighting/i)).toBeInTheDocument();
     });
 
     fireEvent.keyDown(window, { key: "Escape" });
 
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
-      expect(screen.queryByText("TRACE")).toBeNull();
+      expect(screen.queryByText(/highlighting/i)).toBeNull();
     });
   });
 });

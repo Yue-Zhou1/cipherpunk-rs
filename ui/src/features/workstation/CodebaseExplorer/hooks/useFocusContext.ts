@@ -30,11 +30,7 @@ export function useFocusContext(graph: ExplorerGraph, depth: number) {
     const downstream = new Map<string, string[]>();
 
     for (const edge of graph.edges) {
-      if (
-        edge.relation !== "calls" &&
-        edge.relation !== "parameter_flow" &&
-        edge.relation !== "return_flow"
-      ) {
+      if (edge.relation !== "calls") {
         continue;
       }
 

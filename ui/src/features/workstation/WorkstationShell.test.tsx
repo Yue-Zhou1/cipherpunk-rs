@@ -163,29 +163,23 @@ describe("WorkstationShell", () => {
     expect(selectFileSpy).not.toHaveBeenCalled();
   });
 
-  it("uses Code/Graph/Security tabs in http mode", () => {
+  it("renders code editor and graph side by side in http mode", () => {
     transportKind = "http";
     render(<WorkstationShell sessionId="sess-1" />);
 
-    expect(screen.getByRole("tab", { name: /^code$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^graph$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^security$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /audit plan/i })).toBeInTheDocument();
-
-    expect(screen.queryByTestId("codebase-explorer-state")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
     expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^graph$/i })).not.toBeInTheDocument();
   });
 
-  it("switches to code tab and forwards line when graph navigation is requested in http mode", () => {
+  it("navigates to source without losing graph in http mode", () => {
     transportKind = "http";
     render(<WorkstationShell sessionId="sess-1" />);
 
-    fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
+    expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /navigate from graph/i }));
 
     expect(selectFileSpy).toHaveBeenCalledWith("rollup-core/src/lib.rs");
-    expect(screen.getByRole("tab", { name: /^code$/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
     expect(screen.getByTestId("code-editor-state")).toHaveTextContent("none@12");
   });
 });

@@ -132,7 +132,7 @@ describe("useUnifiedGraph", () => {
       edges: [],
     });
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
 
     expect(result.current.isLoading).toBe(true);
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -143,10 +143,24 @@ describe("useUnifiedGraph", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("requests full depth when requestFull is true", async () => {
+    mockedLoadExplorerGraph.mockResolvedValue({
+      sessionId: "s1",
+      nodes: [{ id: "crt_1", label: "mycrate", kind: "crate", childCount: 1 }],
+      edges: [],
+    });
+
+    const { result } = renderHook(() => useUnifiedGraph("s1", true));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(mockedLoadExplorerGraph).toHaveBeenCalledWith("s1", "full");
+    expect(result.current.graphDepth).toBe("full");
+  });
+
   it("sets error on API failure", async () => {
     mockedLoadExplorerGraph.mockRejectedValue(new Error("Network error"));
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).toBe("Network error");
@@ -169,7 +183,7 @@ describe("useUnifiedGraph", () => {
         edges: [{ from: "crt_1", to: "fil_1", relation: "contains" }],
       });
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => result.current.expandCluster("crt_1"));
@@ -211,7 +225,7 @@ describe("useUnifiedGraph", () => {
         ],
       });
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => result.current.expandCluster("crt_1"));
@@ -223,6 +237,25 @@ describe("useUnifiedGraph", () => {
       .filter((edge) => edge.relation === "parameter_flow")
       .map((edge) => edge.parameterName);
     expect(new Set(parameterNames)).toEqual(new Set(["msg", "sig"]));
+  });
+
+  it("records cluster errors when expansion fails", async () => {
+    mockedLoadExplorerGraph
+      .mockResolvedValueOnce({
+        sessionId: "s1",
+        nodes: [{ id: "crt_1", label: "mycrate", kind: "crate", childCount: 1 }],
+        edges: [],
+      })
+      .mockRejectedValueOnce(new Error("cluster timeout"));
+
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => result.current.expandCluster("crt_1"));
+
+    await waitFor(() => {
+      expect(result.current.clusterErrors.get("crt_1")).toBe("cluster timeout");
+    });
   });
 
   it("surfaces stale state when stale event arrives during loading", async () => {
@@ -240,7 +273,7 @@ describe("useUnifiedGraph", () => {
     });
     mockedLoadExplorerGraph.mockReturnValueOnce(overviewPromise);
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     expect(result.current.isLoading).toBe(true);
 
     act(() => {
@@ -307,29 +340,47 @@ describe("useFocusContext", () => {
 });
 
 describe("useTrace", () => {
-  it("starts with no trace", () => {
+  it("starts with no neighborhood highlight", () => {
     const { result } = renderHook(() => useTrace(makeTestGraph(), null));
-    expect(result.current.traceResult).toBeNull();
+    expect(result.current.neighborhoodResult).toBeNull();
   });
 
-  it("tracing a parameter computes upstream path", () => {
-    const graph = makeTestGraph();
+  it("showCallers highlights the upstream calls neighborhood", () => {
+    const graph = makeTestGraph({
+      edges: [
+        { from: "sym_2", to: "sym_1", relation: "calls" },
+        { from: "sym_3", to: "sym_2", relation: "calls" },
+      ],
+      nodes: [
+        { id: "sym_1", label: "a", kind: "function" },
+        { id: "sym_2", label: "b", kind: "function" },
+        { id: "sym_3", label: "c", kind: "function" },
+      ],
+    });
     const { result } = renderHook(() => useTrace(graph, "sym_1"));
 
-    act(() => result.current.traceParameter("msg"));
+    act(() => result.current.showCallers());
 
-    expect(result.current.traceResult).not.toBeNull();
-    expect(result.current.traceResult?.direction).toBe("upstream");
-    expect(result.current.traceResult?.parameterName).toBe("msg");
+    expect(result.current.neighborhoodResult).not.toBeNull();
+    expect(result.current.neighborhoodResult?.direction).toBe("upstream");
+    expect(result.current.neighborhoodResult?.highlightedIds).toEqual(
+      new Set(["sym_1", "sym_2", "sym_3"])
+    );
   });
 
-  it("clearTrace resets result", () => {
-    const graph = makeTestGraph();
+  it("clearHighlight resets result", () => {
+    const graph = makeTestGraph({
+      edges: [{ from: "sym_1", to: "sym_2", relation: "calls" }],
+      nodes: [
+        { id: "sym_1", label: "a", kind: "function" },
+        { id: "sym_2", label: "b", kind: "function" },
+      ],
+    });
     const { result } = renderHook(() => useTrace(graph, "sym_1"));
 
-    act(() => result.current.traceParameter("msg"));
-    act(() => result.current.clearTrace());
+    act(() => result.current.showCallees());
+    act(() => result.current.clearHighlight());
 
-    expect(result.current.traceResult).toBeNull();
+    expect(result.current.neighborhoodResult).toBeNull();
   });
 });

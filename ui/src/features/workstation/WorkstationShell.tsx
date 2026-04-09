@@ -21,8 +21,6 @@ type WorkstationShellProps = {
   sessionId: string;
 };
 
-type WorkstationMainTab = "code" | "graph" | "security" | "plan";
-
 const ACTIVITY_ITEMS = [
   { id: "files", label: "Explorer", icon: Files },
   { id: "search", label: "Search", icon: Search },
@@ -123,29 +121,21 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
   const [targetLine, setTargetLine] = useState<number | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<WorkstationMainTab>("code");
-  const useTabbedWebLayout = !useSplitLayout && webMode;
 
   const handleSelectFile = useCallback(
     (path: string) => {
       setTargetLine(null);
-      if (useTabbedWebLayout) {
-        setActiveMainTab("code");
-      }
       selectFile(path);
     },
-    [selectFile, useTabbedWebLayout]
+    [selectFile]
   );
 
   const handleNavigateToSource = useCallback(
     (filePath: string, line?: number) => {
       setTargetLine(typeof line === "number" ? line : null);
-      if (useTabbedWebLayout) {
-        setActiveMainTab("code");
-      }
       selectFile(filePath);
     },
-    [selectFile, useTabbedWebLayout]
+    [selectFile]
   );
 
   const handleSelectReviewRecord = useCallback(
@@ -278,75 +268,59 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
             </Allotment.Pane>
           </Allotment>
         ) : (
-          <>
-            <ProjectExplorer
-              sessionId={sessionId}
-              nodes={projectTree}
-              selectedFilePath={selectedFilePath}
-              onSelectFile={handleSelectFile}
-              isLoading={treeLoading}
-              error={treeError}
-            />
-            <section className={`vscode-editor-column${useTabbedWebLayout ? " tabbed" : ""}`}>
-              <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
-                <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
-                  {fileTabLabel(selectedFilePath)}
-                </button>
-              </div>
-              {useTabbedWebLayout ? (
-                <>
-                  <div
-                    className="workstation-view-tabs"
-                    role="tablist"
-                    aria-label="Workstation primary views"
-                  >
-                    {(["code", "graph", "security", "plan"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        className={`workstation-view-tab${activeMainTab === tab ? " active" : ""}`}
-                        role="tab"
-                        aria-selected={activeMainTab === tab}
-                        onClick={() => setActiveMainTab(tab)}
-                      >
-                        {tab === "code"
-                          ? "Code"
-                          : tab === "graph"
-                            ? "Graph"
-                            : tab === "security"
-                              ? "Security"
-                              : "Audit Plan"}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="workstation-view-panel">
-                    {activeMainTab === "code" && (
-                      <CodeEditorPane
-                        filePath={selectedFilePath}
-                        content={fileContent}
-                        isLoading={fileLoading}
-                        error={fileError}
-                        preferPlainText={webMode}
-                        focusedRecordId={selectedReviewRecordId}
-                        focusedNodeCount={selectedGraphNodeIds.length}
-                        targetLine={targetLine}
-                      />
-                    )}
-                    {activeMainTab === "graph" && (
-                      <CodebaseExplorer
-                        sessionId={sessionId}
-                        onNavigateToSource={handleNavigateToSource}
-                      />
-                    )}
-                    {activeMainTab === "security" && (
-                      <SecurityOverviewPanel sessionId={sessionId} />
-                    )}
-                    {activeMainTab === "plan" && (
-                      <AuditPlanPanel sessionId={sessionId} />
-                    )}
-                  </div>
-                </>
-              ) : (
+          webMode ? (
+            <div className="workstation-web-grid">
+              <ProjectExplorer
+                sessionId={sessionId}
+                nodes={projectTree}
+                selectedFilePath={selectedFilePath}
+                onSelectFile={handleSelectFile}
+                isLoading={treeLoading}
+                error={treeError}
+              />
+              <section className="vscode-editor-column">
+                <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
+                  <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
+                    {fileTabLabel(selectedFilePath)}
+                  </button>
+                </div>
+                <div className="vscode-editor-stack">
+                  <CodeEditorPane
+                    filePath={selectedFilePath}
+                    content={fileContent}
+                    isLoading={fileLoading}
+                    error={fileError}
+                    preferPlainText
+                    focusedRecordId={selectedReviewRecordId}
+                    focusedNodeCount={selectedGraphNodeIds.length}
+                    targetLine={targetLine}
+                  />
+                  <CodebaseExplorer
+                    sessionId={sessionId}
+                    onNavigateToSource={handleNavigateToSource}
+                  />
+                </div>
+              </section>
+              <aside className="vscode-right-column workstation-web-sidebar">
+                <SecurityOverviewPanel sessionId={sessionId} />
+              </aside>
+            </div>
+          ) : (
+            <>
+              <ProjectExplorer
+                sessionId={sessionId}
+                nodes={projectTree}
+                selectedFilePath={selectedFilePath}
+                onSelectFile={handleSelectFile}
+                isLoading={treeLoading}
+                error={treeError}
+              />
+              <section className="vscode-editor-column">
+                <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
+                  <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
+                    {fileTabLabel(selectedFilePath)}
+                  </button>
+                </div>
                 <div className="vscode-editor-stack">
                   <CodeEditorPane
                     filePath={selectedFilePath}
@@ -363,33 +337,29 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     onNavigateToSource={handleNavigateToSource}
                   />
                 </div>
-              )}
-            </section>
-            {useTabbedWebLayout ? null : (
+              </section>
               <aside className="vscode-right-column">
                 <SecurityOverviewPanel sessionId={sessionId} />
-                {webMode ? null : (
-                  <>
-                    <ChecklistPanel sessionId={sessionId} />
-                    <AuditPlanPanel sessionId={sessionId} />
-                    <ToolbenchPanel
-                      sessionId={sessionId}
-                      selection={
-                        selectedFilePath
-                          ? { kind: "file", id: selectedFilePath }
-                          : { kind: "session", id: sessionId }
-                      }
-                    />
-                    <ReviewQueue
-                      sessionId={sessionId}
-                      selectedRecordId={selectedReviewRecordId}
-                      onSelectRecord={handleSelectReviewRecord}
-                    />
-                  </>
-                )}
+                <>
+                  <ChecklistPanel sessionId={sessionId} />
+                  <AuditPlanPanel sessionId={sessionId} />
+                  <ToolbenchPanel
+                    sessionId={sessionId}
+                    selection={
+                      selectedFilePath
+                        ? { kind: "file", id: selectedFilePath }
+                        : { kind: "session", id: sessionId }
+                    }
+                  />
+                  <ReviewQueue
+                    sessionId={sessionId}
+                    selectedRecordId={selectedReviewRecordId}
+                    onSelectRecord={handleSelectReviewRecord}
+                  />
+                </>
               </aside>
-            )}
-          </>
+            </>
+          )
         )}
       </main>
 

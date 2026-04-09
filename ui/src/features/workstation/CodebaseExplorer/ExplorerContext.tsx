@@ -1,6 +1,7 @@
 import {
   createContext,
   useCallback,
+  useEffect,
   useContext,
   useMemo,
   useState,
@@ -35,9 +36,26 @@ export function ExplorerProvider({
   sessionId,
   onNavigateToSource,
 }: ExplorerProviderProps) {
-  const { graph, nodeMap, isLoading, loadingClusters, error, isStale, expandCluster, reload } =
-    useUnifiedGraph(sessionId);
+  const [requestFull, setRequestFull] = useState(false);
+  const {
+    graph,
+    nodeMap,
+    isLoading,
+    loadingClusters,
+    loadedClusters,
+    clusterErrors,
+    error,
+    isStale,
+    expandCluster,
+    reload,
+    graphDepth,
+    hasLoadedOverview,
+  } = useUnifiedGraph(sessionId, requestFull);
   const { depth, setDepth } = useDepthControl();
+
+  useEffect(() => {
+    setRequestFull(false);
+  }, [sessionId]);
 
   const fileCount = useMemo(
     () => graph.nodes.filter((node) => node.kind === "file").length,
@@ -47,9 +65,18 @@ export function ExplorerProvider({
   const focus = useFocusContext(graph, depth);
   const trace = useTrace(graph, focus.focusedNodeId);
 
+  useEffect(() => {
+    const shouldRequestFull =
+      adaptive.resolvedGranularity === "files" &&
+      hasLoadedOverview &&
+      graphDepth === "overview";
+    if (shouldRequestFull && !requestFull) {
+      setRequestFull(true);
+    }
+  }, [adaptive.resolvedGranularity, graphDepth, hasLoadedOverview, requestFull]);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
-  const [deadEndMessage, setDeadEndMessage] = useState<string | null>(null);
 
   const matchingNodeIds = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -75,82 +102,56 @@ export function ExplorerProvider({
     });
   }, []);
 
-  const hasPotentialParameterFlow = useCallback(
-    (parameterName: string): boolean => {
-      if (!focus.focusedNodeId) {
-        return false;
-      }
-      return graph.edges.some(
-        (edge) =>
-          edge.to === focus.focusedNodeId &&
-          (edge.relation === "calls" ||
-            (edge.relation === "parameter_flow" && edge.parameterName === parameterName))
-      );
-    },
-    [focus.focusedNodeId, graph.edges]
+  const hasExpandableClusters = useMemo(
+    () =>
+      graph.nodes.some(
+        (node) =>
+          (node.kind === "crate" || node.kind === "module") && !loadedClusters.has(node.id)
+      ),
+    [graph.nodes, loadedClusters]
   );
+  const searchHint =
+    searchQuery.trim() && graphDepth !== "full" && hasExpandableClusters
+      ? "Searching loaded graph only. Expand clusters to search their contents."
+      : null;
 
-  const hasPotentialReturnFlow = useCallback((): boolean => {
-    if (!focus.focusedNodeId) {
-      return false;
-    }
-    return graph.edges.some(
-      (edge) =>
-        edge.from === focus.focusedNodeId &&
-        (edge.relation === "calls" || edge.relation === "return_flow")
-    );
-  }, [focus.focusedNodeId, graph.edges]);
-
-  const stateKind: ExplorerStateKind = trace.traceResult ? "trace" : focus.stateKind;
+  const stateKind: ExplorerStateKind =
+    focus.stateKind === "overview"
+      ? "overview"
+      : trace.neighborhoodResult
+        ? "highlight"
+        : "focus";
 
   const value: ExplorerContextValue = {
+    sessionId,
     graph,
     stateKind,
     nodeMap,
     isLoading,
     loadingClusters,
+    loadedClusters,
+    clusterErrors,
     error,
     isStale,
     expandCluster,
     reload,
+    graphDepth,
+    hasLoadedOverview,
     focusedNodeId: focus.focusedNodeId,
     upstreamIds: focus.upstreamIds,
     downstreamIds: focus.downstreamIds,
     focusNode: (nodeId) => {
-      setDeadEndMessage(null);
-      trace.clearTrace();
+      trace.clearHighlight();
       focus.focusNode(nodeId);
     },
     clearFocus: () => {
-      setDeadEndMessage(null);
-      trace.clearTrace();
+      trace.clearHighlight();
       focus.clearFocus();
     },
-    traceResult: trace.traceResult,
-    traceParameter: (parameterName) => {
-      setDeadEndMessage(null);
-      if (!hasPotentialParameterFlow(parameterName)) {
-        trace.clearTrace();
-        setDeadEndMessage(
-          `No upstream flow found for "${parameterName}" - value may be constructed locally`
-        );
-        return;
-      }
-      trace.traceParameter(parameterName);
-    },
-    traceReturn: () => {
-      setDeadEndMessage(null);
-      if (!hasPotentialReturnFlow()) {
-        trace.clearTrace();
-        setDeadEndMessage("No downstream flow found - return value may not be consumed");
-        return;
-      }
-      trace.traceReturn();
-    },
-    clearTrace: () => {
-      setDeadEndMessage(null);
-      trace.clearTrace();
-    },
+    neighborhoodResult: trace.neighborhoodResult,
+    showCallers: trace.showCallers,
+    showCallees: trace.showCallees,
+    clearHighlight: trace.clearHighlight,
     depth,
     setDepth,
     granularity: adaptive.granularity,
@@ -161,9 +162,9 @@ export function ExplorerProvider({
     searchQuery,
     setSearchQuery,
     matchingNodeIds,
+    searchHint,
     expandedClusters,
     toggleCluster,
-    deadEndMessage,
     onNavigateToSource,
   };
 

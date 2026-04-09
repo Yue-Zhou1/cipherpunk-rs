@@ -35,11 +35,12 @@ function ExplorerToolbar() {
         onChange={(event) => ctx.setSearchQuery(event.target.value)}
         className="explorer-search"
         aria-label="Search nodes"
-        disabled={controlsDisabled || ctx.stateKind === "trace"}
+        disabled={controlsDisabled}
       />
       {ctx.matchingNodeIds ? (
         <span className="explorer-match-count">{ctx.matchingNodeIds.size} matches</span>
       ) : null}
+      {ctx.searchHint ? <span className="explorer-search-hint">{ctx.searchHint}</span> : null}
 
       {ctx.stateKind !== "overview" ? (
         <div className="explorer-depth-control" role="group" aria-label="Depth control">

@@ -1,6 +1,11 @@
 import { MarkerType, Position, type Edge, type Node } from "reactflow";
 
-import type { ExplorerEdge, ExplorerGraph, ExplorerNode } from "./types";
+import type {
+  ExplorerEdge,
+  ExplorerGraph,
+  ExplorerNode,
+  NeighborhoodResult,
+} from "./types";
 
 type LayoutConfig = {
   resolvedGranularity: "files" | "modules" | "crates";
@@ -8,9 +13,9 @@ type LayoutConfig = {
   focusedNodeId: string | null;
   upstreamIds: Set<string>;
   downstreamIds: Set<string>;
-  tracePathIds: Set<string> | null;
+  neighborhoodResult: NeighborhoodResult | null;
   matchingNodeIds: Set<string> | null;
-  stateKind: "overview" | "focus" | "trace";
+  stateKind: "overview" | "focus" | "highlight";
 };
 
 export type FlowModel = {
@@ -55,8 +60,14 @@ function nodeHighlightClass(nodeId: string, config: LayoutConfig): string {
   if (config.stateKind !== "overview") {
     if (nodeId === config.focusedNodeId) {
       classes.push("explorer-focused");
-    } else if (config.tracePathIds?.has(nodeId)) {
-      classes.push("explorer-trace");
+    } else if (config.neighborhoodResult?.highlightedIds.has(nodeId)) {
+      classes.push(
+        config.neighborhoodResult.direction === "upstream"
+          ? "explorer-upstream"
+          : "explorer-downstream"
+      );
+    } else if (config.stateKind === "highlight") {
+      classes.push("explorer-dimmed");
     } else if (config.upstreamIds.has(nodeId)) {
       classes.push("explorer-upstream");
     } else if (config.downstreamIds.has(nodeId)) {
@@ -150,7 +161,8 @@ export function buildFlowModel(graph: ExplorerGraph, config: LayoutConfig): Flow
         filePath: node.filePath,
         line: node.line,
         signature: node.signature,
-        childCount: isCluster ? countChildren(node, graph.edges) : undefined,
+        childCount:
+          isCluster || node.kind === "file" ? countChildren(node, graph.edges) : undefined,
         expanded: config.expandedClusters.has(node.id),
       },
     });
@@ -165,43 +177,57 @@ export function buildFlowModel(graph: ExplorerGraph, config: LayoutConfig): Flow
       continue;
     }
 
-    const key = `${edge.from}::${edge.to}::${edge.relation}`;
+    const key = `${edge.from}::${edge.to}::${edge.relation}::${edge.valuePreview ?? ""}`;
     if (edgeKeys.has(key)) {
       continue;
     }
     edgeKeys.add(key);
 
-    const isTraceEdge = !!(
-      config.tracePathIds?.has(edge.from) &&
-      config.tracePathIds?.has(edge.to)
+    const isNeighborhoodEdge = !!(
+      config.neighborhoodResult?.highlightedIds.has(edge.from) &&
+      config.neighborhoodResult?.highlightedIds.has(edge.to)
     );
-    const isFlowEdge = edge.relation === "parameter_flow" || edge.relation === "return_flow";
-    const dimmed =
-      config.stateKind !== "overview" &&
-      !isTraceEdge &&
-      edge.from !== config.focusedNodeId &&
-      edge.to !== config.focusedNodeId &&
-      !config.upstreamIds.has(edge.from) &&
-      !config.downstreamIds.has(edge.from) &&
-      !config.upstreamIds.has(edge.to) &&
-      !config.downstreamIds.has(edge.to);
+    const direction = config.neighborhoodResult?.direction;
+    const highlightColor =
+      direction === "upstream" ? "#3b82f6" : direction === "downstream" ? "#f97316" : "#5c7394";
+    const dimmed = (() => {
+      if (config.stateKind === "overview") {
+        return false;
+      }
+      if (config.stateKind === "highlight") {
+        return !isNeighborhoodEdge;
+      }
+      return (
+        edge.from !== config.focusedNodeId &&
+        edge.to !== config.focusedNodeId &&
+        !config.upstreamIds.has(edge.from) &&
+        !config.downstreamIds.has(edge.from) &&
+        !config.upstreamIds.has(edge.to) &&
+        !config.downstreamIds.has(edge.to)
+      );
+    })();
 
     edges.push({
       id: key,
       source: edge.from,
       target: edge.to,
       type: "smoothstep",
-      animated: isTraceEdge || isFlowEdge,
-      label: edge.relation === "contains" ? undefined : edge.relation,
+      animated: false,
+      label:
+        edge.relation === "contains"
+          ? undefined
+          : edge.valuePreview
+            ? `${edge.relation}: ${edge.valuePreview}`
+            : edge.relation,
       markerEnd: {
         type: MarkerType.ArrowClosed,
         width: 16,
         height: 16,
-        color: isTraceEdge ? "#8b5cf6" : "#5c7394",
+        color: isNeighborhoodEdge ? highlightColor : "#5c7394",
       },
       style: {
-        stroke: isTraceEdge ? "#8b5cf6" : "#5c7394",
-        strokeWidth: isTraceEdge ? 2.5 : 1.4,
+        stroke: isNeighborhoodEdge ? highlightColor : "#5c7394",
+        strokeWidth: isNeighborhoodEdge ? 2.4 : 1.4,
         opacity: dimmed ? 0.15 : 1,
       },
     });

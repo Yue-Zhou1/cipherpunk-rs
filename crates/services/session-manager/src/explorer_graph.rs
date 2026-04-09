@@ -168,13 +168,15 @@ impl<'a> ExplorerGraphBuilder<'a> {
                 child_count: None,
             });
 
-            if segments.len() > 2 {
-                let dir_path = segments[..segments.len() - 1].join("/");
+            let mut parent_id = crate_temp_id.clone();
+
+            for depth in 1..segments.len().saturating_sub(1) {
+                let dir_path = segments[..=depth].join("/");
                 let module_temp_id = format!("__module:{dir_path}");
 
                 if !seen_modules.contains_key(&dir_path) {
                     seen_modules.insert(dir_path.clone(), module_temp_id.clone());
-                    let module_label = segments[segments.len() - 2].to_string();
+                    let module_label = segments[depth].to_string();
                     nodes.push(ExplorerNodeResponse {
                         id: module_temp_id.clone(),
                         label: module_label,
@@ -186,7 +188,7 @@ impl<'a> ExplorerGraphBuilder<'a> {
                     });
 
                     edges.push(ExplorerEdgeResponse {
-                        from: crate_temp_id.clone(),
+                        from: parent_id.clone(),
                         to: module_temp_id.clone(),
                         relation: "contains".to_string(),
                         parameter_name: None,
@@ -195,28 +197,20 @@ impl<'a> ExplorerGraphBuilder<'a> {
                     });
                 }
 
-                let parent_module_id = seen_modules
+                parent_id = seen_modules
                     .get(&dir_path)
                     .cloned()
-                    .unwrap_or(crate_temp_id.clone());
-                edges.push(ExplorerEdgeResponse {
-                    from: parent_module_id,
-                    to: file_temp_id,
-                    relation: "contains".to_string(),
-                    parameter_name: None,
-                    parameter_position: None,
-                    value_preview: None,
-                });
-            } else {
-                edges.push(ExplorerEdgeResponse {
-                    from: crate_temp_id,
-                    to: file_temp_id,
-                    relation: "contains".to_string(),
-                    parameter_name: None,
-                    parameter_position: None,
-                    value_preview: None,
-                });
+                    .unwrap_or(parent_id);
             }
+
+            edges.push(ExplorerEdgeResponse {
+                from: parent_id,
+                to: file_temp_id,
+                relation: "contains".to_string(),
+                parameter_name: None,
+                parameter_position: None,
+                value_preview: None,
+            });
         }
 
         (nodes, edges)

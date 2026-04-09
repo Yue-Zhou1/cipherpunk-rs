@@ -1,19 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { readSourceFile } from "../../../ipc/commands";
 import { useExplorer } from "./ExplorerContext";
 
 export function ContextPanel() {
   const ctx = useExplorer();
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [sourceSnippet, setSourceSnippet] = useState<string | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const requestIdRef = useRef(0);
 
   const focusedNode = useMemo(
     () => (ctx.focusedNodeId ? ctx.nodeMap.get(ctx.focusedNodeId) ?? null : null),
     [ctx.focusedNodeId, ctx.nodeMap]
   );
-
-  if (ctx.stateKind === "overview" || !focusedNode) {
-    return null;
-  }
 
   const callerCount = ctx.upstreamIds.size;
   const calleeCount = ctx.downstreamIds.size;
@@ -30,15 +30,78 @@ export function ContextPanel() {
     });
   };
 
-  const callers = ctx.graph.edges
-    .filter((edge) => edge.relation === "calls" && edge.to === focusedNode.id)
-    .map((edge) => ctx.nodeMap.get(edge.from))
-    .filter((node): node is NonNullable<typeof node> => Boolean(node));
+  const callers = focusedNode
+    ? ctx.graph.edges
+        .filter((edge) => edge.relation === "calls" && edge.to === focusedNode.id)
+        .map((edge) => ctx.nodeMap.get(edge.from))
+        .filter((node): node is NonNullable<typeof node> => Boolean(node))
+    : [];
 
-  const callees = ctx.graph.edges
-    .filter((edge) => edge.relation === "calls" && edge.from === focusedNode.id)
-    .map((edge) => ctx.nodeMap.get(edge.to))
-    .filter((node): node is NonNullable<typeof node> => Boolean(node));
+  const callees = focusedNode
+    ? ctx.graph.edges
+        .filter((edge) => edge.relation === "calls" && edge.from === focusedNode.id)
+        .map((edge) => ctx.nodeMap.get(edge.to))
+        .filter((node): node is NonNullable<typeof node> => Boolean(node))
+    : [];
+
+  const highlightedNeighborCount = Math.max(
+    0,
+    (ctx.neighborhoodResult?.highlightedIds.size ?? 0) - 1
+  );
+
+  useEffect(() => {
+    setSourceSnippet(null);
+  }, [focusedNode?.id]);
+
+  useEffect(() => {
+    if (!expandedSections.has("source") || !focusedNode?.filePath) {
+      return;
+    }
+    const requestId = ++requestIdRef.current;
+    setSourceLoading(true);
+
+    void readSourceFile(ctx.sessionId, focusedNode.filePath)
+      .then((response) => {
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
+        if (focusedNode.line) {
+          const lines = response.content.split("\n");
+          const start = Math.max(0, focusedNode.line - 8);
+          const end = Math.min(lines.length, focusedNode.line + 7);
+          setSourceSnippet(
+            lines
+              .slice(start, end)
+              .map((line, index) => `${start + index + 1} | ${line}`)
+              .join("\n")
+          );
+          return;
+        }
+        setSourceSnippet(
+          response.content
+            .split("\n")
+            .slice(0, 30)
+            .map((line, index) => `${index + 1} | ${line}`)
+            .join("\n")
+        );
+      })
+      .catch(() => {
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
+        setSourceSnippet("// Failed to load source");
+      })
+      .finally(() => {
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
+        setSourceLoading(false);
+      });
+  }, [ctx.sessionId, expandedSections, focusedNode?.filePath, focusedNode?.id, focusedNode?.line]);
+
+  if (ctx.stateKind === "overview" || !focusedNode) {
+    return null;
+  }
 
   return (
     <aside className="explorer-context-panel" aria-label="Node context" aria-live="polite">
@@ -58,28 +121,18 @@ export function ContextPanel() {
           {focusedNode.signature.parameters.map((parameter, index) => (
             <span key={`${parameter.name}:${parameter.position}`}>
               {index > 0 ? ", " : ""}
-              <button
-                className="explorer-ctx-param"
-                onClick={() => ctx.traceParameter(parameter.name)}
-                type="button"
-                title={`Trace origin of ${parameter.name}`}
-              >
+              <span className="explorer-ctx-param">
                 {parameter.name}
                 {parameter.typeAnnotation ? `: ${parameter.typeAnnotation}` : ""}
-              </button>
+              </span>
             </span>
           ))}
           <span>)</span>
           {focusedNode.signature.returnType ? (
-            <button
-              className="explorer-ctx-return"
-              onClick={ctx.traceReturn}
-              type="button"
-              title="Trace output destination"
-            >
+            <span className="explorer-ctx-return">
               {" -> "}
               {focusedNode.signature.returnType}
-            </button>
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -94,33 +147,26 @@ export function ContextPanel() {
         </span>
       </div>
 
-      {ctx.traceResult ? (
-        <div className="explorer-ctx-trace">
-          <div className="explorer-ctx-trace-label">
-            {ctx.traceResult.direction === "upstream" ? "Origin" : "Destination"} trace
-            {ctx.traceResult.parameterName ? `: ${ctx.traceResult.parameterName}` : ""}
-          </div>
-          <div className="explorer-ctx-trace-path">
-            {ctx.traceResult.path.map((id, index) => {
-              const node = ctx.nodeMap.get(id);
-              return (
-                <span key={id}>
-                  {index > 0 ? " -> " : ""}
-                  <button
-                    className="explorer-ctx-trace-step"
-                    onClick={() => ctx.focusNode(id)}
-                    type="button"
-                  >
-                    {node?.label ?? id.split("::").pop()}
-                  </button>
-                </span>
-              );
-            })}
-          </div>
+      <div className="explorer-ctx-actions">
+        <button className="explorer-ctx-trace-btn" onClick={ctx.showCallers} type="button">
+          Show callers
+        </button>
+        <button className="explorer-ctx-trace-btn" onClick={ctx.showCallees} type="button">
+          Show callees
+        </button>
+      </div>
+
+      {ctx.neighborhoodResult ? (
+        <div className="explorer-ctx-highlight-summary">
+          <span>
+            Highlighting {highlightedNeighborCount}{" "}
+            {ctx.neighborhoodResult.direction === "upstream" ? "callers" : "callees"}
+          </span>
+          <button type="button" onClick={ctx.clearHighlight}>
+            Clear
+          </button>
         </div>
       ) : null}
-
-      {ctx.deadEndMessage ? <div className="explorer-ctx-deadend">{ctx.deadEndMessage}</div> : null}
 
       <div className="explorer-ctx-section">
         <button
@@ -133,69 +179,11 @@ export function ContextPanel() {
         </button>
         {expandedSections.has("source") ? (
           <div className="explorer-ctx-source-preview">
-            <pre className="explorer-ctx-code">{`// Source loading deferred to Phase 2 API integration\n// File: ${focusedNode.filePath ?? "unknown"}${focusedNode.line ? `:${focusedNode.line}` : ""}`}</pre>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="explorer-ctx-section">
-        <button
-          className="explorer-ctx-section-toggle"
-          onClick={() => toggleSection("dataflow")}
-          type="button"
-        >
-          Dataflow In/Out
-          <span>{expandedSections.has("dataflow") ? "▾" : "▸"}</span>
-        </button>
-        {expandedSections.has("dataflow") ? (
-          <div className="explorer-ctx-dataflow">
-            {focusedNode.signature?.parameters.map((parameter) => {
-              const inEdges = ctx.graph.edges.filter(
-                (edge) =>
-                  edge.relation === "parameter_flow" &&
-                  edge.to === focusedNode.id &&
-                  edge.parameterName === parameter.name
-              );
-
-              return (
-                <div key={parameter.name} className="explorer-ctx-dataflow-row">
-                  <span className="explorer-ctx-dataflow-param">{parameter.name}</span>
-                  <span className="explorer-ctx-dataflow-arrow"> &lt;- </span>
-                  {inEdges.length > 0
-                    ? inEdges.map((edge) => {
-                        const source = ctx.nodeMap.get(edge.from);
-                        return (
-                          <span key={edge.from} className="explorer-ctx-dataflow-src">
-                            {source?.label ?? edge.from}
-                          </span>
-                        );
-                      })
-                    : <span className="explorer-ctx-dataflow-none">local/literal</span>}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="explorer-ctx-section">
-        <button
-          className="explorer-ctx-section-toggle"
-          onClick={() => toggleSection("fullpath")}
-          type="button"
-        >
-          Full Call Path
-          <span>{expandedSections.has("fullpath") ? "▾" : "▸"}</span>
-        </button>
-        {expandedSections.has("fullpath") ? (
-          <div className="explorer-ctx-fullpath">
-            <button
-              className="explorer-ctx-trace-btn"
-              onClick={() => ctx.traceParameter(focusedNode.signature?.parameters[0]?.name ?? "")}
-              type="button"
-            >
-              Trace from entry points
-            </button>
+            {sourceLoading ? (
+              <p className="explorer-ctx-source-loading">Loading...</p>
+            ) : (
+              <pre className="explorer-ctx-code">{sourceSnippet ?? "// No source available"}</pre>
+            )}
           </div>
         ) : null}
       </div>
@@ -249,7 +237,7 @@ export function ContextPanel() {
       {focusedNode.filePath && ctx.onNavigateToSource ? (
         <button
           className="explorer-ctx-source-btn"
-          onClick={() => ctx.onNavigateToSource?.(focusedNode.filePath!, focusedNode.line)}
+          onClick={() => ctx.onNavigateToSource?.(focusedNode.filePath, focusedNode.line)}
           type="button"
         >
           Open in editor
