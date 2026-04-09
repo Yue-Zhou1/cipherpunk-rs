@@ -197,10 +197,7 @@ impl<'a> ExplorerGraphBuilder<'a> {
                     });
                 }
 
-                parent_id = seen_modules
-                    .get(&dir_path)
-                    .cloned()
-                    .unwrap_or(parent_id);
+                parent_id = seen_modules.get(&dir_path).cloned().unwrap_or(parent_id);
             }
 
             edges.push(ExplorerEdgeResponse {
