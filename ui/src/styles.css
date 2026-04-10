@@ -781,7 +781,8 @@ pre code {
   max-width: none;
   margin: 0;
   padding: 0;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: #1e1e1e;
   color: #cccccc;
   font-family: "IBM Plex Sans", "Plus Jakarta Sans", "Segoe UI", sans-serif;
@@ -865,9 +866,10 @@ pre code {
 
 .vscode-workbench {
   flex: 1;
-  min-height: calc(100vh - 34px - 210px);
+  min-height: 0;
   display: grid;
   grid-template-columns: 48px 280px minmax(0, 1fr) 320px;
+  overflow: hidden;
 }
 
 .vscode-workbench.workstation-resizable {
@@ -945,22 +947,99 @@ pre code {
   grid-template-rows: minmax(0, 1fr) minmax(240px, 0.45fr);
 }
 
-.workstation-web-grid {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 280px;
-  grid-template-rows: minmax(0, 1fr);
-  min-height: 0;
+/* --- View switcher panels (web mode) --- */
+
+.view-panel {
+  grid-column: 2 / -1;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.workstation-web-grid .vscode-editor-column {
+.view-panel[hidden] {
+  display: none;
+}
+
+.view-graph {
+  background: #0a0e17;
+}
+
+.view-editor {
   display: grid;
-  grid-template-rows: 35px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.view-editor .workstation-explorer {
   min-height: 0;
 }
 
-.workstation-web-sidebar {
-  grid-template-rows: minmax(0, 1fr);
+.view-editor .vscode-editor-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 0;
+}
+
+.view-editor .vscode-editor-column > .workstation-editor {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.view-editor .vscode-editor-column .workstation-monaco-wrap,
+.view-editor .vscode-editor-column .workstation-editor-fallback,
+.view-editor .vscode-editor-column .workstation-plain-text-viewer {
+  height: 100%;
+}
+
+.view-info {
+  background: #1e1e1e;
+}
+
+.info-tab-bar {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0;
+  background: #2d2d2d;
+  border-bottom: 1px solid #252526;
+  overflow-x: auto;
+}
+
+.info-tab-button {
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: #8b8b8b;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.info-tab-button:hover {
+  color: #d4d4d4;
+  background: #2a2d2e;
+}
+
+.info-tab-button.active {
+  color: #ffffff;
+  border-bottom-color: #0078d4;
+  background: #1e1e1e;
+}
+
+.info-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: #252526;
+}
+
+.info-panel-body > * {
+  min-height: 0;
 }
 
 .vscode-editor-tabs {
@@ -1006,6 +1085,7 @@ pre code {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
 }
 
 .workstation-explorer,
@@ -1658,9 +1738,11 @@ pre code {
 }
 
 .workstation-console {
-  min-height: 210px;
+  height: 180px;
+  flex-shrink: 0;
   border-top: 1px solid #252526;
   background: #1e1e1e;
+  overflow-y: auto;
 }
 
 .workstation-console .code-toolbar {
@@ -1856,7 +1938,7 @@ pre code {
   }
 
   .vscode-workbench {
-    min-height: calc(100vh - 180px);
+    min-height: 0;
     grid-template-columns: 48px 240px minmax(0, 1fr);
   }
 
@@ -1873,7 +1955,7 @@ pre code {
   }
 
   .workstation-console {
-    min-height: 180px;
+    height: 180px;
   }
 }
 
