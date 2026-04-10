@@ -971,6 +971,10 @@ pre code {
   grid-template-columns: 220px minmax(0, 1fr);
 }
 
+.view-editor[hidden] {
+  display: none;
+}
+
 .view-editor .workstation-explorer {
   min-height: 0;
 }
@@ -1040,6 +1044,10 @@ pre code {
 
 .info-panel-body > * {
   min-height: 0;
+}
+
+.info-tab-panel[hidden] {
+  display: none;
 }
 
 .vscode-editor-tabs {

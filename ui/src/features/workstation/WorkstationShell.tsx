@@ -27,6 +27,16 @@ const VIEW_ITEMS = [
   { id: "info" as const, label: "Info", icon: Blocks },
 ] satisfies { id: "graph" | "editor" | "info"; label: string; icon: ElementType }[];
 
+const INFO_TABS = [
+  { id: "overview", label: "Security Overview" },
+  { id: "checklist", label: "Checklist" },
+  { id: "audit", label: "Audit Plan" },
+  { id: "toolbench", label: "Toolbench" },
+  { id: "review", label: "Review Queue" },
+] as const;
+
+type InfoTabId = (typeof INFO_TABS)[number]["id"];
+
 function fileTabLabel(path: string | null): string {
   if (!path) {
     return "welcome.md";
@@ -121,7 +131,10 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
   const [targetLine, setTargetLine] = useState<number | null>(null);
   const [activeView, setActiveView] = useState<"graph" | "editor" | "info">("graph");
-  const [activeInfoTab, setActiveInfoTab] = useState<"overview" | "checklist" | "audit" | "toolbench" | "review">("overview");
+  const [activeInfoTab, setActiveInfoTab] = useState<InfoTabId>("overview");
+  const toolbenchSelection = selectedFilePath
+    ? { kind: "file" as const, id: selectedFilePath }
+    : { kind: "session" as const, id: sessionId };
 
   const handleSelectFile = useCallback(
     (path: string) => {
@@ -183,12 +196,14 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
           <div className="vscode-activity-items">
             {VIEW_ITEMS.map((item) => {
               const Icon = item.icon;
+              const isActive = activeView === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`vscode-activity-button${activeView === item.id ? " active" : ""}`}
+                  className={`vscode-activity-button${isActive ? " active" : ""}`}
                   aria-label={item.label}
+                  aria-pressed={isActive}
                   onClick={() => setActiveView(item.id)}
                 >
                   <Icon size={18} />
@@ -252,11 +267,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     <AuditPlanPanel sessionId={sessionId} />
                     <ToolbenchPanel
                       sessionId={sessionId}
-                      selection={
-                        selectedFilePath
-                          ? { kind: "file", id: selectedFilePath }
-                          : { kind: "session", id: sessionId }
-                      }
+                      selection={toolbenchSelection}
                     />
                     <ReviewQueue
                       sessionId={sessionId}
@@ -273,6 +284,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
             <>
               <div
                 className="view-panel view-graph"
+                data-testid="workstation-view-graph"
                 hidden={activeView !== "graph"}
                 aria-hidden={activeView !== "graph"}
               >
@@ -284,6 +296,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
 
               <div
                 className="view-panel view-editor"
+                data-testid="workstation-view-editor"
                 hidden={activeView !== "editor"}
                 aria-hidden={activeView !== "editor"}
               >
@@ -317,52 +330,85 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
 
               <div
                 className="view-panel view-info"
+                data-testid="workstation-view-info"
                 hidden={activeView !== "info"}
                 aria-hidden={activeView !== "info"}
               >
                 <nav className="info-tab-bar" role="tablist" aria-label="Info panels">
-                  {(
-                    [
-                      { id: "overview", label: "Security Overview" },
-                      { id: "checklist", label: "Checklist" },
-                      { id: "audit", label: "Audit Plan" },
-                      { id: "toolbench", label: "Toolbench" },
-                      { id: "review", label: "Review Queue" },
-                    ] as const
-                  ).map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={activeInfoTab === tab.id}
-                      className={`info-tab-button${activeInfoTab === tab.id ? " active" : ""}`}
-                      onClick={() => setActiveInfoTab(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
+                  {INFO_TABS.map((tab) => {
+                    const tabId = `info-tab-${tab.id}`;
+                    const panelId = `info-panel-${tab.id}`;
+                    const isActive = activeInfoTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        id={tabId}
+                        type="button"
+                        role="tab"
+                        tabIndex={isActive ? 0 : -1}
+                        aria-selected={isActive}
+                        aria-controls={panelId}
+                        className={`info-tab-button${isActive ? " active" : ""}`}
+                        onClick={() => setActiveInfoTab(tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
                 </nav>
                 <div className="info-panel-body">
-                  {activeInfoTab === "overview" ? <SecurityOverviewPanel sessionId={sessionId} /> : null}
-                  {activeInfoTab === "checklist" ? <ChecklistPanel sessionId={sessionId} /> : null}
-                  {activeInfoTab === "audit" ? <AuditPlanPanel sessionId={sessionId} /> : null}
-                  {activeInfoTab === "toolbench" ? (
+                  <section
+                    id="info-panel-overview"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-overview"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "overview"}
+                  >
+                    <SecurityOverviewPanel sessionId={sessionId} />
+                  </section>
+                  <section
+                    id="info-panel-checklist"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-checklist"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "checklist"}
+                  >
+                    <ChecklistPanel sessionId={sessionId} />
+                  </section>
+                  <section
+                    id="info-panel-audit"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-audit"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "audit"}
+                  >
+                    <AuditPlanPanel sessionId={sessionId} />
+                  </section>
+                  <section
+                    id="info-panel-toolbench"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-toolbench"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "toolbench"}
+                  >
                     <ToolbenchPanel
                       sessionId={sessionId}
-                      selection={
-                        selectedFilePath
-                          ? { kind: "file", id: selectedFilePath }
-                          : { kind: "session", id: sessionId }
-                      }
+                      selection={toolbenchSelection}
                     />
-                  ) : null}
-                  {activeInfoTab === "review" ? (
+                  </section>
+                  <section
+                    id="info-panel-review"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-review"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "review"}
+                  >
                     <ReviewQueue
                       sessionId={sessionId}
                       selectedRecordId={selectedReviewRecordId}
                       onSelectRecord={handleSelectReviewRecord}
                     />
-                  ) : null}
+                  </section>
                 </div>
               </div>
             </>
@@ -401,23 +447,17 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
               </section>
               <aside className="vscode-right-column">
                 <SecurityOverviewPanel sessionId={sessionId} />
-                <>
-                  <ChecklistPanel sessionId={sessionId} />
-                  <AuditPlanPanel sessionId={sessionId} />
-                  <ToolbenchPanel
-                    sessionId={sessionId}
-                    selection={
-                      selectedFilePath
-                        ? { kind: "file", id: selectedFilePath }
-                        : { kind: "session", id: sessionId }
-                    }
-                  />
-                  <ReviewQueue
-                    sessionId={sessionId}
-                    selectedRecordId={selectedReviewRecordId}
-                    onSelectRecord={handleSelectReviewRecord}
-                  />
-                </>
+                <ChecklistPanel sessionId={sessionId} />
+                <AuditPlanPanel sessionId={sessionId} />
+                <ToolbenchPanel
+                  sessionId={sessionId}
+                  selection={toolbenchSelection}
+                />
+                <ReviewQueue
+                  sessionId={sessionId}
+                  selectedRecordId={selectedReviewRecordId}
+                  onSelectRecord={handleSelectReviewRecord}
+                />
               </aside>
             </>
           )
