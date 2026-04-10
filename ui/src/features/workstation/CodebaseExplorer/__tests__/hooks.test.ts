@@ -6,6 +6,7 @@ import { useDepthControl } from "../hooks/useDepthControl";
 import { useFocusContext } from "../hooks/useFocusContext";
 import { useTrace } from "../hooks/useTrace";
 import { useUnifiedGraph } from "../hooks/useUnifiedGraph";
+import { egoLayout } from "../ExplorerCanvas";
 import type { ExplorerGraph } from "../types";
 
 const mockTransportSubscribe = vi.fn();
@@ -407,5 +408,64 @@ describe("useTrace", () => {
     act(() => result.current.clearHighlight());
 
     expect(result.current.neighborhoodResult).toBeNull();
+  });
+});
+
+describe("egoLayout", () => {
+  it("places the focused node at x=0 column", () => {
+    const nodes = [
+      { id: "center", type: "symbolNode" },
+      { id: "caller1", type: "symbolNode" },
+      { id: "callee1", type: "symbolNode" },
+    ] as any[];
+
+    const { positions } = egoLayout({
+      nodes,
+      focusedNodeId: "center",
+      upstreamIds: new Set(["caller1"]),
+      downstreamIds: new Set(["callee1"]),
+    });
+
+    expect(positions.get("center")?.x).toBe(0);
+    expect(positions.get("caller1")?.x).toBeLessThan(0);
+    expect(positions.get("callee1")?.x).toBeGreaterThan(0);
+  });
+
+  it("stacks multiple nodes in the same column vertically", () => {
+    const nodes = [
+      { id: "center", type: "symbolNode" },
+      { id: "c1", type: "symbolNode" },
+      { id: "c2", type: "symbolNode" },
+    ] as any[];
+
+    const { positions } = egoLayout({
+      nodes,
+      focusedNodeId: "center",
+      upstreamIds: new Set(["c1", "c2"]),
+      downstreamIds: new Set(),
+    });
+
+    expect(positions.get("c1")?.x).toBe(positions.get("c2")?.x);
+    expect(positions.get("c1")?.y).not.toBe(positions.get("c2")?.y);
+  });
+
+  it("caps each column at MAX_NODES_PER_COLUMN and returns overflow count", () => {
+    const callerIds = Array.from({ length: 10 }, (_, i) => `caller_${i}`);
+    const nodes = [
+      { id: "center", type: "symbolNode" },
+      ...callerIds.map((id) => ({ id, type: "symbolNode" })),
+    ] as any[];
+
+    const { positions, overflowCounts } = egoLayout({
+      nodes,
+      focusedNodeId: "center",
+      upstreamIds: new Set(callerIds),
+      downstreamIds: new Set(),
+      returnOverflow: true,
+    });
+
+    const upstreamRendered = [...positions.keys()].filter((id) => callerIds.includes(id));
+    expect(upstreamRendered.length).toBe(8);
+    expect(overflowCounts?.upstream).toBe(2);
   });
 });

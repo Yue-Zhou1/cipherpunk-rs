@@ -24,6 +24,71 @@ const nodeTypes = {
   symbolNode: SymbolNode,
 };
 
+const COLUMN_WIDTH = 380;
+const ROW_HEIGHT = 100;
+const MAX_NODES_PER_COLUMN = 8;
+
+type EgoLayoutInput = {
+  nodes: Node[];
+  focusedNodeId: string;
+  upstreamIds: Set<string>;
+  downstreamIds: Set<string>;
+  returnOverflow?: boolean;
+};
+
+type EgoLayoutResult = {
+  positions: Map<string, { x: number; y: number }>;
+  overflowCounts?: { upstream: number; downstream: number };
+};
+
+export function egoLayout({
+  nodes,
+  focusedNodeId,
+  upstreamIds,
+  downstreamIds,
+  returnOverflow = false,
+}: EgoLayoutInput): EgoLayoutResult {
+  const positions = new Map<string, { x: number; y: number }>();
+
+  const focusedNode = nodes.find((node) => node.id === focusedNodeId);
+  if (focusedNode) {
+    positions.set(focusedNodeId, { x: 0, y: 0 });
+  }
+
+  const upstreamNodes = nodes.filter((node) => upstreamIds.has(node.id));
+  const downstreamNodes = nodes.filter((node) => downstreamIds.has(node.id));
+
+  const upstreamVisible = upstreamNodes.slice(0, MAX_NODES_PER_COLUMN);
+  const downstreamVisible = downstreamNodes.slice(0, MAX_NODES_PER_COLUMN);
+
+  const upstreamOverflow = upstreamNodes.length - upstreamVisible.length;
+  const downstreamOverflow = downstreamNodes.length - downstreamVisible.length;
+
+  upstreamVisible.forEach((node, index) => {
+    const totalRows = upstreamVisible.length;
+    const y = (index - (totalRows - 1) / 2) * ROW_HEIGHT;
+    positions.set(node.id, { x: -COLUMN_WIDTH, y });
+  });
+
+  downstreamVisible.forEach((node, index) => {
+    const totalRows = downstreamVisible.length;
+    const y = (index - (totalRows - 1) / 2) * ROW_HEIGHT;
+    positions.set(node.id, { x: COLUMN_WIDTH, y });
+  });
+
+  if (returnOverflow) {
+    return {
+      positions,
+      overflowCounts: {
+        upstream: upstreamOverflow,
+        downstream: downstreamOverflow,
+      },
+    };
+  }
+
+  return { positions };
+}
+
 async function layoutWithElk(
   nodes: Node[],
   edges: Array<{ id: string; source: string; target: string }>
