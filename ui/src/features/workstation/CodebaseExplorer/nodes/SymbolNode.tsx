@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position } from "reactflow";
 
 import type { FunctionSignature } from "../types";
@@ -8,7 +9,7 @@ type SymbolNodeData = {
   signature?: FunctionSignature;
 };
 
-export function SymbolNode({ data }: { data: SymbolNodeData }) {
+function SymbolNodeInner({ data }: { data: SymbolNodeData }) {
   return (
     <div className="explorer-symbol-node">
       <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
@@ -40,3 +41,5 @@ export function SymbolNode({ data }: { data: SymbolNodeData }) {
     </div>
   );
 }
+
+export const SymbolNode = memo(SymbolNodeInner);

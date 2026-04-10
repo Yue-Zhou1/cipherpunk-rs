@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
 import { useExplorer } from "../ExplorerContext";
@@ -9,7 +10,7 @@ type ClusterNodeData = {
   kind: "crate" | "module";
 };
 
-export function ClusterNode({ id, data }: NodeProps<ClusterNodeData>) {
+function ClusterNodeInner({ id, data }: NodeProps<ClusterNodeData>) {
   const { clusterErrors, loadingClusters } = useExplorer();
   const isExpanding = loadingClusters.has(id);
   const hasError = clusterErrors.has(id);
@@ -43,3 +44,5 @@ export function ClusterNode({ id, data }: NodeProps<ClusterNodeData>) {
     </div>
   );
 }
+
+export const ClusterNode = memo(ClusterNodeInner);

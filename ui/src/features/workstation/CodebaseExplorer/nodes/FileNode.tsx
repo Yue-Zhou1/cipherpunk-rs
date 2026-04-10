@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position } from "reactflow";
 
 type FileNodeData = {
@@ -5,7 +6,7 @@ type FileNodeData = {
   childCount?: number;
 };
 
-export function FileNode({ data }: { data: FileNodeData }) {
+function FileNodeInner({ data }: { data: FileNodeData }) {
   return (
     <div className="explorer-file-node">
       <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
@@ -17,3 +18,5 @@ export function FileNode({ data }: { data: FileNodeData }) {
     </div>
   );
 }
+
+export const FileNode = memo(FileNodeInner);
