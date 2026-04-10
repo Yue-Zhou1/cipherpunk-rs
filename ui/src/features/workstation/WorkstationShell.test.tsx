@@ -163,12 +163,12 @@ describe("WorkstationShell", () => {
     expect(selectFileSpy).not.toHaveBeenCalled();
   });
 
-  it("renders code editor and graph side by side in http mode", () => {
+  it("shows graph view by default in http mode", () => {
     transportKind = "http";
     render(<WorkstationShell sessionId="sess-1" />);
 
     expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /^graph$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /code editor/i })).not.toBeInTheDocument();
   });
 
   it("navigates to source without losing graph in http mode", () => {
@@ -181,5 +181,30 @@ describe("WorkstationShell", () => {
     expect(selectFileSpy).toHaveBeenCalledWith("rollup-core/src/lib.rs");
     expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
     expect(screen.getByTestId("code-editor-state")).toHaveTextContent("none@12");
+  });
+});
+
+describe("WorkstationShell web mode view switching", () => {
+  beforeEach(() => {
+    transportKind = "http";
+    selectFileSpy.mockClear();
+  });
+
+  it("defaults to graph view showing codebase explorer", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
+  });
+
+  it("switches to editor view when Editor button is clicked", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^editor$/i }));
+    expect(screen.getByRole("heading", { name: /code editor/i })).toBeInTheDocument();
+  });
+
+  it("switches to info view when Info button is clicked", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    expect(screen.queryByRole("tab", { name: /security overview/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^info$/i }));
+    expect(screen.getByRole("tab", { name: /security overview/i })).toBeInTheDocument();
   });
 });
