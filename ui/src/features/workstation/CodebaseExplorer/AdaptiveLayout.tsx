@@ -138,15 +138,30 @@ export function buildFlowModel(graph: ExplorerGraph, config: LayoutConfig): Flow
   const visibleNodeIds = new Set<string>();
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const parentMap = buildParentMap(graph.edges);
+  const egoNodeIds =
+    config.stateKind === "focus" && config.focusedNodeId
+      ? new Set([config.focusedNodeId, ...config.upstreamIds, ...config.downstreamIds])
+      : null;
 
   for (const node of graph.nodes) {
-    if (!isVisibleNode(node, config, parentMap, nodeById)) {
+    if (egoNodeIds) {
+      if (!egoNodeIds.has(node.id)) {
+        continue;
+      }
+    } else if (!isVisibleNode(node, config, parentMap, nodeById)) {
       continue;
     }
 
     visibleNodeIds.add(node.id);
     const isCluster = node.kind === "crate" || node.kind === "module";
-    const classes = nodeHighlightClass(node.id, config);
+    const classes: string[] = [];
+    const highlightClass = nodeHighlightClass(node.id, config);
+    if (highlightClass) {
+      classes.push(highlightClass);
+    }
+    if (config.stateKind === "focus" && node.id === config.focusedNodeId) {
+      classes.push("explorer-ego-center");
+    }
 
     nodes.push({
       id: node.id,
@@ -154,7 +169,7 @@ export function buildFlowModel(graph: ExplorerGraph, config: LayoutConfig): Flow
       position: { x: 0, y: 0 },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
-      className: classes || undefined,
+      className: classes.join(" ") || undefined,
       data: {
         label: node.label,
         kind: node.kind,

@@ -6,6 +6,7 @@ import { useDepthControl } from "../hooks/useDepthControl";
 import { useFocusContext } from "../hooks/useFocusContext";
 import { useTrace } from "../hooks/useTrace";
 import { useUnifiedGraph } from "../hooks/useUnifiedGraph";
+import { buildFlowModel } from "../AdaptiveLayout";
 import { egoLayout } from "../ExplorerCanvas";
 import type { ExplorerGraph } from "../types";
 
@@ -467,5 +468,68 @@ describe("egoLayout", () => {
     const upstreamRendered = [...positions.keys()].filter((id) => callerIds.includes(id));
     expect(upstreamRendered.length).toBe(8);
     expect(overflowCounts?.upstream).toBe(2);
+  });
+});
+
+describe("buildFlowModel in focus mode", () => {
+  const graph: ExplorerGraph = {
+    nodes: [
+      { id: "fn_a", label: "fn_a", kind: "function" },
+      { id: "fn_b", label: "fn_b", kind: "function" },
+      { id: "fn_c", label: "fn_c", kind: "function" },
+      { id: "fn_d", label: "fn_d", kind: "function" },
+    ],
+    edges: [
+      { from: "fn_b", to: "fn_a", relation: "calls" },
+      { from: "fn_a", to: "fn_c", relation: "calls" },
+    ],
+  };
+
+  const baseConfig = {
+    resolvedGranularity: "files" as const,
+    expandedClusters: new Set<string>(),
+    neighborhoodResult: null,
+    matchingNodeIds: null,
+  };
+
+  it("includes only ego-graph nodes when stateKind is focus", () => {
+    const { nodes } = buildFlowModel(graph, {
+      ...baseConfig,
+      stateKind: "focus",
+      focusedNodeId: "fn_a",
+      upstreamIds: new Set(["fn_b"]),
+      downstreamIds: new Set(["fn_c"]),
+    });
+
+    const ids = nodes.map((node) => node.id);
+    expect(ids).toContain("fn_a");
+    expect(ids).toContain("fn_b");
+    expect(ids).toContain("fn_c");
+    expect(ids).not.toContain("fn_d");
+  });
+
+  it("includes all nodes when stateKind is overview", () => {
+    const { nodes } = buildFlowModel(graph, {
+      ...baseConfig,
+      stateKind: "overview",
+      focusedNodeId: null,
+      upstreamIds: new Set(),
+      downstreamIds: new Set(),
+    });
+
+    expect(nodes.map((node) => node.id)).toContain("fn_d");
+  });
+
+  it("marks the focused node with explorer-ego-center class", () => {
+    const { nodes } = buildFlowModel(graph, {
+      ...baseConfig,
+      stateKind: "focus",
+      focusedNodeId: "fn_a",
+      upstreamIds: new Set(["fn_b"]),
+      downstreamIds: new Set(["fn_c"]),
+    });
+
+    const center = nodes.find((node) => node.id === "fn_a");
+    expect(center?.className).toContain("explorer-ego-center");
   });
 });
