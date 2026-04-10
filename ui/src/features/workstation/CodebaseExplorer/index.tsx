@@ -69,6 +69,34 @@ function ExplorerToolbar() {
   );
 }
 
+function EgoBanner() {
+  const ctx = useExplorer();
+  const focusedNode = ctx.focusedNodeId ? ctx.nodeMap.get(ctx.focusedNodeId) : null;
+
+  if (ctx.stateKind !== "focus" || !focusedNode) {
+    return null;
+  }
+
+  const location = focusedNode.filePath
+    ? `${focusedNode.filePath}${focusedNode.line ? `:${focusedNode.line}` : ""}`
+    : null;
+
+  return (
+    <div className="explorer-ego-banner" data-testid="ego-banner" role="status">
+      <button type="button" className="explorer-ego-back" onClick={ctx.clearFocus}>
+        ← Overview
+      </button>
+      <span className="explorer-ego-label">
+        <strong>{focusedNode.label}</strong>
+        {location ? <span className="explorer-ego-location">{location}</span> : null}
+      </span>
+      <span className="explorer-ego-counts">
+        Callers: {ctx.totalUpstreamCount} · Callees: {ctx.totalDownstreamCount}
+      </span>
+    </div>
+  );
+}
+
 function ExplorerLayout() {
   const { isLoading, error, isStale, reload, stateKind } = useExplorer();
 
@@ -83,6 +111,7 @@ function ExplorerLayout() {
         </div>
       ) : null}
       <ExplorerToolbar />
+      <EgoBanner />
       {isLoading ? (
         <div className="explorer-loading" role="status" aria-label="Loading graph">
           <div className="explorer-spinner" />

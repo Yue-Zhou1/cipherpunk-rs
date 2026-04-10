@@ -176,6 +176,39 @@ describe("CodebaseExplorer", () => {
     expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", undefined, "mod_002");
   });
 
+  it("shows ego banner with node name and counts when a node is focused", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    fireEvent.click(await screen.findByText("verify_signature"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ego-banner")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/← overview/i)).toBeInTheDocument();
+    expect(screen.getByText(/callers:/i)).toBeInTheDocument();
+    expect(screen.getByText(/callees:/i)).toBeInTheDocument();
+  });
+
+  it("returns to overview when ego banner back button is clicked", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    fireEvent.click(await screen.findByText("verify_signature"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/← overview/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText(/← overview/i));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/← overview/i)).not.toBeInTheDocument();
+      expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
+    });
+  });
+
   it("Esc returns from focus to overview", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
