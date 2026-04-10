@@ -140,6 +140,8 @@ export function ExplorerProvider({
     focusedNodeId: focus.focusedNodeId,
     upstreamIds: focus.upstreamIds,
     downstreamIds: focus.downstreamIds,
+    totalUpstreamCount: focus.totalUpstreamCount,
+    totalDownstreamCount: focus.totalDownstreamCount,
     focusNode: (nodeId) => {
       trace.clearHighlight();
       focus.focusNode(nodeId);

@@ -78,6 +78,8 @@ export type ExplorerContextValue = {
   focusedNodeId: string | null;
   upstreamIds: Set<string>;
   downstreamIds: Set<string>;
+  totalUpstreamCount: number;
+  totalDownstreamCount: number;
   focusNode: (nodeId: string) => void;
   clearFocus: () => void;
 

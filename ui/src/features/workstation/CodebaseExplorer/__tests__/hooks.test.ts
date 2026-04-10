@@ -337,6 +337,31 @@ describe("useFocusContext", () => {
 
     expect(depthTwoCount).toBeGreaterThanOrEqual(depthOneCount);
   });
+
+  it("exposes total upstream and downstream counts regardless of depth cap", () => {
+    const graph: ExplorerGraph = {
+      nodes: [
+        { id: "a", label: "a", kind: "function" },
+        { id: "b", label: "b", kind: "function" },
+        { id: "c", label: "c", kind: "function" },
+        { id: "d", label: "d", kind: "function" },
+      ],
+      edges: [
+        { from: "b", to: "a", relation: "calls" },
+        { from: "c", to: "b", relation: "calls" },
+        { from: "a", to: "d", relation: "calls" },
+      ],
+    };
+
+    const { result } = renderHook(() => useFocusContext(graph, 1));
+    act(() => result.current.focusNode("a"));
+
+    expect(result.current.upstreamIds.has("b")).toBe(true);
+    expect(result.current.upstreamIds.has("c")).toBe(false);
+
+    expect(result.current.totalUpstreamCount).toBe(2);
+    expect(result.current.totalDownstreamCount).toBe(1);
+  });
 });
 
 describe("useTrace", () => {
