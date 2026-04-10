@@ -178,6 +178,20 @@ export function ExplorerCanvas() {
   );
 
   useEffect(() => {
+    if (ctx.stateKind === "focus" && ctx.focusedNodeId) {
+      const { positions } = egoLayout({
+        nodes: flowModel.nodes,
+        focusedNodeId: ctx.focusedNodeId,
+        upstreamIds: ctx.upstreamIds,
+        downstreamIds: ctx.downstreamIds,
+      });
+      setPositionByNodeId(positions);
+      requestAnimationFrame(() => {
+        flowRef.current?.fitView?.({ padding: 0.2 });
+      });
+      return;
+    }
+
     void layoutWithElk(flowModel.nodes, flowModel.edges)
       .then((positionedNodes) => {
         setPositionByNodeId(new Map(positionedNodes.map((node) => [node.id, node.position])));
@@ -198,7 +212,7 @@ export function ExplorerCanvas() {
           flowRef.current?.fitView?.({ padding: 0.16 });
         });
       });
-  }, [topologyKey]);
+  }, [topologyKey, ctx.stateKind, ctx.focusedNodeId, ctx.upstreamIds, ctx.downstreamIds]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
