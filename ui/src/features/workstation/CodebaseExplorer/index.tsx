@@ -55,7 +55,7 @@ function ExplorerToolbar() {
           <span className="explorer-depth-value">{ctx.depth}</span>
           <button
             onClick={() => ctx.setDepth(ctx.depth + 1)}
-            disabled={controlsDisabled || ctx.depth >= 10}
+            disabled={controlsDisabled || ctx.depth >= (ctx.stateKind === "focus" ? 5 : 10)}
             type="button"
             aria-label="Increase depth"
           >
