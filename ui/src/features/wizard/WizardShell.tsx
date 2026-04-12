@@ -204,16 +204,6 @@ function WizardShell({ onSessionCreated }: WizardShellProps): JSX.Element {
             setIsStartingAudit(true);
 
             try {
-              await loadWorkspacePreview(
-                sourceMode,
-                sourceForm,
-                setBranchResolutionBanner,
-                setWorkspaceCrates,
-                setWorkspaceFrameworks,
-                setWorkspaceWarnings,
-                setWorkspaceBuildMatrix
-              );
-
               const ambiguousCrates = Object.fromEntries(
                 workspaceCrates.map((entry) => {
                   const status = crateDecisions[entry.name] ?? entry.status;

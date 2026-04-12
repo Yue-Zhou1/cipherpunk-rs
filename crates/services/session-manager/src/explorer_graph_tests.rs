@@ -123,6 +123,59 @@ fn unknown_cluster_returns_error() {
     ));
 }
 
+#[test]
+fn nested_modules_produce_parent_chain() {
+    let root = PathBuf::from("/project");
+    let ir = make_nested_ir(&root);
+    let builder = ExplorerGraphBuilder::new(&ir, &root);
+
+    let response = builder
+        .build("sess-1", ExplorerDepth::Overview, None)
+        .expect("overview graph should build");
+
+    let modules: Vec<_> = response
+        .nodes
+        .iter()
+        .filter(|node| node.kind == "module")
+        .collect();
+    assert!(
+        modules.len() >= 2,
+        "expected at least 2 module levels, got {}",
+        modules.len()
+    );
+
+    let module_ids: Vec<_> = modules.iter().map(|node| node.id.as_str()).collect();
+    let has_module_to_module = response.edges.iter().any(|edge| {
+        edge.relation == "contains"
+            && module_ids.contains(&edge.from.as_str())
+            && module_ids.contains(&edge.to.as_str())
+    });
+    assert!(
+        has_module_to_module,
+        "expected contains edge between parent and child modules"
+    );
+}
+
+#[test]
+fn cross_file_edges_do_not_fabricate_parameter_names() {
+    let root = PathBuf::from("/project");
+    let ir = make_test_ir(&root);
+    let builder = ExplorerGraphBuilder::new(&ir, &root);
+
+    let response = builder
+        .build("sess-1", ExplorerDepth::Full, None)
+        .expect("full graph should build");
+
+    for edge in &response.edges {
+        if edge.relation == "calls" || edge.relation == "contains" {
+            assert!(
+                edge.parameter_name.is_none(),
+                "calls/contains edges should not claim parameter_name"
+            );
+        }
+    }
+}
+
 fn make_test_ir(root: &Path) -> ProjectIr {
     let file_nodes = vec![
         FileNode {
@@ -181,6 +234,32 @@ fn make_test_ir(root: &Path) -> ProjectIr {
                 value_preview: Some("true".to_string()),
             }],
         },
+        framework_views: vec![],
+    }
+}
+
+fn make_nested_ir(root: &Path) -> ProjectIr {
+    let file_nodes = vec![
+        FileNode {
+            id: "file:mycrate/src/zk/circom/lib.rs".to_string(),
+            path: root.join("mycrate/src/zk/circom/lib.rs"),
+            language: "rust".to_string(),
+        },
+        FileNode {
+            id: "file:mycrate/src/lib.rs".to_string(),
+            path: root.join("mycrate/src/lib.rs"),
+            language: "rust".to_string(),
+        },
+    ];
+
+    ProjectIr {
+        file_graph: Graph {
+            nodes: file_nodes,
+            edges: vec![],
+        },
+        symbol_graph: Graph::default(),
+        feature_graph: Graph::default(),
+        dataflow_graph: Graph::default(),
         framework_views: vec![],
     }
 }

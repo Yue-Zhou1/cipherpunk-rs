@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
 import { useExplorer } from "../ExplorerContext";
@@ -9,9 +10,10 @@ type ClusterNodeData = {
   kind: "crate" | "module";
 };
 
-export function ClusterNode({ id, data }: NodeProps<ClusterNodeData>) {
-  const { loadingClusters } = useExplorer();
+function ClusterNodeInner({ id, data }: NodeProps<ClusterNodeData>) {
+  const { clusterErrors, loadingClusters } = useExplorer();
   const isExpanding = loadingClusters.has(id);
+  const hasError = clusterErrors.has(id);
 
   return (
     <div className="explorer-cluster-node">
@@ -25,6 +27,10 @@ export function ClusterNode({ id, data }: NodeProps<ClusterNodeData>) {
             style={{ width: 14, height: 14 }}
             aria-label="Loading cluster"
           />
+        ) : hasError ? (
+          <span className="explorer-cluster-error" aria-label="Cluster load failed">
+            !
+          </span>
         ) : (
           <span
             className="explorer-cluster-toggle"
@@ -38,3 +44,5 @@ export function ClusterNode({ id, data }: NodeProps<ClusterNodeData>) {
     </div>
   );
 }
+
+export const ClusterNode = memo(ClusterNodeInner);

@@ -35,11 +35,12 @@ function ExplorerToolbar() {
         onChange={(event) => ctx.setSearchQuery(event.target.value)}
         className="explorer-search"
         aria-label="Search nodes"
-        disabled={controlsDisabled || ctx.stateKind === "trace"}
+        disabled={controlsDisabled}
       />
       {ctx.matchingNodeIds ? (
         <span className="explorer-match-count">{ctx.matchingNodeIds.size} matches</span>
       ) : null}
+      {ctx.searchHint ? <span className="explorer-search-hint">{ctx.searchHint}</span> : null}
 
       {ctx.stateKind !== "overview" ? (
         <div className="explorer-depth-control" role="group" aria-label="Depth control">
@@ -54,7 +55,7 @@ function ExplorerToolbar() {
           <span className="explorer-depth-value">{ctx.depth}</span>
           <button
             onClick={() => ctx.setDepth(ctx.depth + 1)}
-            disabled={controlsDisabled || ctx.depth >= 10}
+            disabled={controlsDisabled || ctx.depth >= (ctx.stateKind === "focus" ? 5 : 10)}
             type="button"
             aria-label="Increase depth"
           >
@@ -64,6 +65,34 @@ function ExplorerToolbar() {
       ) : null}
 
       <span className="explorer-state-badge">{ctx.stateKind.toUpperCase()}</span>
+    </div>
+  );
+}
+
+function EgoBanner() {
+  const ctx = useExplorer();
+  const focusedNode = ctx.focusedNodeId ? ctx.nodeMap.get(ctx.focusedNodeId) : null;
+
+  if (ctx.stateKind !== "focus" || !focusedNode) {
+    return null;
+  }
+
+  const location = focusedNode.filePath
+    ? `${focusedNode.filePath}${focusedNode.line ? `:${focusedNode.line}` : ""}`
+    : null;
+
+  return (
+    <div className="explorer-ego-banner" data-testid="ego-banner" role="status">
+      <button type="button" className="explorer-ego-back" onClick={ctx.clearFocus}>
+        ← Overview
+      </button>
+      <span className="explorer-ego-label">
+        <strong>{focusedNode.label}</strong>
+        {location ? <span className="explorer-ego-location">{location}</span> : null}
+      </span>
+      <span className="explorer-ego-counts">
+        Callers: {ctx.totalUpstreamCount} · Callees: {ctx.totalDownstreamCount}
+      </span>
     </div>
   );
 }
@@ -82,6 +111,7 @@ function ExplorerLayout() {
         </div>
       ) : null}
       <ExplorerToolbar />
+      <EgoBanner />
       {isLoading ? (
         <div className="explorer-loading" role="status" aria-label="Loading graph">
           <div className="explorer-spinner" />

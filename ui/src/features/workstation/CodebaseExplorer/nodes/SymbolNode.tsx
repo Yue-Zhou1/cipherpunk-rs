@@ -1,15 +1,15 @@
+import { memo } from "react";
 import { Handle, Position } from "reactflow";
 
 import type { FunctionSignature } from "../types";
 
 type SymbolNodeData = {
   label: string;
+  kind: string;
   signature?: FunctionSignature;
-  onParameterClick: (parameterName: string) => void;
-  onReturnClick: () => void;
 };
 
-export function SymbolNode({ data }: { data: SymbolNodeData }) {
+function SymbolNodeInner({ data }: { data: SymbolNodeData }) {
   return (
     <div className="explorer-symbol-node">
       <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
@@ -20,21 +20,7 @@ export function SymbolNode({ data }: { data: SymbolNodeData }) {
           {data.signature.parameters.map((param, index) => (
             <span key={`${param.name}:${param.position}`}>
               {index > 0 ? <span className="explorer-sig-comma">, </span> : null}
-              <span
-                className="explorer-sig-param"
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  data.onParameterClick(param.name);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    data.onParameterClick(param.name);
-                  }
-                }}
-              >
+              <span className="explorer-sig-param">
                 <span className="explorer-sig-param-name">{param.name}</span>
                 {param.typeAnnotation ? (
                   <span className="explorer-sig-param-type">: {param.typeAnnotation}</span>
@@ -44,21 +30,7 @@ export function SymbolNode({ data }: { data: SymbolNodeData }) {
           ))}
           <span className="explorer-sig-paren">)</span>
           {data.signature.returnType ? (
-            <span
-              className="explorer-sig-return"
-              role="button"
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                data.onReturnClick();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  data.onReturnClick();
-                }
-              }}
-            >
+            <span className="explorer-sig-return">
               {" -> "}
               <span className="explorer-sig-return-type">{data.signature.returnType}</span>
             </span>
@@ -69,3 +41,5 @@ export function SymbolNode({ data }: { data: SymbolNodeData }) {
     </div>
   );
 }
+
+export const SymbolNode = memo(SymbolNodeInner);

@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ElementType } from "react";
 import { Allotment } from "allotment";
-import { Blocks, Files, GitBranch, Search, Settings } from "lucide-react";
+import { Blocks, Files, Network, Settings } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import type { ProjectTreeNode, ReviewQueueItem } from "../../ipc/commands";
@@ -21,14 +21,21 @@ type WorkstationShellProps = {
   sessionId: string;
 };
 
-type WorkstationMainTab = "code" | "graph" | "security" | "plan";
+const VIEW_ITEMS = [
+  { id: "graph" as const, label: "Graph", icon: Network },
+  { id: "editor" as const, label: "Editor", icon: Files },
+  { id: "info" as const, label: "Info", icon: Blocks },
+] satisfies { id: "graph" | "editor" | "info"; label: string; icon: ElementType }[];
 
-const ACTIVITY_ITEMS = [
-  { id: "files", label: "Explorer", icon: Files },
-  { id: "search", label: "Search", icon: Search },
-  { id: "source-control", label: "Source Control", icon: GitBranch },
-  { id: "extensions", label: "Extensions", icon: Blocks },
+const INFO_TABS = [
+  { id: "overview", label: "Security Overview" },
+  { id: "checklist", label: "Checklist" },
+  { id: "audit", label: "Audit Plan" },
+  { id: "toolbench", label: "Toolbench" },
+  { id: "review", label: "Review Queue" },
 ] as const;
+
+type InfoTabId = (typeof INFO_TABS)[number]["id"];
 
 function fileTabLabel(path: string | null): string {
   if (!path) {
@@ -123,29 +130,26 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
   const [selectedReviewRecordId, setSelectedReviewRecordId] = useState<string | null>(null);
   const [selectedGraphNodeIds, setSelectedGraphNodeIds] = useState<string[]>([]);
   const [targetLine, setTargetLine] = useState<number | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<WorkstationMainTab>("code");
-  const useTabbedWebLayout = !useSplitLayout && webMode;
+  const [activeView, setActiveView] = useState<"graph" | "editor" | "info">("graph");
+  const [activeInfoTab, setActiveInfoTab] = useState<InfoTabId>("overview");
+  const toolbenchSelection = selectedFilePath
+    ? { kind: "file" as const, id: selectedFilePath }
+    : { kind: "session" as const, id: sessionId };
 
   const handleSelectFile = useCallback(
     (path: string) => {
       setTargetLine(null);
-      if (useTabbedWebLayout) {
-        setActiveMainTab("code");
-      }
       selectFile(path);
     },
-    [selectFile, useTabbedWebLayout]
+    [selectFile]
   );
 
   const handleNavigateToSource = useCallback(
     (filePath: string, line?: number) => {
       setTargetLine(typeof line === "number" ? line : null);
-      if (useTabbedWebLayout) {
-        setActiveMainTab("code");
-      }
       selectFile(filePath);
     },
-    [selectFile, useTabbedWebLayout]
+    [selectFile]
   );
 
   const handleSelectReviewRecord = useCallback(
@@ -190,15 +194,17 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
       >
         <aside className="vscode-activity-bar" aria-label="Activity Bar">
           <div className="vscode-activity-items">
-            {ACTIVITY_ITEMS.map((item, index) => {
+            {VIEW_ITEMS.map((item) => {
               const Icon = item.icon;
-              const active = index === 0;
+              const isActive = activeView === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`vscode-activity-button${active ? " active" : ""}`}
+                  className={`vscode-activity-button${isActive ? " active" : ""}`}
                   aria-label={item.label}
+                  aria-pressed={isActive}
+                  onClick={() => setActiveView(item.id)}
                 >
                   <Icon size={18} />
                 </button>
@@ -261,11 +267,7 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     <AuditPlanPanel sessionId={sessionId} />
                     <ToolbenchPanel
                       sessionId={sessionId}
-                      selection={
-                        selectedFilePath
-                          ? { kind: "file", id: selectedFilePath }
-                          : { kind: "session", id: sessionId }
-                      }
+                      selection={toolbenchSelection}
                     />
                     <ReviewQueue
                       sessionId={sessionId}
@@ -278,75 +280,154 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
             </Allotment.Pane>
           </Allotment>
         ) : (
-          <>
-            <ProjectExplorer
-              sessionId={sessionId}
-              nodes={projectTree}
-              selectedFilePath={selectedFilePath}
-              onSelectFile={handleSelectFile}
-              isLoading={treeLoading}
-              error={treeError}
-            />
-            <section className={`vscode-editor-column${useTabbedWebLayout ? " tabbed" : ""}`}>
-              <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
-                <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
-                  {fileTabLabel(selectedFilePath)}
-                </button>
+          webMode ? (
+            <>
+              <div
+                className="view-panel view-graph"
+                data-testid="workstation-view-graph"
+                hidden={activeView !== "graph"}
+                aria-hidden={activeView !== "graph"}
+              >
+                <CodebaseExplorer
+                  sessionId={sessionId}
+                  onNavigateToSource={handleNavigateToSource}
+                />
               </div>
-              {useTabbedWebLayout ? (
-                <>
-                  <div
-                    className="workstation-view-tabs"
-                    role="tablist"
-                    aria-label="Workstation primary views"
-                  >
-                    {(["code", "graph", "security", "plan"] as const).map((tab) => (
+
+              <div
+                className="view-panel view-editor"
+                data-testid="workstation-view-editor"
+                hidden={activeView !== "editor"}
+                aria-hidden={activeView !== "editor"}
+              >
+                <ProjectExplorer
+                  sessionId={sessionId}
+                  nodes={projectTree}
+                  selectedFilePath={selectedFilePath}
+                  onSelectFile={handleSelectFile}
+                  isLoading={treeLoading}
+                  error={treeError}
+                />
+                <section className="vscode-editor-column">
+                  <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
+                    <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
+                      {fileTabLabel(selectedFilePath)}
+                    </button>
+                  </div>
+                  <CodeEditorPane
+                    filePath={selectedFilePath}
+                    content={fileContent}
+                    isLoading={fileLoading}
+                    error={fileError}
+                    preferPlainText
+                    focusedRecordId={selectedReviewRecordId}
+                    focusedNodeCount={selectedGraphNodeIds.length}
+                    targetLine={targetLine}
+                  />
+                  <ActivityConsole sessionId={sessionId} entries={consoleEntries} />
+                </section>
+              </div>
+
+              <div
+                className="view-panel view-info"
+                data-testid="workstation-view-info"
+                hidden={activeView !== "info"}
+                aria-hidden={activeView !== "info"}
+              >
+                <nav className="info-tab-bar" role="tablist" aria-label="Info panels">
+                  {INFO_TABS.map((tab) => {
+                    const tabId = `info-tab-${tab.id}`;
+                    const panelId = `info-panel-${tab.id}`;
+                    const isActive = activeInfoTab === tab.id;
+                    return (
                       <button
-                        key={tab}
+                        key={tab.id}
+                        id={tabId}
                         type="button"
-                        className={`workstation-view-tab${activeMainTab === tab ? " active" : ""}`}
                         role="tab"
-                        aria-selected={activeMainTab === tab}
-                        onClick={() => setActiveMainTab(tab)}
+                        tabIndex={isActive ? 0 : -1}
+                        aria-selected={isActive}
+                        aria-controls={panelId}
+                        className={`info-tab-button${isActive ? " active" : ""}`}
+                        onClick={() => setActiveInfoTab(tab.id)}
                       >
-                        {tab === "code"
-                          ? "Code"
-                          : tab === "graph"
-                            ? "Graph"
-                            : tab === "security"
-                              ? "Security"
-                              : "Audit Plan"}
+                        {tab.label}
                       </button>
-                    ))}
-                  </div>
-                  <div className="workstation-view-panel">
-                    {activeMainTab === "code" && (
-                      <CodeEditorPane
-                        filePath={selectedFilePath}
-                        content={fileContent}
-                        isLoading={fileLoading}
-                        error={fileError}
-                        preferPlainText={webMode}
-                        focusedRecordId={selectedReviewRecordId}
-                        focusedNodeCount={selectedGraphNodeIds.length}
-                        targetLine={targetLine}
-                      />
-                    )}
-                    {activeMainTab === "graph" && (
-                      <CodebaseExplorer
-                        sessionId={sessionId}
-                        onNavigateToSource={handleNavigateToSource}
-                      />
-                    )}
-                    {activeMainTab === "security" && (
-                      <SecurityOverviewPanel sessionId={sessionId} />
-                    )}
-                    {activeMainTab === "plan" && (
-                      <AuditPlanPanel sessionId={sessionId} />
-                    )}
-                  </div>
-                </>
-              ) : (
+                    );
+                  })}
+                </nav>
+                <div className="info-panel-body">
+                  <section
+                    id="info-panel-overview"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-overview"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "overview"}
+                  >
+                    <SecurityOverviewPanel sessionId={sessionId} />
+                  </section>
+                  <section
+                    id="info-panel-checklist"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-checklist"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "checklist"}
+                  >
+                    <ChecklistPanel sessionId={sessionId} />
+                  </section>
+                  <section
+                    id="info-panel-audit"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-audit"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "audit"}
+                  >
+                    <AuditPlanPanel sessionId={sessionId} />
+                  </section>
+                  <section
+                    id="info-panel-toolbench"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-toolbench"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "toolbench"}
+                  >
+                    <ToolbenchPanel
+                      sessionId={sessionId}
+                      selection={toolbenchSelection}
+                    />
+                  </section>
+                  <section
+                    id="info-panel-review"
+                    role="tabpanel"
+                    aria-labelledby="info-tab-review"
+                    className="info-tab-panel"
+                    hidden={activeInfoTab !== "review"}
+                  >
+                    <ReviewQueue
+                      sessionId={sessionId}
+                      selectedRecordId={selectedReviewRecordId}
+                      onSelectRecord={handleSelectReviewRecord}
+                    />
+                  </section>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <ProjectExplorer
+                sessionId={sessionId}
+                nodes={projectTree}
+                selectedFilePath={selectedFilePath}
+                onSelectFile={handleSelectFile}
+                isLoading={treeLoading}
+                error={treeError}
+              />
+              <section className="vscode-editor-column">
+                <div className="vscode-editor-tabs" role="tablist" aria-label="Open files">
+                  <button type="button" className="vscode-editor-tab active" role="tab" aria-selected="true">
+                    {fileTabLabel(selectedFilePath)}
+                  </button>
+                </div>
                 <div className="vscode-editor-stack">
                   <CodeEditorPane
                     filePath={selectedFilePath}
@@ -363,37 +444,26 @@ function WorkstationShell({ sessionId }: WorkstationShellProps): JSX.Element {
                     onNavigateToSource={handleNavigateToSource}
                   />
                 </div>
-              )}
-            </section>
-            {useTabbedWebLayout ? null : (
+              </section>
               <aside className="vscode-right-column">
                 <SecurityOverviewPanel sessionId={sessionId} />
-                {webMode ? null : (
-                  <>
-                    <ChecklistPanel sessionId={sessionId} />
-                    <AuditPlanPanel sessionId={sessionId} />
-                    <ToolbenchPanel
-                      sessionId={sessionId}
-                      selection={
-                        selectedFilePath
-                          ? { kind: "file", id: selectedFilePath }
-                          : { kind: "session", id: sessionId }
-                      }
-                    />
-                    <ReviewQueue
-                      sessionId={sessionId}
-                      selectedRecordId={selectedReviewRecordId}
-                      onSelectRecord={handleSelectReviewRecord}
-                    />
-                  </>
-                )}
+                <ChecklistPanel sessionId={sessionId} />
+                <AuditPlanPanel sessionId={sessionId} />
+                <ToolbenchPanel
+                  sessionId={sessionId}
+                  selection={toolbenchSelection}
+                />
+                <ReviewQueue
+                  sessionId={sessionId}
+                  selectedRecordId={selectedReviewRecordId}
+                  onSelectRecord={handleSelectReviewRecord}
+                />
               </aside>
-            )}
-          </>
+            </>
+          )
         )}
       </main>
-
-      <ActivityConsole sessionId={sessionId} entries={consoleEntries} />
+      {!webMode ? <ActivityConsole sessionId={sessionId} entries={consoleEntries} /> : null}
     </div>
   );
 }

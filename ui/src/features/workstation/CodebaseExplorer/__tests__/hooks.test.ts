@@ -6,6 +6,8 @@ import { useDepthControl } from "../hooks/useDepthControl";
 import { useFocusContext } from "../hooks/useFocusContext";
 import { useTrace } from "../hooks/useTrace";
 import { useUnifiedGraph } from "../hooks/useUnifiedGraph";
+import { buildFlowModel } from "../AdaptiveLayout";
+import { egoLayout } from "../ExplorerCanvas";
 import type { ExplorerGraph } from "../types";
 
 const mockTransportSubscribe = vi.fn();
@@ -132,7 +134,7 @@ describe("useUnifiedGraph", () => {
       edges: [],
     });
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
 
     expect(result.current.isLoading).toBe(true);
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -143,10 +145,24 @@ describe("useUnifiedGraph", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("requests full depth when requestFull is true", async () => {
+    mockedLoadExplorerGraph.mockResolvedValue({
+      sessionId: "s1",
+      nodes: [{ id: "crt_1", label: "mycrate", kind: "crate", childCount: 1 }],
+      edges: [],
+    });
+
+    const { result } = renderHook(() => useUnifiedGraph("s1", true));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(mockedLoadExplorerGraph).toHaveBeenCalledWith("s1", "full");
+    expect(result.current.graphDepth).toBe("full");
+  });
+
   it("sets error on API failure", async () => {
     mockedLoadExplorerGraph.mockRejectedValue(new Error("Network error"));
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).toBe("Network error");
@@ -169,7 +185,7 @@ describe("useUnifiedGraph", () => {
         edges: [{ from: "crt_1", to: "fil_1", relation: "contains" }],
       });
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => result.current.expandCluster("crt_1"));
@@ -211,7 +227,7 @@ describe("useUnifiedGraph", () => {
         ],
       });
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => result.current.expandCluster("crt_1"));
@@ -223,6 +239,25 @@ describe("useUnifiedGraph", () => {
       .filter((edge) => edge.relation === "parameter_flow")
       .map((edge) => edge.parameterName);
     expect(new Set(parameterNames)).toEqual(new Set(["msg", "sig"]));
+  });
+
+  it("records cluster errors when expansion fails", async () => {
+    mockedLoadExplorerGraph
+      .mockResolvedValueOnce({
+        sessionId: "s1",
+        nodes: [{ id: "crt_1", label: "mycrate", kind: "crate", childCount: 1 }],
+        edges: [],
+      })
+      .mockRejectedValueOnce(new Error("cluster timeout"));
+
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => result.current.expandCluster("crt_1"));
+
+    await waitFor(() => {
+      expect(result.current.clusterErrors.get("crt_1")).toBe("cluster timeout");
+    });
   });
 
   it("surfaces stale state when stale event arrives during loading", async () => {
@@ -240,7 +275,7 @@ describe("useUnifiedGraph", () => {
     });
     mockedLoadExplorerGraph.mockReturnValueOnce(overviewPromise);
 
-    const { result } = renderHook(() => useUnifiedGraph("s1"));
+    const { result } = renderHook(() => useUnifiedGraph("s1", false));
     expect(result.current.isLoading).toBe(true);
 
     act(() => {
@@ -304,32 +339,197 @@ describe("useFocusContext", () => {
 
     expect(depthTwoCount).toBeGreaterThanOrEqual(depthOneCount);
   });
+
+  it("exposes total upstream and downstream counts regardless of depth cap", () => {
+    const graph: ExplorerGraph = {
+      nodes: [
+        { id: "a", label: "a", kind: "function" },
+        { id: "b", label: "b", kind: "function" },
+        { id: "c", label: "c", kind: "function" },
+        { id: "d", label: "d", kind: "function" },
+      ],
+      edges: [
+        { from: "b", to: "a", relation: "calls" },
+        { from: "c", to: "b", relation: "calls" },
+        { from: "a", to: "d", relation: "calls" },
+      ],
+    };
+
+    const { result } = renderHook(() => useFocusContext(graph, 1));
+    act(() => result.current.focusNode("a"));
+
+    expect(result.current.upstreamIds.has("b")).toBe(true);
+    expect(result.current.upstreamIds.has("c")).toBe(false);
+
+    expect(result.current.totalUpstreamCount).toBe(2);
+    expect(result.current.totalDownstreamCount).toBe(1);
+  });
 });
 
 describe("useTrace", () => {
-  it("starts with no trace", () => {
+  it("starts with no neighborhood highlight", () => {
     const { result } = renderHook(() => useTrace(makeTestGraph(), null));
-    expect(result.current.traceResult).toBeNull();
+    expect(result.current.neighborhoodResult).toBeNull();
   });
 
-  it("tracing a parameter computes upstream path", () => {
-    const graph = makeTestGraph();
+  it("showCallers highlights the upstream calls neighborhood", () => {
+    const graph = makeTestGraph({
+      edges: [
+        { from: "sym_2", to: "sym_1", relation: "calls" },
+        { from: "sym_3", to: "sym_2", relation: "calls" },
+      ],
+      nodes: [
+        { id: "sym_1", label: "a", kind: "function" },
+        { id: "sym_2", label: "b", kind: "function" },
+        { id: "sym_3", label: "c", kind: "function" },
+      ],
+    });
     const { result } = renderHook(() => useTrace(graph, "sym_1"));
 
-    act(() => result.current.traceParameter("msg"));
+    act(() => result.current.showCallers());
 
-    expect(result.current.traceResult).not.toBeNull();
-    expect(result.current.traceResult?.direction).toBe("upstream");
-    expect(result.current.traceResult?.parameterName).toBe("msg");
+    expect(result.current.neighborhoodResult).not.toBeNull();
+    expect(result.current.neighborhoodResult?.direction).toBe("upstream");
+    expect(result.current.neighborhoodResult?.highlightedIds).toEqual(
+      new Set(["sym_1", "sym_2", "sym_3"])
+    );
   });
 
-  it("clearTrace resets result", () => {
-    const graph = makeTestGraph();
+  it("clearHighlight resets result", () => {
+    const graph = makeTestGraph({
+      edges: [{ from: "sym_1", to: "sym_2", relation: "calls" }],
+      nodes: [
+        { id: "sym_1", label: "a", kind: "function" },
+        { id: "sym_2", label: "b", kind: "function" },
+      ],
+    });
     const { result } = renderHook(() => useTrace(graph, "sym_1"));
 
-    act(() => result.current.traceParameter("msg"));
-    act(() => result.current.clearTrace());
+    act(() => result.current.showCallees());
+    act(() => result.current.clearHighlight());
 
-    expect(result.current.traceResult).toBeNull();
+    expect(result.current.neighborhoodResult).toBeNull();
+  });
+});
+
+describe("egoLayout", () => {
+  it("places the focused node at x=0 column", () => {
+    const nodes = [
+      { id: "center", type: "symbolNode" },
+      { id: "caller1", type: "symbolNode" },
+      { id: "callee1", type: "symbolNode" },
+    ] as any[];
+
+    const { positions } = egoLayout({
+      nodes,
+      focusedNodeId: "center",
+      upstreamIds: new Set(["caller1"]),
+      downstreamIds: new Set(["callee1"]),
+    });
+
+    expect(positions.get("center")?.x).toBe(0);
+    expect(positions.get("caller1")?.x).toBeLessThan(0);
+    expect(positions.get("callee1")?.x).toBeGreaterThan(0);
+  });
+
+  it("stacks multiple nodes in the same column vertically", () => {
+    const nodes = [
+      { id: "center", type: "symbolNode" },
+      { id: "c1", type: "symbolNode" },
+      { id: "c2", type: "symbolNode" },
+    ] as any[];
+
+    const { positions } = egoLayout({
+      nodes,
+      focusedNodeId: "center",
+      upstreamIds: new Set(["c1", "c2"]),
+      downstreamIds: new Set(),
+    });
+
+    expect(positions.get("c1")?.x).toBe(positions.get("c2")?.x);
+    expect(positions.get("c1")?.y).not.toBe(positions.get("c2")?.y);
+  });
+
+  it("caps each column at MAX_NODES_PER_COLUMN and returns overflow count", () => {
+    const callerIds = Array.from({ length: 10 }, (_, i) => `caller_${i}`);
+    const nodes = [
+      { id: "center", type: "symbolNode" },
+      ...callerIds.map((id) => ({ id, type: "symbolNode" })),
+    ] as any[];
+
+    const { positions, overflowCounts } = egoLayout({
+      nodes,
+      focusedNodeId: "center",
+      upstreamIds: new Set(callerIds),
+      downstreamIds: new Set(),
+      returnOverflow: true,
+    });
+
+    const upstreamRendered = [...positions.keys()].filter((id) => callerIds.includes(id));
+    expect(upstreamRendered.length).toBe(8);
+    expect(overflowCounts?.upstream).toBe(2);
+  });
+});
+
+describe("buildFlowModel in focus mode", () => {
+  const graph: ExplorerGraph = {
+    nodes: [
+      { id: "fn_a", label: "fn_a", kind: "function" },
+      { id: "fn_b", label: "fn_b", kind: "function" },
+      { id: "fn_c", label: "fn_c", kind: "function" },
+      { id: "fn_d", label: "fn_d", kind: "function" },
+    ],
+    edges: [
+      { from: "fn_b", to: "fn_a", relation: "calls" },
+      { from: "fn_a", to: "fn_c", relation: "calls" },
+    ],
+  };
+
+  const baseConfig = {
+    resolvedGranularity: "files" as const,
+    expandedClusters: new Set<string>(),
+    neighborhoodResult: null,
+    matchingNodeIds: null,
+  };
+
+  it("includes only ego-graph nodes when stateKind is focus", () => {
+    const { nodes } = buildFlowModel(graph, {
+      ...baseConfig,
+      stateKind: "focus",
+      focusedNodeId: "fn_a",
+      upstreamIds: new Set(["fn_b"]),
+      downstreamIds: new Set(["fn_c"]),
+    });
+
+    const ids = nodes.map((node) => node.id);
+    expect(ids).toContain("fn_a");
+    expect(ids).toContain("fn_b");
+    expect(ids).toContain("fn_c");
+    expect(ids).not.toContain("fn_d");
+  });
+
+  it("includes all nodes when stateKind is overview", () => {
+    const { nodes } = buildFlowModel(graph, {
+      ...baseConfig,
+      stateKind: "overview",
+      focusedNodeId: null,
+      upstreamIds: new Set(),
+      downstreamIds: new Set(),
+    });
+
+    expect(nodes.map((node) => node.id)).toContain("fn_d");
+  });
+
+  it("marks the focused node with explorer-ego-center class", () => {
+    const { nodes } = buildFlowModel(graph, {
+      ...baseConfig,
+      stateKind: "focus",
+      focusedNodeId: "fn_a",
+      upstreamIds: new Set(["fn_b"]),
+      downstreamIds: new Set(["fn_c"]),
+    });
+
+    const center = nodes.find((node) => node.id === "fn_a");
+    expect(center?.className).toContain("explorer-ego-center");
   });
 });

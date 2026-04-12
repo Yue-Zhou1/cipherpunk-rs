@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("reactflow", () => ({
@@ -8,6 +8,7 @@ vi.mock("reactflow", () => ({
 
 vi.mock("../ExplorerContext", () => ({
   useExplorer: () => ({
+    clusterErrors: new Map<string, string>(),
     loadingClusters: new Set<string>(),
   }),
 }));
@@ -45,7 +46,7 @@ describe("ClusterNode", () => {
 
 describe("FileNode", () => {
   it("renders filename", () => {
-    render(<FileNode data={{ label: "sig.rs", language: "rust" }} />);
+    render(<FileNode data={{ label: "sig.rs" }} />);
     expect(screen.getByText("sig.rs")).toBeTruthy();
   });
 });
@@ -56,6 +57,7 @@ describe("SymbolNode", () => {
       <SymbolNode
         data={{
           label: "verify_signature",
+          kind: "function",
           signature: {
             parameters: [
               { name: "msg", typeAnnotation: "&[u8]", position: 0 },
@@ -63,8 +65,6 @@ describe("SymbolNode", () => {
             ],
             returnType: "Result<bool>",
           },
-          onParameterClick: () => {},
-          onReturnClick: () => {},
         }}
       />
     );
@@ -74,41 +74,20 @@ describe("SymbolNode", () => {
     expect(screen.getByText("Result<bool>")).toBeTruthy();
   });
 
-  it("calls onParameterClick when a parameter is clicked", () => {
-    const onClick = vi.fn();
+  it("renders signature elements as read-only", () => {
     render(
       <SymbolNode
         data={{
           label: "hash",
+          kind: "function",
           signature: {
             parameters: [{ name: "data", typeAnnotation: "&[u8]", position: 0 }],
             returnType: "Hash",
           },
-          onParameterClick: onClick,
-          onReturnClick: () => {},
         }}
       />
     );
-    fireEvent.click(screen.getByText("data"));
-    expect(onClick).toHaveBeenCalledWith("data");
-  });
-
-  it("calls onReturnClick when return type is clicked", () => {
-    const onClick = vi.fn();
-    render(
-      <SymbolNode
-        data={{
-          label: "hash",
-          signature: {
-            parameters: [],
-            returnType: "Hash",
-          },
-          onParameterClick: () => {},
-          onReturnClick: onClick,
-        }}
-      />
-    );
-    fireEvent.click(screen.getByText("Hash"));
-    expect(onClick).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "data" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hash" })).toBeNull();
   });
 });

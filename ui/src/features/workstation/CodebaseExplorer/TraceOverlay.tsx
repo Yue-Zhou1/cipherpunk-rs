@@ -1,28 +1,24 @@
 import { useExplorer } from "./ExplorerContext";
 
 export function TraceOverlay() {
-  const { focusNode, nodeMap, stateKind, traceResult } = useExplorer();
+  const { clearHighlight, neighborhoodResult } = useExplorer();
 
-  if (stateKind !== "trace" || !traceResult) {
+  if (!neighborhoodResult) {
     return null;
   }
+
+  const highlightedCount = Math.max(0, neighborhoodResult.highlightedIds.size - 1);
 
   return (
     <div className="explorer-trace-breadcrumbs" aria-live="polite">
       <span className="explorer-trace-label">
-        {traceResult.direction === "upstream" ? "Origin trace" : "Destination trace"}
-        {traceResult.parameterName ? `: ${traceResult.parameterName}` : ""}
+        {`Showing ${highlightedCount} ${
+          neighborhoodResult.direction === "upstream" ? "callers" : "callees"
+        }`}
       </span>
-      <div className="explorer-trace-path">
-        {traceResult.path.map((nodeId, index) => (
-          <span key={nodeId}>
-            {index > 0 ? <span className="explorer-trace-arrow"> -&gt; </span> : null}
-            <button className="explorer-trace-step" onClick={() => focusNode(nodeId)} type="button">
-              {nodeMap.get(nodeId)?.label ?? nodeId}
-            </button>
-          </span>
-        ))}
-      </div>
+      <button className="explorer-trace-step" onClick={clearHighlight} type="button">
+        Clear
+      </button>
     </div>
   );
 }

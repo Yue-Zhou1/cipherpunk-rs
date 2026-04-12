@@ -176,6 +176,39 @@ describe("CodebaseExplorer", () => {
     expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", undefined, "mod_002");
   });
 
+  it("shows ego banner with node name and counts when a node is focused", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    fireEvent.click(await screen.findByText("verify_signature"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ego-banner")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/← overview/i)).toBeInTheDocument();
+    expect(screen.getByText(/callers:/i)).toBeInTheDocument();
+    expect(screen.getByText(/callees:/i)).toBeInTheDocument();
+  });
+
+  it("returns to overview when ego banner back button is clicked", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    fireEvent.click(await screen.findByText("verify_signature"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/← overview/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText(/← overview/i));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/← overview/i)).not.toBeInTheDocument();
+      expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
+    });
+  });
+
   it("Esc returns from focus to overview", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
@@ -193,7 +226,7 @@ describe("CodebaseExplorer", () => {
     });
   });
 
-  it("transitions OVERVIEW -> FOCUS -> TRACE and Esc returns to FOCUS", async () => {
+  it("shows neighborhood highlight summary and Esc clears highlight", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
@@ -204,17 +237,17 @@ describe("CodebaseExplorer", () => {
       expect(screen.getByLabelText("Node context")).toBeInTheDocument();
     });
 
-    fireEvent.click(await screen.findByTitle("Trace origin of msg"));
+    fireEvent.click(await screen.findByRole("button", { name: /show callees/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("TRACE")).toBeInTheDocument();
+      expect(screen.getByText(/highlighting/i)).toBeInTheDocument();
     });
 
     fireEvent.keyDown(window, { key: "Escape" });
 
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
-      expect(screen.queryByText("TRACE")).toBeNull();
+      expect(screen.queryByText(/highlighting/i)).toBeNull();
     });
   });
 });

@@ -30,11 +30,7 @@ export function useFocusContext(graph: ExplorerGraph, depth: number) {
     const downstream = new Map<string, string[]>();
 
     for (const edge of graph.edges) {
-      if (
-        edge.relation !== "calls" &&
-        edge.relation !== "parameter_flow" &&
-        edge.relation !== "return_flow"
-      ) {
+      if (edge.relation !== "calls") {
         continue;
       }
 
@@ -66,6 +62,20 @@ export function useFocusContext(graph: ExplorerGraph, depth: number) {
     return bfsNeighbors(focusedNodeId, downstreamAdjacency, depth);
   }, [depth, downstreamAdjacency, focusedNodeId]);
 
+  const totalUpstreamCount = useMemo(() => {
+    if (!focusedNodeId) {
+      return 0;
+    }
+    return bfsNeighbors(focusedNodeId, upstreamAdjacency, Infinity).size;
+  }, [focusedNodeId, upstreamAdjacency]);
+
+  const totalDownstreamCount = useMemo(() => {
+    if (!focusedNodeId) {
+      return 0;
+    }
+    return bfsNeighbors(focusedNodeId, downstreamAdjacency, Infinity).size;
+  }, [downstreamAdjacency, focusedNodeId]);
+
   const stateKind: ExplorerStateKind = focusedNodeId ? "focus" : "overview";
 
   const focusNode = useCallback((nodeId: string) => {
@@ -81,6 +91,8 @@ export function useFocusContext(graph: ExplorerGraph, depth: number) {
     focusedNodeId,
     upstreamIds,
     downstreamIds,
+    totalUpstreamCount,
+    totalDownstreamCount,
     focusNode,
     clearFocus,
   };

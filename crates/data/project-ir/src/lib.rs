@@ -66,6 +66,7 @@ pub trait LanguageMapper {
 pub struct ProjectIrBuilder {
     root: PathBuf,
     allow_value_previews: bool,
+    target_crates: Vec<String>,
 }
 
 impl ProjectIrBuilder {
@@ -73,6 +74,7 @@ impl ProjectIrBuilder {
         Self {
             root: path.as_ref().to_path_buf(),
             allow_value_previews: false,
+            target_crates: vec![],
         }
     }
 
@@ -81,8 +83,21 @@ impl ProjectIrBuilder {
         self
     }
 
+    /// Restrict the IR to only the named crates. An empty list means "all crates".
+    pub fn with_target_crates(mut self, crates: Vec<String>) -> Self {
+        self.target_crates = crates;
+        self
+    }
+
     pub async fn build(self) -> Result<ProjectIr> {
-        let workspace = workspace_from_path(&self.root)?;
+        let mut workspace = workspace_from_path(&self.root)?;
+        if !self.target_crates.is_empty() {
+            let targets: std::collections::HashSet<&str> =
+                self.target_crates.iter().map(String::as_str).collect();
+            workspace
+                .members
+                .retain(|m| targets.contains(m.name.as_str()));
+        }
         let mut ir = ProjectIr::default();
         let mappers: Vec<Box<dyn LanguageMapper>> = vec![
             Box::new(RustMapper),

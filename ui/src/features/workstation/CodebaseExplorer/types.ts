@@ -50,37 +50,43 @@ export type ExplorerGraph = {
 
 export type GranularityLevel = "auto" | "files" | "modules" | "crates";
 
-export type ExplorerStateKind = "overview" | "focus" | "trace";
+export type ExplorerStateKind = "overview" | "focus" | "highlight";
 
 export type TraceDirection = "upstream" | "downstream";
 
-export type TraceResult = {
-  path: string[];
+export type NeighborhoodResult = {
+  highlightedIds: Set<string>;
   direction: TraceDirection;
-  parameterName?: string;
 };
 
 export type ExplorerContextValue = {
+  sessionId: string;
   graph: ExplorerGraph;
   stateKind: ExplorerStateKind;
   nodeMap: Map<string, ExplorerNode>;
   isLoading: boolean;
   loadingClusters: Set<string>;
+  loadedClusters: Set<string>;
+  clusterErrors: Map<string, string>;
   error: string | null;
   isStale: boolean;
   expandCluster: (clusterId: string) => void;
   reload: () => void;
+  graphDepth: "overview" | "full";
+  hasLoadedOverview: boolean;
 
   focusedNodeId: string | null;
   upstreamIds: Set<string>;
   downstreamIds: Set<string>;
+  totalUpstreamCount: number;
+  totalDownstreamCount: number;
   focusNode: (nodeId: string) => void;
   clearFocus: () => void;
 
-  traceResult: TraceResult | null;
-  traceParameter: (parameterName: string) => void;
-  traceReturn: () => void;
-  clearTrace: () => void;
+  neighborhoodResult: NeighborhoodResult | null;
+  showCallers: () => void;
+  showCallees: () => void;
+  clearHighlight: () => void;
 
   depth: number;
   setDepth: (depth: number) => void;
@@ -94,11 +100,10 @@ export type ExplorerContextValue = {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   matchingNodeIds: Set<string> | null;
+  searchHint: string | null;
 
   expandedClusters: Set<string>;
   toggleCluster: (clusterId: string) => void;
-
-  deadEndMessage: string | null;
 
   onNavigateToSource?: (filePath: string, line?: number) => void;
 };

@@ -130,6 +130,24 @@ describe("App layout shell", () => {
           } as T;
         case "load_checklist_plan":
           return { sessionId: "sess-web", domains: [] } as T;
+        case "load_audit_plan":
+          return {
+            sessionId: "sess-web",
+            planId: "plan-web",
+            overview: {
+              assets: [],
+              trustBoundaries: [],
+              hotspots: [],
+            },
+            domains: [],
+            recommendedTools: [],
+            engines: {
+              cryptoZk: false,
+              distributed: false,
+            },
+            rationale: "No audit plan generated yet.",
+            createdAt: "2026-04-10T00:00:00Z",
+          } as T;
         case "load_toolbench_context":
           return {
             sessionId: "sess-web",

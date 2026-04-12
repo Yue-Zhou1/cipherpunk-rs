@@ -1,114 +1,85 @@
 import { useCallback, useState } from "react";
 
-import type { ExplorerGraph, TraceResult } from "../types";
+import type { ExplorerEdge, ExplorerGraph, NeighborhoodResult } from "../types";
 
-function bfsTracePath(
-  startId: string,
-  graph: ExplorerGraph,
-  parameterName: string | null,
+function buildAdjacency(
+  edges: ExplorerEdge[],
   direction: "upstream" | "downstream"
-): string[] | null {
-  const parentMap = new Map<string, string>();
+): Map<string, string[]> {
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (edge.relation !== "calls") {
+      continue;
+    }
+    const key = direction === "upstream" ? edge.to : edge.from;
+    const value = direction === "upstream" ? edge.from : edge.to;
+    if (!adjacency.has(key)) {
+      adjacency.set(key, []);
+    }
+    adjacency.get(key)?.push(value);
+  }
+  return adjacency;
+}
+
+function bfsNeighborhood(startId: string, adjacency: Map<string, string[]>): Set<string> {
   const visited = new Set<string>([startId]);
   let frontier = [startId];
-  let deepestNode = startId;
 
   while (frontier.length > 0) {
     const next: string[] = [];
-    for (const current of frontier) {
-      for (const edge of graph.edges) {
-        const isRelevant =
-          direction === "upstream"
-            ? edge.to === current &&
-              (edge.relation === "parameter_flow" || edge.relation === "calls")
-            : edge.from === current &&
-              (edge.relation === "return_flow" || edge.relation === "calls");
-
-        if (!isRelevant) {
-          continue;
-        }
-
-        if (
-          direction === "upstream" &&
-          parameterName &&
-          edge.relation === "parameter_flow" &&
-          edge.parameterName !== parameterName
-        ) {
-          continue;
-        }
-
-        const neighbor = direction === "upstream" ? edge.from : edge.to;
+    for (const nodeId of frontier) {
+      for (const neighbor of adjacency.get(nodeId) ?? []) {
         if (visited.has(neighbor)) {
           continue;
         }
-
         visited.add(neighbor);
-        parentMap.set(neighbor, current);
         next.push(neighbor);
-        deepestNode = neighbor;
       }
     }
     frontier = next;
   }
 
-  if (deepestNode === startId) {
-    return null;
-  }
-
-  const path: string[] = [];
-  let current: string | undefined = deepestNode;
-  while (current !== undefined) {
-    path.push(current);
-    current = parentMap.get(current);
-  }
-
-  return direction === "upstream" ? path : path.reverse();
+  return visited;
 }
 
 export function useTrace(graph: ExplorerGraph, focusedNodeId: string | null) {
-  const [traceResult, setTraceResult] = useState<TraceResult | null>(null);
+  const [neighborhoodResult, setNeighborhoodResult] = useState<NeighborhoodResult | null>(null);
 
-  const traceParameter = useCallback(
-    (parameterName: string) => {
-      if (!focusedNodeId) {
-        return;
-      }
-
-      const path = bfsTracePath(focusedNodeId, graph, parameterName, "upstream");
-      if (!path) {
-        setTraceResult(null);
-        return;
-      }
-
-      setTraceResult({
-        path,
-        direction: "upstream",
-        parameterName,
-      });
-    },
-    [focusedNodeId, graph]
-  );
-
-  const traceReturn = useCallback(() => {
+  const showCallers = useCallback(() => {
     if (!focusedNodeId) {
       return;
     }
-
-    const path = bfsTracePath(focusedNodeId, graph, null, "downstream");
-    if (!path) {
-      setTraceResult(null);
+    const adjacency = buildAdjacency(graph.edges, "upstream");
+    const reachable = bfsNeighborhood(focusedNodeId, adjacency);
+    if (reachable.size <= 1) {
+      setNeighborhoodResult(null);
       return;
     }
+    setNeighborhoodResult({
+      highlightedIds: reachable,
+      direction: "upstream",
+    });
+  }, [focusedNodeId, graph.edges]);
 
-    setTraceResult({
-      path,
+  const showCallees = useCallback(() => {
+    if (!focusedNodeId) {
+      return;
+    }
+    const adjacency = buildAdjacency(graph.edges, "downstream");
+    const reachable = bfsNeighborhood(focusedNodeId, adjacency);
+    if (reachable.size <= 1) {
+      setNeighborhoodResult(null);
+      return;
+    }
+    setNeighborhoodResult({
+      highlightedIds: reachable,
       direction: "downstream",
     });
-  }, [focusedNodeId, graph]);
+  }, [focusedNodeId, graph.edges]);
 
-  const clearTrace = useCallback(() => {
-    setTraceResult(null);
+  const clearHighlight = useCallback(() => {
+    setNeighborhoodResult(null);
   }, []);
 
-  return { traceResult, traceParameter, traceReturn, clearTrace };
+  return { neighborhoodResult, showCallers, showCallees, clearHighlight };
 }

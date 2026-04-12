@@ -3,7 +3,6 @@ import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  type Edge,
   type Node,
   type ReactFlowInstance,
 } from "reactflow";
@@ -15,6 +14,7 @@ import { useExplorer } from "./ExplorerContext";
 import { ClusterNode } from "./nodes/ClusterNode";
 import { FileNode } from "./nodes/FileNode";
 import { SymbolNode } from "./nodes/SymbolNode";
+import { NodeContextMenu } from "./NodeContextMenu";
 
 const elk = new ELK();
 
@@ -24,7 +24,75 @@ const nodeTypes = {
   symbolNode: SymbolNode,
 };
 
-async function layoutWithElk(nodes: Node[], edges: Edge[]): Promise<{ nodes: Node[]; edges: Edge[] }> {
+const COLUMN_WIDTH = 380;
+const ROW_HEIGHT = 100;
+const MAX_NODES_PER_COLUMN = 8;
+
+type EgoLayoutInput = {
+  nodes: Node[];
+  focusedNodeId: string;
+  upstreamIds: Set<string>;
+  downstreamIds: Set<string>;
+  returnOverflow?: boolean;
+};
+
+type EgoLayoutResult = {
+  positions: Map<string, { x: number; y: number }>;
+  overflowCounts?: { upstream: number; downstream: number };
+};
+
+export function egoLayout({
+  nodes,
+  focusedNodeId,
+  upstreamIds,
+  downstreamIds,
+  returnOverflow = false,
+}: EgoLayoutInput): EgoLayoutResult {
+  const positions = new Map<string, { x: number; y: number }>();
+
+  const focusedNode = nodes.find((node) => node.id === focusedNodeId);
+  if (focusedNode) {
+    positions.set(focusedNodeId, { x: 0, y: 0 });
+  }
+
+  const upstreamNodes = nodes.filter((node) => upstreamIds.has(node.id));
+  const downstreamNodes = nodes.filter((node) => downstreamIds.has(node.id));
+
+  const upstreamVisible = upstreamNodes.slice(0, MAX_NODES_PER_COLUMN);
+  const downstreamVisible = downstreamNodes.slice(0, MAX_NODES_PER_COLUMN);
+
+  const upstreamOverflow = upstreamNodes.length - upstreamVisible.length;
+  const downstreamOverflow = downstreamNodes.length - downstreamVisible.length;
+
+  upstreamVisible.forEach((node, index) => {
+    const totalRows = upstreamVisible.length;
+    const y = (index - (totalRows - 1) / 2) * ROW_HEIGHT;
+    positions.set(node.id, { x: -COLUMN_WIDTH, y });
+  });
+
+  downstreamVisible.forEach((node, index) => {
+    const totalRows = downstreamVisible.length;
+    const y = (index - (totalRows - 1) / 2) * ROW_HEIGHT;
+    positions.set(node.id, { x: COLUMN_WIDTH, y });
+  });
+
+  if (returnOverflow) {
+    return {
+      positions,
+      overflowCounts: {
+        upstream: upstreamOverflow,
+        downstream: downstreamOverflow,
+      },
+    };
+  }
+
+  return { positions };
+}
+
+async function layoutWithElk(
+  nodes: Node[],
+  edges: Array<{ id: string; source: string; target: string }>
+): Promise<Node[]> {
   const layout = await elk.layout({
     id: "root",
     layoutOptions: {
@@ -50,22 +118,20 @@ async function layoutWithElk(nodes: Node[], edges: Edge[]): Promise<{ nodes: Nod
     (layout.children ?? []).map((child) => [child.id, { x: child.x ?? 0, y: child.y ?? 0 }])
   );
 
-  return {
-    nodes: nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? { x: 0, y: 0 } })),
-    edges,
-  };
+  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? { x: 0, y: 0 } }));
 }
 
 export function ExplorerCanvas() {
   const ctx = useExplorer();
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
-  const flowRef = useRef<ReactFlowInstance | null>(null);
-
-  const tracePathIds = useMemo(
-    () => (ctx.traceResult ? new Set(ctx.traceResult.path) : null),
-    [ctx.traceResult]
+  const [positionByNodeId, setPositionByNodeId] = useState<Map<string, { x: number; y: number }>>(
+    new Map()
   );
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+  } | null>(null);
+  const flowRef = useRef<ReactFlowInstance | null>(null);
 
   const flowModel = useMemo(
     () =>
@@ -75,7 +141,7 @@ export function ExplorerCanvas() {
         focusedNodeId: ctx.focusedNodeId,
         upstreamIds: ctx.upstreamIds,
         downstreamIds: ctx.downstreamIds,
-        tracePathIds,
+        neighborhoodResult: ctx.neighborhoodResult,
         matchingNodeIds: ctx.matchingNodeIds,
         stateKind: ctx.stateKind,
       }),
@@ -86,50 +152,71 @@ export function ExplorerCanvas() {
       ctx.focusedNodeId,
       ctx.upstreamIds,
       ctx.downstreamIds,
-      tracePathIds,
+      ctx.neighborhoodResult,
       ctx.matchingNodeIds,
       ctx.stateKind,
     ]
   );
 
-  const nodesWithCallbacks = useMemo(
-    () =>
-      flowModel.nodes.map((node) => {
-        if (node.type !== "symbolNode") {
-          return node;
-        }
+  const topologyKey = useMemo(() => {
+    const nodeIds = flowModel.nodes.map((node) => node.id).sort().join(",");
+    const edgeIds = flowModel.edges.map((edge) => edge.id).sort().join(",");
+    return `${nodeIds}|${edgeIds}`;
+  }, [flowModel.edges, flowModel.nodes]);
 
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            onParameterClick: ctx.traceParameter,
-            onReturnClick: ctx.traceReturn,
+  const renderedNodes = useMemo(
+    () =>
+      flowModel.nodes.map((node, index) => ({
+        ...node,
+        position:
+          positionByNodeId.get(node.id) ?? {
+            x: (index % 5) * 320,
+            y: Math.floor(index / 5) * 120,
           },
-        };
-      }),
-    [ctx.traceParameter, ctx.traceReturn, flowModel.nodes]
+      })),
+    [flowModel.nodes, positionByNodeId]
   );
 
   useEffect(() => {
-    void layoutWithElk(nodesWithCallbacks, flowModel.edges)
-      .then((result) => {
-        setNodes(result.nodes);
-        setEdges(result.edges);
+    if (ctx.stateKind === "focus" && ctx.focusedNodeId) {
+      const { positions } = egoLayout({
+        nodes: flowModel.nodes,
+        focusedNodeId: ctx.focusedNodeId,
+        upstreamIds: ctx.upstreamIds,
+        downstreamIds: ctx.downstreamIds,
+      });
+      setPositionByNodeId(positions);
+      requestAnimationFrame(() => {
+        flowRef.current?.fitView?.({ padding: 0.2 });
+      });
+      return;
+    }
+
+    void layoutWithElk(flowModel.nodes, flowModel.edges)
+      .then((positionedNodes) => {
+        setPositionByNodeId(new Map(positionedNodes.map((node) => [node.id, node.position])));
+        requestAnimationFrame(() => {
+          flowRef.current?.fitView?.({ padding: 0.16 });
+        });
       })
       .catch(() => {
-        setNodes(
-          nodesWithCallbacks.map((node, index) => ({
-            ...node,
-            position: { x: (index % 5) * 320, y: Math.floor(index / 5) * 120 },
-          }))
+        setPositionByNodeId(
+          new Map(
+            flowModel.nodes.map((node, index) => [
+              node.id,
+              { x: (index % 5) * 320, y: Math.floor(index / 5) * 120 },
+            ])
+          )
         );
-        setEdges(flowModel.edges);
+        requestAnimationFrame(() => {
+          flowRef.current?.fitView?.({ padding: 0.16 });
+        });
       });
-  }, [flowModel.edges, nodesWithCallbacks]);
+  }, [topologyKey, ctx.stateKind, ctx.focusedNodeId, ctx.upstreamIds, ctx.downstreamIds]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
+      setContextMenu(null);
       if (node.type === "clusterNode") {
         ctx.expandCluster(node.id);
         ctx.toggleCluster(node.id);
@@ -140,12 +227,24 @@ export function ExplorerCanvas() {
     [ctx]
   );
 
+  const handleNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      ctx.focusNode(node.id);
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: node.id,
+      });
+    },
+    [ctx]
+  );
+
   const handlePaneClick = useCallback(() => {
-    if (ctx.stateKind === "trace") {
-      ctx.clearTrace();
-      return;
-    }
-    if (ctx.stateKind === "focus") {
+    setContextMenu(null);
+    if (ctx.neighborhoodResult) {
+      ctx.clearHighlight();
+    } else if (ctx.stateKind === "focus") {
       ctx.clearFocus();
     }
   }, [ctx]);
@@ -155,8 +254,9 @@ export function ExplorerCanvas() {
       if (event.key !== "Escape") {
         return;
       }
-      if (ctx.stateKind === "trace") {
-        ctx.clearTrace();
+      setContextMenu(null);
+      if (ctx.neighborhoodResult) {
+        ctx.clearHighlight();
       } else if (ctx.stateKind === "focus") {
         ctx.clearFocus();
       }
@@ -169,8 +269,8 @@ export function ExplorerCanvas() {
   return (
     <div className="explorer-canvas" aria-label="Codebase graph">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={renderedNodes}
+        edges={flowModel.edges}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.16 }}
@@ -181,12 +281,46 @@ export function ExplorerCanvas() {
           flowRef.current = instance;
         }}
         onNodeClick={handleNodeClick}
+        onNodeContextMenu={handleNodeContextMenu}
         onPaneClick={handlePaneClick}
       >
         <Background color="#2f3845" gap={20} size={1} />
         <Controls position="top-right" />
         <MiniMap position="bottom-right" zoomable pannable />
       </ReactFlow>
+      {contextMenu ? (
+        <NodeContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          nodeId={contextMenu.nodeId}
+          hasFilePath={!!ctx.nodeMap.get(contextMenu.nodeId)?.filePath}
+          isFocused={ctx.focusedNodeId === contextMenu.nodeId}
+          onShowCallers={() => {
+            ctx.showCallers();
+            setContextMenu(null);
+          }}
+          onShowCallees={() => {
+            ctx.showCallees();
+            setContextMenu(null);
+          }}
+          onOpenInEditor={() => {
+            const node = ctx.nodeMap.get(contextMenu.nodeId);
+            if (node?.filePath) {
+              ctx.onNavigateToSource?.(node.filePath, node.line);
+            }
+            setContextMenu(null);
+          }}
+          onToggleFocus={() => {
+            if (ctx.focusedNodeId === contextMenu.nodeId) {
+              ctx.clearFocus();
+            } else {
+              ctx.focusNode(contextMenu.nodeId);
+            }
+            setContextMenu(null);
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }

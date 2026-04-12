@@ -163,29 +163,83 @@ describe("WorkstationShell", () => {
     expect(selectFileSpy).not.toHaveBeenCalled();
   });
 
-  it("uses Code/Graph/Security tabs in http mode", () => {
+  it("shows graph view by default in http mode", () => {
     transportKind = "http";
     render(<WorkstationShell sessionId="sess-1" />);
 
-    expect(screen.getByRole("tab", { name: /^code$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^graph$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^security$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /audit plan/i })).toBeInTheDocument();
-
-    expect(screen.queryByTestId("codebase-explorer-state")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
     expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /code editor/i })).not.toBeInTheDocument();
   });
 
-  it("switches to code tab and forwards line when graph navigation is requested in http mode", () => {
+  it("updates source selection from graph navigation while keeping graph view active in http mode", () => {
     transportKind = "http";
     render(<WorkstationShell sessionId="sess-1" />);
+    const graphView = screen.getByTestId("workstation-view-graph");
+    const editorView = screen.getByTestId("workstation-view-editor");
 
-    fireEvent.click(screen.getByRole("tab", { name: /^graph$/i }));
+    expect(graphView).not.toHaveAttribute("hidden");
+    expect(editorView).toHaveAttribute("hidden");
     fireEvent.click(screen.getByRole("button", { name: /navigate from graph/i }));
 
     expect(selectFileSpy).toHaveBeenCalledWith("rollup-core/src/lib.rs");
-    expect(screen.getByRole("tab", { name: /^code$/i })).toHaveAttribute("aria-selected", "true");
+    expect(graphView).not.toHaveAttribute("hidden");
+    expect(editorView).toHaveAttribute("hidden");
+    // JSDOM has no layout engine, so hidden view subtrees remain queryable in tests.
     expect(screen.getByTestId("code-editor-state")).toHaveTextContent("none@12");
+  });
+});
+
+describe("WorkstationShell web mode view switching", () => {
+  beforeEach(() => {
+    transportKind = "http";
+    selectFileSpy.mockClear();
+  });
+
+  it("defaults to graph view showing codebase explorer", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    expect(screen.getByTestId("codebase-explorer-state")).toBeInTheDocument();
+  });
+
+  it("switches to editor view when Editor button is clicked", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    const graphView = screen.getByTestId("workstation-view-graph");
+    const editorView = screen.getByTestId("workstation-view-editor");
+    expect(graphView).not.toHaveAttribute("hidden");
+    expect(editorView).toHaveAttribute("hidden");
+    fireEvent.click(screen.getByRole("button", { name: /^editor$/i }));
+    expect(graphView).toHaveAttribute("hidden");
+    expect(editorView).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("heading", { name: /code editor/i })).toBeInTheDocument();
+  });
+
+  it("marks the active activity button with aria-pressed", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    const graphButton = screen.getByRole("button", { name: /^graph$/i });
+    const editorButton = screen.getByRole("button", { name: /^editor$/i });
+    const infoButton = screen.getByRole("button", { name: /^info$/i });
+
+    expect(graphButton).toHaveAttribute("aria-pressed", "true");
+    expect(editorButton).toHaveAttribute("aria-pressed", "false");
+    expect(infoButton).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(editorButton);
+    expect(graphButton).toHaveAttribute("aria-pressed", "false");
+    expect(editorButton).toHaveAttribute("aria-pressed", "true");
+    expect(infoButton).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("switches to info view with tab-to-tabpanel aria wiring", () => {
+    render(<WorkstationShell sessionId="sess-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^info$/i }));
+
+    const overviewTab = screen.getByRole("tab", { name: /security overview/i });
+    expect(overviewTab).toHaveAttribute("id", "info-tab-overview");
+    expect(overviewTab).toHaveAttribute("aria-controls", "info-panel-overview");
+    const overviewPanel = screen.getByRole("tabpanel", { name: /security overview/i });
+    expect(overviewPanel).toHaveAttribute("id", "info-panel-overview");
+    expect(overviewPanel).toHaveAttribute("aria-labelledby", "info-tab-overview");
+
+    fireEvent.click(screen.getByRole("tab", { name: /checklist/i }));
+    expect(screen.getByRole("tabpanel", { name: /checklist/i })).toBeInTheDocument();
+    expect(document.getElementById("info-panel-overview")).toHaveAttribute("hidden");
   });
 });

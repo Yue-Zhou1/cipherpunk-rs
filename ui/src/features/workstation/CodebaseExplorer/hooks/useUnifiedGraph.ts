@@ -43,13 +43,19 @@ function toExplorerEdge(edge: ExplorerEdgeResponse): ExplorerEdge {
   };
 }
 
-function edgeIdentity(edge: Pick<ExplorerEdgeResponse, "from" | "to" | "relation" | "parameterName" | "parameterPosition">): string {
+function edgeIdentity(
+  edge: Pick<
+    ExplorerEdgeResponse,
+    "from" | "to" | "relation" | "parameterName" | "parameterPosition" | "valuePreview"
+  >
+): string {
   return [
     edge.from,
     edge.to,
     edge.relation,
     edge.parameterName ?? "",
     edge.parameterPosition ?? "",
+    edge.valuePreview ?? "",
   ].join("->");
 }
 
@@ -70,22 +76,30 @@ function mergeClusterData(current: ExplorerGraph, expansion: ExplorerGraphRespon
   };
 }
 
-export function useUnifiedGraph(sessionId: string): {
+export function useUnifiedGraph(sessionId: string, requestFull: boolean): {
   graph: ExplorerGraph;
   nodeMap: Map<string, ExplorerNode>;
   isLoading: boolean;
   loadingClusters: Set<string>;
+  loadedClusters: Set<string>;
+  clusterErrors: Map<string, string>;
   error: string | null;
   isStale: boolean;
   expandCluster: (clusterId: string) => void;
   reload: () => void;
+  graphDepth: "overview" | "full";
+  hasLoadedOverview: boolean;
 } {
   const [graph, setGraph] = useState<ExplorerGraph>(EMPTY_GRAPH);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingClusters, setLoadingClusters] = useState<Set<string>>(new Set());
   const [loadedClusters, setLoadedClusters] = useState<Set<string>>(new Set());
+  const [clusterErrors, setClusterErrors] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [isStale, setIsStale] = useState(false);
+  const [graphDepth, setGraphDepth] = useState<"overview" | "full">("overview");
+  const [hasLoadedOverview, setHasLoadedOverview] = useState(false);
+  const previousSessionIdRef = useRef<string | null>(null);
   const generationRef = useRef(0);
 
   const nodeMap = useMemo(() => {
@@ -96,35 +110,62 @@ export function useUnifiedGraph(sessionId: string): {
     return map;
   }, [graph.nodes]);
 
-  useEffect(() => {
-    const generation = ++generationRef.current;
-    setIsLoading(true);
-    setError(null);
-    setGraph(EMPTY_GRAPH);
-    setLoadingClusters(new Set());
-    setLoadedClusters(new Set());
-    setIsStale(false);
-
-    void loadExplorerGraph(sessionId, "overview").then(
-      (response) => {
-        if (generation !== generationRef.current) {
-          return;
-        }
-        setGraph({
-          nodes: response.nodes.map(toExplorerNode),
-          edges: response.edges.map(toExplorerEdge),
-        });
-        setIsLoading(false);
-      },
-      (loadError) => {
-        if (generation !== generationRef.current) {
-          return;
-        }
-        setError(loadError instanceof Error ? loadError.message : "Failed to load graph");
-        setIsLoading(false);
+  const loadBaseGraph = useCallback(
+    (depth: "overview" | "full", resetGraph: boolean) => {
+      const generation = ++generationRef.current;
+      setIsLoading(true);
+      setError(null);
+      setLoadingClusters(new Set());
+      setLoadedClusters(new Set());
+      setClusterErrors(new Map());
+      setIsStale(false);
+      if (resetGraph) {
+        setGraph(EMPTY_GRAPH);
       }
-    );
-  }, [sessionId]);
+
+      void loadExplorerGraph(sessionId, depth).then(
+        (response) => {
+          if (generation !== generationRef.current) {
+            return;
+          }
+          if (!response || !Array.isArray(response.nodes) || !Array.isArray(response.edges)) {
+            setError("Failed to load graph");
+            setIsLoading(false);
+            return;
+          }
+          setGraph({
+            nodes: response.nodes.map(toExplorerNode),
+            edges: response.edges.map(toExplorerEdge),
+          });
+          setGraphDepth(depth);
+          if (depth === "overview") {
+            setHasLoadedOverview(true);
+          }
+          setIsLoading(false);
+        },
+        (loadError) => {
+          if (generation !== generationRef.current) {
+            return;
+          }
+          setError(loadError instanceof Error ? loadError.message : "Failed to load graph");
+          setIsLoading(false);
+        }
+      );
+    },
+    [sessionId]
+  );
+
+  useEffect(() => {
+    const nextDepth: "overview" | "full" = requestFull ? "full" : "overview";
+    const sessionChanged = previousSessionIdRef.current !== sessionId;
+    previousSessionIdRef.current = sessionId;
+
+    if (sessionChanged) {
+      setHasLoadedOverview(false);
+    }
+
+    loadBaseGraph(nextDepth, sessionChanged);
+  }, [sessionId, requestFull, loadBaseGraph]);
 
   useEffect(() => {
     const unsubscribe = getTransport().subscribe<{ event?: string }>(
@@ -152,10 +193,28 @@ export function useUnifiedGraph(sessionId: string): {
         next.add(clusterId);
         return next;
       });
+      setClusterErrors((previous) => {
+        const next = new Map(previous);
+        next.delete(clusterId);
+        return next;
+      });
 
       void loadExplorerGraph(sessionId, undefined, clusterId).then(
         (response) => {
           if (generation !== generationRef.current) {
+            return;
+          }
+          if (!response || !Array.isArray(response.nodes) || !Array.isArray(response.edges)) {
+            setLoadingClusters((previous) => {
+              const next = new Set(previous);
+              next.delete(clusterId);
+              return next;
+            });
+            setClusterErrors((previous) => {
+              const next = new Map(previous);
+              next.set(clusterId, "Failed to load");
+              return next;
+            });
             return;
           }
           setGraph((previous) => mergeClusterData(previous, response));
@@ -170,13 +229,21 @@ export function useUnifiedGraph(sessionId: string): {
             return next;
           });
         },
-        () => {
+        (expandError) => {
           if (generation !== generationRef.current) {
             return;
           }
           setLoadingClusters((previous) => {
             const next = new Set(previous);
             next.delete(clusterId);
+            return next;
+          });
+          setClusterErrors((previous) => {
+            const next = new Map(previous);
+            next.set(
+              clusterId,
+              expandError instanceof Error ? expandError.message : "Failed to load"
+            );
             return next;
           });
         }
@@ -186,44 +253,21 @@ export function useUnifiedGraph(sessionId: string): {
   );
 
   const reload = useCallback(() => {
-    generationRef.current += 1;
-    setIsStale(false);
-    setIsLoading(true);
-    setError(null);
-    setGraph(EMPTY_GRAPH);
-    setLoadingClusters(new Set());
-    setLoadedClusters(new Set());
-
-    const generation = generationRef.current;
-    void loadExplorerGraph(sessionId, "overview").then(
-      (response) => {
-        if (generation !== generationRef.current) {
-          return;
-        }
-        setGraph({
-          nodes: response.nodes.map(toExplorerNode),
-          edges: response.edges.map(toExplorerEdge),
-        });
-        setIsLoading(false);
-      },
-      (loadError) => {
-        if (generation !== generationRef.current) {
-          return;
-        }
-        setError(loadError instanceof Error ? loadError.message : "Failed to load graph");
-        setIsLoading(false);
-      }
-    );
-  }, [sessionId]);
+    loadBaseGraph(requestFull ? "full" : "overview", false);
+  }, [loadBaseGraph, requestFull]);
 
   return {
     graph,
     nodeMap,
     isLoading,
     loadingClusters,
+    loadedClusters,
+    clusterErrors,
     error,
     isStale,
     expandCluster,
     reload,
+    graphDepth,
+    hasLoadedOverview,
   };
 }
