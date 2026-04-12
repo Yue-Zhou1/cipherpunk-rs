@@ -2073,6 +2073,7 @@ async fn build_project_ir_for_session(
 ) -> Result<ProjectIr> {
     ProjectIrBuilder::for_path(&session.snapshot.source.local_path)
         .with_value_previews(include_values)
+        .with_target_crates(session.snapshot.target_crates.clone())
         .build()
         .await
         .with_context(|| {
