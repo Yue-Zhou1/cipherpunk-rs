@@ -94,7 +94,9 @@ impl ProjectIrBuilder {
         if !self.target_crates.is_empty() {
             let targets: std::collections::HashSet<&str> =
                 self.target_crates.iter().map(String::as_str).collect();
-            workspace.members.retain(|m| targets.contains(m.name.as_str()));
+            workspace
+                .members
+                .retain(|m| targets.contains(m.name.as_str()));
         }
         let mut ir = ProjectIr::default();
         let mappers: Vec<Box<dyn LanguageMapper>> = vec![
