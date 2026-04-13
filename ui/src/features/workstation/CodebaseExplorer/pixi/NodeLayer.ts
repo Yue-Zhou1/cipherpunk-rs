@@ -36,11 +36,10 @@ export class NodeLayer {
       const { x, y, width, height, bgColor, borderColor, borderWidth, opacity } = node;
       const radius = node.kind === "crate" ? 8 : node.kind === "module" ? 6 : 4;
 
-      this.graphics.alpha = opacity;
       this.graphics
         .roundRect(x, y, width, height, radius)
-        .fill({ color: bgColor })
-        .stroke({ color: borderColor, width: borderWidth });
+        .fill({ color: bgColor, alpha: opacity })
+        .stroke({ color: borderColor, width: borderWidth, alpha: opacity });
 
       const showLabel =
         isCluster(node.kind) ||

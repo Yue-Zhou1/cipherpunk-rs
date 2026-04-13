@@ -68,7 +68,7 @@ export function useLayout(options: UseLayoutOptions): PositionMap {
     return () => {
       cancelled = true;
     };
-  }, [graph.edges, graph.nodes, topologyKey]);
+  }, [topologyKey]); // topologyKey encodes all topology-relevant node/edge changes.
 
   return useMemo(() => {
     if (!focusedNodeId || elkPositions.size === 0) {

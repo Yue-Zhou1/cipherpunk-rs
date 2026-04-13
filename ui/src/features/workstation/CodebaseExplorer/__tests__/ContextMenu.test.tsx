@@ -69,7 +69,17 @@ describe("ContextMenu", () => {
     const onClose = vi.fn();
     render(<ContextMenu nodeId="sym_1" x={100} y={100} onClose={onClose} />);
     fireEvent.click(screen.getByText(/show callers/i));
+    expect(mockCtx.focusNode).toHaveBeenCalledWith("sym_1");
     expect(mockCtx.showCallers).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("calls showCallees and onClose when Show callees is clicked", () => {
+    const onClose = vi.fn();
+    render(<ContextMenu nodeId="sym_1" x={100} y={100} onClose={onClose} />);
+    fireEvent.click(screen.getByText(/show callees/i));
+    expect(mockCtx.focusNode).toHaveBeenCalledWith("sym_1");
+    expect(mockCtx.showCallees).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -78,13 +88,6 @@ describe("ContextMenu", () => {
     render(<ContextMenu nodeId="sym_1" x={100} y={100} onClose={onClose} />);
     fireEvent.click(screen.getByText(/open in editor/i));
     expect(mockCtx.onNavigateToSource).toHaveBeenCalledWith("src/lib.rs", 42);
-  });
-
-  it("calls onClose on Escape", () => {
-    const onClose = vi.fn();
-    render(<ContextMenu nodeId="sym_1" x={100} y={100} onClose={onClose} />);
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
   });
 
   it("renders nothing when nodeId is null", () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
 
 import { ContextMenu } from "./ContextMenu";
 import { useExplorer } from "./ExplorerContext";
@@ -84,21 +85,33 @@ export function PixiExplorerCanvas() {
   });
 
   useEffect(() => {
-    const updateCanvasSize = () => {
-      const canvas = canvasRef.current;
-      const rect = canvas?.parentElement?.getBoundingClientRect();
-      if (rect) {
-        setCanvasSize({
-          width: rect.width > 0 ? rect.width : 1200,
-          height: rect.height > 0 ? rect.height : 800,
-        });
-      }
+    const canvas = canvasRef.current;
+    const container = canvas?.parentElement;
+    if (!container) {
+      return;
+    }
+
+    const applySize = (width: number, height: number) => {
+      setCanvasSize({
+        width: width > 0 ? width : 1200,
+        height: height > 0 ? height : 800,
+      });
     };
 
-    updateCanvasSize();
-    window.addEventListener("resize", updateCanvasSize);
+    const initialRect = container.getBoundingClientRect();
+    applySize(initialRect.width, initialRect.height);
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+      applySize(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(container);
+
     return () => {
-      window.removeEventListener("resize", updateCanvasSize);
+      observer.disconnect();
     };
   }, []);
 
@@ -116,12 +129,16 @@ export function PixiExplorerCanvas() {
         ref={canvasRef}
         style={{ display: "block", width: "100%", height: "100%" }}
       />
-      <ContextMenu
-        nodeId={contextMenu?.nodeId ?? null}
-        x={contextMenu?.x ?? 0}
-        y={contextMenu?.y ?? 0}
-        onClose={() => setContextMenu(null)}
-      />
+      <AnimatePresence>
+        {contextMenu ? (
+          <ContextMenu
+            nodeId={contextMenu.nodeId}
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+          />
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

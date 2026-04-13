@@ -143,6 +143,8 @@ export function useRenderGraph(ctx: RenderGraphInput, positions: PositionMap): R
         width: edge.relation === "cfg" ? 1 : 1.5,
         dashed: edge.relation === "parameter_flow" || edge.relation === "return_flow",
         opacity: 1,
+        // TODO(Phase 5): set true for traced edges to activate particle animation.
+        hasParticle: false,
       }));
 
     return { nodes, edges };

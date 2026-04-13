@@ -5,6 +5,7 @@ const mockLoadExplorerGraph = vi.fn();
 let pixiRendererInstance: {
   canvas: HTMLCanvasElement;
   onNodeClick: (id: string) => void;
+  onNodeRightClick: (id: string, x: number, y: number) => void;
   onPaneClick: () => void;
 } | null = null;
 
@@ -37,6 +38,7 @@ vi.mock("../pixi/PixiRenderer", () => ({
     pixiRendererInstance = {
       canvas: options.canvas as HTMLCanvasElement,
       onNodeClick: options.onNodeClick as (id: string) => void,
+      onNodeRightClick: options.onNodeRightClick as (id: string, x: number, y: number) => void,
       onPaneClick: options.onPaneClick as () => void,
     };
     return {
@@ -106,6 +108,15 @@ function simulatePaneClick(): void {
   }
   act(() => {
     pixiRendererInstance!.onPaneClick();
+  });
+}
+
+function simulateNodeRightClick(nodeId: string, x = 240, y = 180): void {
+  if (!pixiRendererInstance) {
+    throw new Error("PixiRenderer instance not ready");
+  }
+  act(() => {
+    pixiRendererInstance!.onNodeRightClick(nodeId, x, y);
   });
 }
 
@@ -225,6 +236,19 @@ describe("CodebaseExplorer", () => {
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
       expect(screen.getByLabelText("Node context")).toBeInTheDocument();
+    });
+  });
+
+  it("opens context menu on node right click", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    simulateNodeRightClick("sym_004", 320, 260);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("menu", { name: /actions for verify_signature/i })
+      ).toBeInTheDocument();
     });
   });
 
