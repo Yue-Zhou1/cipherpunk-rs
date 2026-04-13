@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ContextMenu } from "./ContextMenu";
 import { useExplorer } from "./ExplorerContext";
 import { useRenderGraph } from "./hooks/useRenderGraph";
 import { runElkLayout, type PositionMap } from "./layout/ElkLayout";
@@ -9,10 +10,16 @@ export function PixiExplorerCanvas() {
   const ctx = useExplorer();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [positions, setPositions] = useState<PositionMap>(new Map());
+  const [contextMenu, setContextMenu] = useState<{
+    nodeId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const renderGraph = useRenderGraph(ctx, positions);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
+      setContextMenu(null);
       const node = ctx.nodeMap.get(nodeId);
       if (node?.kind === "crate" || node?.kind === "module") {
         // Deliberately do both:
@@ -28,13 +35,15 @@ export function PixiExplorerCanvas() {
   );
 
   const handleNodeRightClick = useCallback(
-    (_nodeId: string, _x: number, _y: number) => {
-      // Context menu wiring arrives in Phase 3.
+    (nodeId: string, x: number, y: number) => {
+      ctx.focusNode(nodeId);
+      setContextMenu({ nodeId, x, y });
     },
-    []
+    [ctx]
   );
 
   const handlePaneClick = useCallback(() => {
+    setContextMenu(null);
     if (ctx.neighborhoodResult) {
       ctx.clearHighlight();
     } else if (ctx.stateKind === "focus") {
@@ -47,6 +56,7 @@ export function PixiExplorerCanvas() {
       if (event.key !== "Escape") {
         return;
       }
+      setContextMenu(null);
       if (ctx.neighborhoodResult) {
         ctx.clearHighlight();
       } else if (ctx.stateKind === "focus") {
@@ -132,6 +142,12 @@ export function PixiExplorerCanvas() {
       <canvas
         ref={canvasRef}
         style={{ display: "block", width: "100%", height: "100%" }}
+      />
+      <ContextMenu
+        nodeId={contextMenu?.nodeId ?? null}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        onClose={() => setContextMenu(null)}
       />
     </div>
   );

@@ -43,6 +43,8 @@ export class PixiRenderer {
     this.nodeLayer = new NodeLayer(this.app.stage);
     this.edgeLayer = new EdgeLayer(this.app.stage);
 
+    this.app.canvas.addEventListener("click", this.handleClick);
+    this.app.canvas.addEventListener("contextmenu", this.handleContextMenu);
     this.app.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
     this.app.canvas.addEventListener("pointerdown", this.handlePointerDown);
     this.app.canvas.addEventListener("pointermove", this.handlePointerMove);
@@ -111,6 +113,30 @@ export class PixiRenderer {
     this.app.canvas.releasePointerCapture(event.pointerId);
   };
 
+  private handleClick = (event: MouseEvent): void => {
+    // Suppress click if this interaction ended as a pan.
+    if (this.hasDragged) {
+      return;
+    }
+
+    const { x, y } = this.canvasToWorld(event.offsetX, event.offsetY);
+    const nodeId = this.nodeLayer.hitTest(x, y);
+    if (nodeId) {
+      this.options.onNodeClick(nodeId);
+    } else {
+      this.options.onPaneClick();
+    }
+  };
+
+  private handleContextMenu = (event: MouseEvent): void => {
+    event.preventDefault();
+    const { x, y } = this.canvasToWorld(event.offsetX, event.offsetY);
+    const nodeId = this.nodeLayer.hitTest(x, y);
+    if (nodeId) {
+      this.options.onNodeRightClick(nodeId, event.clientX, event.clientY);
+    }
+  };
+
   private handleWheel = (event: WheelEvent): void => {
     event.preventDefault();
 
@@ -133,7 +159,17 @@ export class PixiRenderer {
     }
   };
 
+  private canvasToWorld(screenX: number, screenY: number): { x: number; y: number } {
+    const scale = this.app.stage.scale.x;
+    return {
+      x: (screenX - this.app.stage.x) / scale,
+      y: (screenY - this.app.stage.y) / scale,
+    };
+  }
+
   destroy(): void {
+    this.app.canvas.removeEventListener("click", this.handleClick);
+    this.app.canvas.removeEventListener("contextmenu", this.handleContextMenu);
     this.app.canvas.removeEventListener("wheel", this.handleWheel);
     this.app.canvas.removeEventListener("pointerdown", this.handlePointerDown);
     this.app.canvas.removeEventListener("pointermove", this.handlePointerMove);
