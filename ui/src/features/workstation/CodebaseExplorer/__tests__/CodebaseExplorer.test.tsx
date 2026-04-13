@@ -46,6 +46,7 @@ vi.mock("../pixi/PixiRenderer", () => ({
       destroy: vi.fn(),
       resize: vi.fn(),
       updateGraph: vi.fn(),
+      setParticleEdges: vi.fn(),
     };
   }),
 }));
@@ -249,6 +250,22 @@ describe("CodebaseExplorer", () => {
       expect(
         screen.getByRole("menu", { name: /actions for verify_signature/i })
       ).toBeInTheDocument();
+    });
+  });
+
+  it("runs trace-to-entry from context menu and shows trace banner", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    simulateNodeRightClick("sym_005", 320, 260);
+
+    const traceToEntryButton = await screen.findByRole("menuitem", {
+      name: /trace to entry/i,
+    });
+    fireEvent.click(traceToEntryButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/attack path:/i)).toBeInTheDocument();
     });
   });
 

@@ -81,4 +81,59 @@ describe("useRenderGraph", () => {
 
     expect(result.current.edges.every((edge) => edge.dashed)).toBe(true);
   });
+
+  it("dims non-path nodes and highlights trace path nodes", () => {
+    const traceResult = {
+      kind: "attack_path" as const,
+      pathNodeIds: ["s1"],
+      pathEdgeIds: new Set<string>(),
+      banner: "Attack path",
+    };
+    const { result } = renderHook(() =>
+      useRenderGraph(BASE_CTX, new Map(), traceResult)
+    );
+
+    const fileNode = result.current.nodes.find((node) => node.id === "f1");
+    const symbolNode = result.current.nodes.find((node) => node.id === "s1");
+    expect(fileNode?.opacity).toBe(0.06);
+    expect(symbolNode?.opacity).toBe(1);
+    expect(symbolNode?.borderColor).toBe(0xf59e0b);
+  });
+
+  it("colors attack-path edges amber and fades non-path edges", () => {
+    const traceResult = {
+      kind: "attack_path" as const,
+      pathNodeIds: ["s1"],
+      pathEdgeIds: new Set(["s1::s1::calls"]),
+      banner: "Attack path",
+    };
+    const { result } = renderHook(() =>
+      useRenderGraph(BASE_CTX, new Map(), traceResult)
+    );
+
+    expect(result.current.edges).toHaveLength(1);
+    expect(result.current.edges[0]?.color).toBe(0xf59e0b);
+    expect(result.current.edges[0]?.opacity).toBe(1);
+  });
+
+  it("keeps dataflow edge colors when traced in dataflow mode", () => {
+    const graph = {
+      ...BASE_GRAPH,
+      edges: [{ from: "f1", to: "s1", relation: "parameter_flow" as const }],
+    };
+    const traceResult = {
+      kind: "dataflow" as const,
+      pathNodeIds: ["s1"],
+      pathEdgeIds: new Set(["f1::s1::parameter_flow"]),
+      banner: "Dataflow",
+    };
+
+    const { result } = renderHook(() =>
+      useRenderGraph({ ...BASE_CTX, graph }, new Map(), traceResult)
+    );
+
+    expect(result.current.edges).toHaveLength(1);
+    expect(result.current.edges[0]?.color).toBe(0xa78bfa);
+    expect(result.current.edges[0]?.opacity).toBe(1);
+  });
 });

@@ -3,7 +3,7 @@ import * as PIXI from "pixi.js";
 import { EdgeLayer } from "./EdgeLayer";
 import { lodConfig, zoomToLod } from "./LodController";
 import { NodeLayer } from "./NodeLayer";
-import type { RenderGraph, RenderNode } from "./types";
+import type { RenderEdge, RenderGraph, RenderNode } from "./types";
 
 export type PixiRendererOptions = {
   canvas: HTMLCanvasElement;
@@ -71,6 +71,10 @@ export class PixiRenderer {
     this.redraw();
   }
 
+  setParticleEdges(edges: RenderEdge[]): void {
+    this.edgeLayer.setParticleEdges(edges);
+  }
+
   private redraw(): void {
     if (!this.currentGraph) {
       return;
@@ -84,9 +88,6 @@ export class PixiRenderer {
     this.nodeLayer.draw(this.currentGraph.nodes, lod);
     const visibleIds = this.nodeLayer.getVisibleIds();
     this.edgeLayer.draw(this.currentGraph.edges, nodeById, lod, visibleIds);
-    this.edgeLayer.setParticleEdges(
-      this.currentGraph.edges.filter((edge) => edge.hasParticle)
-    );
   }
 
   private handlePointerDown = (event: PointerEvent): void => {

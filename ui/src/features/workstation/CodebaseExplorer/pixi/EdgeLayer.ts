@@ -102,8 +102,17 @@ export class EdgeLayer {
   }
 
   setParticleEdges(edges: RenderEdge[]): void {
-    const edgeIds = new Set(edges.map((edge) => edge.id));
-    this.particles = this.particles.filter((particle) => edgeIds.has(particle.edgeId));
+    const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+    this.particles = this.particles.filter((particle) => {
+      const edge = edgeById.get(particle.edgeId);
+      if (!edge) {
+        return false;
+      }
+      particle.color = edge.color;
+      particle.fromId = edge.fromId;
+      particle.toId = edge.toId;
+      return true;
+    });
 
     for (const edge of edges) {
       const existingCount = this.particles.filter((particle) => particle.edgeId === edge.id).length;

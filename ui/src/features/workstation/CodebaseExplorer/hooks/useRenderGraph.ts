@@ -3,9 +3,11 @@ import { useMemo } from "react";
 import type { PositionMap } from "../layout/ElkLayout";
 import type { RenderEdge, RenderGraph, RenderNode } from "../pixi/types";
 import type { ExplorerContextValue, ExplorerEdgeRelation, ExplorerNode } from "../types";
+import type { TraceResult } from "./useTraceAlgorithm";
 
 const SYMBOL_BG = 0x141c2e;
 const SYMBOL_BORDER = 0x475569;
+const TRACE_HIGHLIGHT = 0xf59e0b;
 
 function nodeDims(node: ExplorerNode): { width: number; height: number } {
   if (node.kind === "crate") {
@@ -76,8 +78,13 @@ type RenderGraphInput = Pick<
   | "matchingNodeIds"
 >;
 
-export function useRenderGraph(ctx: RenderGraphInput, positions: PositionMap): RenderGraph {
+export function useRenderGraph(
+  ctx: RenderGraphInput,
+  positions: PositionMap,
+  traceResult: TraceResult | null = null
+): RenderGraph {
   return useMemo(() => {
+    const tracedNodeIds = new Set(traceResult?.pathNodeIds ?? []);
     const nodes: RenderNode[] = ctx.graph.nodes.map((node) => {
       const pos = positions.get(node.id) ?? { x: 0, y: 0 };
       const dims = nodeDims(node);
@@ -108,6 +115,15 @@ export function useRenderGraph(ctx: RenderGraphInput, positions: PositionMap): R
         borderColor = 0xf97316;
       }
 
+      if (traceResult) {
+        const inTracePath = tracedNodeIds.has(node.id);
+        opacity = inTracePath ? 1 : 0.06;
+        if (inTracePath) {
+          borderColor = TRACE_HIGHLIGHT;
+          borderWidth = 2;
+        }
+      }
+
       return {
         id: node.id,
         label: node.label,
@@ -134,19 +150,38 @@ export function useRenderGraph(ctx: RenderGraphInput, positions: PositionMap): R
 
     const edges: RenderEdge[] = ctx.graph.edges
       .filter((edge) => edge.relation !== "contains")
-      .map((edge) => ({
-        id: `${edge.from}::${edge.to}::${edge.relation}`,
-        fromId: edge.from,
-        toId: edge.to,
-        relation: edge.relation,
-        color: relationColor(edge.relation),
-        width: edge.relation === "cfg" ? 1 : 1.5,
-        dashed: edge.relation === "parameter_flow" || edge.relation === "return_flow",
-        opacity: 1,
-        // TODO(Phase 5): set true for traced edges to activate particle animation.
-        hasParticle: false,
-      }));
+      .map((edge) => {
+        const id = `${edge.from}::${edge.to}::${edge.relation}`;
+        const inTracePath = traceResult?.pathEdgeIds.has(id) ?? false;
+        let color = relationColor(edge.relation);
+        let width = edge.relation === "cfg" ? 1 : 1.5;
+        let opacity = 1;
+
+        if (traceResult) {
+          if (inTracePath) {
+            if (traceResult.kind === "attack_path") {
+              color = TRACE_HIGHLIGHT;
+            }
+            width = 2.5;
+            opacity = 1;
+          } else {
+            opacity = 0.06;
+          }
+        }
+
+        return {
+          id,
+          fromId: edge.from,
+          toId: edge.to,
+          relation: edge.relation,
+          color,
+          width,
+          dashed: edge.relation === "parameter_flow" || edge.relation === "return_flow",
+          opacity,
+          hasParticle: inTracePath,
+        };
+      });
 
     return { nodes, edges };
-  }, [ctx, positions]);
+  }, [ctx, positions, traceResult]);
 }

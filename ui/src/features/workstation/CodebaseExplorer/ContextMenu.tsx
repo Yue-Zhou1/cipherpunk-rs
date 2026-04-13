@@ -8,9 +8,13 @@ type ContextMenuProps = {
   x: number;
   y: number;
   onClose: () => void;
+  traceCtx: {
+    traceToEntryPoint: (nodeId: string) => void;
+    traceDataflowForNode: (nodeId: string) => void;
+  };
 };
 
-export function ContextMenu({ nodeId, x, y, onClose }: ContextMenuProps) {
+export function ContextMenu({ nodeId, x, y, onClose, traceCtx }: ContextMenuProps) {
   const ctx = useExplorer();
   const node = nodeId ? ctx.nodeMap.get(nodeId) : null;
   const menuRef = useRef<HTMLDivElement>(null);
@@ -90,7 +94,7 @@ export function ContextMenu({ nodeId, x, y, onClose }: ContextMenuProps) {
       <button
         className="explorer-ctx-menu-item"
         onClick={() => {
-          // Wired in Phase 5.
+          traceCtx.traceToEntryPoint(nodeId);
           onClose();
         }}
         role="menuitem"
@@ -100,7 +104,7 @@ export function ContextMenu({ nodeId, x, y, onClose }: ContextMenuProps) {
       <button
         className="explorer-ctx-menu-item"
         onClick={() => {
-          // Wired in Phase 5.
+          traceCtx.traceDataflowForNode(nodeId);
           onClose();
         }}
         role="menuitem"

@@ -4,6 +4,7 @@ import { AnimatePresence } from "framer-motion";
 import { ContextMenu } from "./ContextMenu";
 import { useExplorer } from "./ExplorerContext";
 import { useRenderGraph } from "./hooks/useRenderGraph";
+import { useTraceAlgorithm } from "./hooks/useTraceAlgorithm";
 import { useLayout } from "./layout/useLayout";
 import { usePixiRenderer } from "./pixi/usePixiRenderer";
 
@@ -23,7 +24,9 @@ export function PixiExplorerCanvas() {
     downstreamIds: ctx.downstreamIds,
     canvasSize,
   });
-  const renderGraph = useRenderGraph(ctx, positions);
+  const { traceResult, traceToEntryPoint, traceDataflowForNode, clearTrace } =
+    useTraceAlgorithm(ctx.graph, ctx.nodeMap);
+  const renderGraph = useRenderGraph(ctx, positions, traceResult);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
@@ -52,12 +55,14 @@ export function PixiExplorerCanvas() {
 
   const handlePaneClick = useCallback(() => {
     setContextMenu(null);
-    if (ctx.neighborhoodResult) {
+    if (traceResult) {
+      clearTrace();
+    } else if (ctx.neighborhoodResult) {
       ctx.clearHighlight();
     } else if (ctx.stateKind === "focus") {
       ctx.clearFocus();
     }
-  }, [ctx]);
+  }, [clearTrace, ctx, traceResult]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -65,7 +70,9 @@ export function PixiExplorerCanvas() {
         return;
       }
       setContextMenu(null);
-      if (ctx.neighborhoodResult) {
+      if (traceResult) {
+        clearTrace();
+      } else if (ctx.neighborhoodResult) {
         ctx.clearHighlight();
       } else if (ctx.stateKind === "focus") {
         ctx.clearFocus();
@@ -76,7 +83,7 @@ export function PixiExplorerCanvas() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [ctx]);
+  }, [clearTrace, ctx, traceResult]);
 
   const rendererRef = usePixiRenderer(canvasRef, {
     onNodeClick: handleNodeClick,
@@ -119,12 +126,41 @@ export function PixiExplorerCanvas() {
     rendererRef.current?.updateGraph(renderGraph);
   }, [renderGraph, rendererRef]);
 
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) {
+      return;
+    }
+
+    if (traceResult) {
+      const pathEdges = renderGraph.edges.filter((edge) =>
+        traceResult.pathEdgeIds.has(edge.id)
+      );
+      renderer.setParticleEdges(pathEdges);
+    } else {
+      renderer.setParticleEdges([]);
+    }
+  }, [renderGraph, rendererRef, traceResult]);
+
   return (
     <div
       className="explorer-canvas"
       aria-label="Codebase graph"
       style={{ width: "100%", height: "100%", position: "relative" }}
     >
+      {traceResult ? (
+        <div className="explorer-trace-banner" role="status">
+          <span>{traceResult.banner}</span>
+          <button
+            type="button"
+            onClick={clearTrace}
+            aria-label="Clear trace"
+            className="explorer-trace-close"
+          >
+            x
+          </button>
+        </div>
+      ) : null}
       <canvas
         ref={canvasRef}
         style={{ display: "block", width: "100%", height: "100%" }}
@@ -136,6 +172,10 @@ export function PixiExplorerCanvas() {
             x={contextMenu.x}
             y={contextMenu.y}
             onClose={() => setContextMenu(null)}
+            traceCtx={{
+              traceToEntryPoint,
+              traceDataflowForNode,
+            }}
           />
         ) : null}
       </AnimatePresence>
