@@ -50,6 +50,16 @@ export class PixiRenderer {
     this.app.canvas.addEventListener("pointermove", this.handlePointerMove);
     this.app.canvas.addEventListener("pointerup", this.handlePointerUp);
     this.app.canvas.addEventListener("pointercancel", this.handlePointerUp);
+
+    this.app.ticker.add((ticker) => {
+      if (!this.currentGraph) {
+        return;
+      }
+      const nodeById = new Map<string, RenderNode>(
+        this.currentGraph.nodes.map((node) => [node.id, node])
+      );
+      this.edgeLayer.tickParticles(nodeById, ticker.deltaMS);
+    });
   }
 
   resize(): void {
@@ -74,6 +84,9 @@ export class PixiRenderer {
     this.nodeLayer.draw(this.currentGraph.nodes, lod);
     const visibleIds = this.nodeLayer.getVisibleIds();
     this.edgeLayer.draw(this.currentGraph.edges, nodeById, lod, visibleIds);
+    this.edgeLayer.setParticleEdges(
+      this.currentGraph.edges.filter((edge) => edge.hasParticle)
+    );
   }
 
   private handlePointerDown = (event: PointerEvent): void => {

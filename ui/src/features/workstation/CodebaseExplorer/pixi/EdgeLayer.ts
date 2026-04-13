@@ -5,10 +5,20 @@ import type { RenderEdge, RenderNode } from "./types";
 
 export class EdgeLayer {
   private graphics: PIXI.Graphics;
+  private particleGraphics: PIXI.Graphics;
+  private particles: Array<{
+    edgeId: string;
+    t: number;
+    color: number;
+    fromId: string;
+    toId: string;
+  }> = [];
 
   constructor(stage: PIXI.Container) {
     this.graphics = new PIXI.Graphics();
+    this.particleGraphics = new PIXI.Graphics();
     stage.addChildAt(this.graphics, 0);
+    stage.addChild(this.particleGraphics);
   }
 
   draw(
@@ -91,7 +101,54 @@ export class EdgeLayer {
     }
   }
 
+  setParticleEdges(edges: RenderEdge[]): void {
+    const edgeIds = new Set(edges.map((edge) => edge.id));
+    this.particles = this.particles.filter((particle) => edgeIds.has(particle.edgeId));
+
+    for (const edge of edges) {
+      const existingCount = this.particles.filter((particle) => particle.edgeId === edge.id).length;
+      for (let index = existingCount; index < 2; index += 1) {
+        this.particles.push({
+          edgeId: edge.id,
+          t: index * 0.5,
+          color: edge.color,
+          fromId: edge.fromId,
+          toId: edge.toId,
+        });
+      }
+    }
+  }
+
+  tickParticles(nodeById: Map<string, RenderNode>, dt: number): void {
+    const speed = 0.0008;
+    this.particleGraphics.clear();
+
+    for (const particle of this.particles) {
+      particle.t = (particle.t + speed * dt) % 1;
+      const from = nodeById.get(particle.fromId);
+      const to = nodeById.get(particle.toId);
+      if (!from || !to) {
+        continue;
+      }
+
+      const x1 = from.x + from.width / 2;
+      const y1 = from.y + from.height;
+      const x2 = to.x + to.width / 2;
+      const y2 = to.y;
+      const midY = (y1 + y2) / 2;
+      const t = particle.t;
+      const mt = 1 - t;
+      const px =
+        mt * mt * mt * x1 + 3 * mt * mt * t * x1 + 3 * mt * t * t * x2 + t * t * t * x2;
+      const py =
+        mt * mt * mt * y1 + 3 * mt * mt * t * midY + 3 * mt * t * t * midY + t * t * t * y2;
+
+      this.particleGraphics.circle(px, py, 3).fill({ color: particle.color });
+    }
+  }
+
   destroy(): void {
+    this.particleGraphics.destroy();
     this.graphics.destroy();
   }
 }

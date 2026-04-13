@@ -22,6 +22,7 @@ vi.mock("pixi.js", () => {
     destroy: vi.fn(),
     stage,
     canvas: mockCanvas,
+    ticker: { add: vi.fn() },
   };
   return {
     Application: vi.fn(() => mockApp),
@@ -39,6 +40,7 @@ vi.mock("pixi.js", () => {
       moveTo: vi.fn().mockReturnThis(),
       bezierCurveTo: vi.fn().mockReturnThis(),
       lineTo: vi.fn().mockReturnThis(),
+      circle: vi.fn().mockReturnThis(),
       alpha: 1,
       destroy: vi.fn(),
     })),

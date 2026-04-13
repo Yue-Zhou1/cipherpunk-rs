@@ -1,20 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ContextMenu } from "./ContextMenu";
 import { useExplorer } from "./ExplorerContext";
 import { useRenderGraph } from "./hooks/useRenderGraph";
-import { runElkLayout, type PositionMap } from "./layout/ElkLayout";
+import { useLayout } from "./layout/useLayout";
 import { usePixiRenderer } from "./pixi/usePixiRenderer";
 
 export function PixiExplorerCanvas() {
   const ctx = useExplorer();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [positions, setPositions] = useState<PositionMap>(new Map());
+  const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
   const [contextMenu, setContextMenu] = useState<{
     nodeId: string;
     x: number;
     y: number;
   } | null>(null);
+  const positions = useLayout({
+    graph: ctx.graph,
+    focusedNodeId: ctx.focusedNodeId,
+    upstreamIds: ctx.upstreamIds,
+    downstreamIds: ctx.downstreamIds,
+    canvasSize,
+  });
   const renderGraph = useRenderGraph(ctx, positions);
 
   const handleNodeClick = useCallback(
@@ -76,58 +83,24 @@ export function PixiExplorerCanvas() {
     onPaneClick: handlePaneClick,
   });
 
-  const topologyKey = useMemo(() => {
-    const nodeIds = ctx.graph.nodes.map((node) => node.id).sort().join(",");
-    const edgeIds = ctx.graph.edges
-      .map((edge) => `${edge.from}>${edge.to}:${edge.relation}`)
-      .sort()
-      .join(",");
-    return `${nodeIds}|${edgeIds}`;
-  }, [ctx.graph.edges, ctx.graph.nodes]);
-
   useEffect(() => {
-    const stubNodes = ctx.graph.nodes.map((node) => ({
-      id: node.id,
-      kind: node.kind,
-      width:
-        node.kind === "crate"
-          ? 160
-          : node.kind === "module"
-            ? 140
-            : node.kind === "file"
-              ? 140
-              : node.signature
-                ? 240
-                : 200,
-      height:
-        node.kind === "crate"
-          ? 40
-          : node.kind === "module"
-            ? 36
-            : node.kind === "file"
-              ? 32
-              : node.signature
-                ? 52
-                : 36,
-    }));
-    const stubEdges = ctx.graph.edges.map((edge) => ({
-      id: `${edge.from}::${edge.to}::${edge.relation}`,
-      fromId: edge.from,
-      toId: edge.to,
-      relation: edge.relation,
-    }));
-
-    let cancelled = false;
-    void runElkLayout(stubNodes, stubEdges).then((nextPositions) => {
-      if (!cancelled) {
-        setPositions(nextPositions);
+    const updateCanvasSize = () => {
+      const canvas = canvasRef.current;
+      const rect = canvas?.parentElement?.getBoundingClientRect();
+      if (rect) {
+        setCanvasSize({
+          width: rect.width > 0 ? rect.width : 1200,
+          height: rect.height > 0 ? rect.height : 800,
+        });
       }
-    });
-
-    return () => {
-      cancelled = true;
     };
-  }, [ctx.graph.edges, ctx.graph.nodes, topologyKey]);
+
+    updateCanvasSize();
+    window.addEventListener("resize", updateCanvasSize);
+    return () => {
+      window.removeEventListener("resize", updateCanvasSize);
+    };
+  }, []);
 
   useEffect(() => {
     rendererRef.current?.updateGraph(renderGraph);
