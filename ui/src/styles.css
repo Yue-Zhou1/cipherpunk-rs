@@ -2761,31 +2761,3 @@ pre code {
   padding: 0 4px;
   flex-shrink: 0;
 }
-
-.explorer-canvas .react-flow__minimap {
-  background: var(--bg-surface, #1e293b) !important;
-  border: 1px solid var(--border, #475569);
-  border-radius: 6px;
-}
-
-.explorer-canvas .react-flow__controls {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-}
-
-.explorer-canvas .react-flow__controls-button {
-  background: var(--bg-surface, #1e293b) !important;
-  border: 1px solid var(--border, #475569) !important;
-  color: var(--text-secondary, #94a3b8);
-  fill: var(--text-secondary, #94a3b8);
-  border-radius: 4px;
-  width: 28px;
-  height: 28px;
-}
-
-.explorer-canvas .react-flow__controls-button:hover {
-  background: var(--bg-elevated, #334155) !important;
-  color: var(--text-primary, #f8fafc);
-  fill: var(--text-primary, #f8fafc);
-}
