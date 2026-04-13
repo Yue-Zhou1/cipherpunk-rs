@@ -1,6 +1,6 @@
 import { ContextPanel } from "./ContextPanel";
-import { ExplorerCanvas } from "./ExplorerCanvas";
 import { ExplorerProvider, useExplorer } from "./ExplorerContext";
+import { PixiExplorerCanvas as ExplorerCanvas } from "./PixiExplorerCanvas";
 import { TraceOverlay } from "./TraceOverlay";
 import type { GranularityLevel } from "./types";
 

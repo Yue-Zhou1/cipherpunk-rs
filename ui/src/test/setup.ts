@@ -10,3 +10,11 @@ if (!globalThis.ResizeObserver) {
   // jsdom environment shim for libraries (ReactFlow) that require ResizeObserver.
   globalThis.ResizeObserver = ResizeObserverMock;
 }
+
+// jsdom does not implement CanvasRenderingContext2D/WebGL; Pixi probes getContext at import time.
+if (typeof HTMLCanvasElement !== "undefined") {
+  Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+    value: () => ({ getImageData: () => ({ data: [] }) }),
+    writable: true,
+  });
+}

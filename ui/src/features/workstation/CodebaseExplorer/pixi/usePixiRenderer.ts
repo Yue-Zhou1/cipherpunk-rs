@@ -10,9 +10,7 @@ export function usePixiRenderer(
 
   // Keep stable proxy callbacks so renderer lifecycle does not depend on callback identity.
   const callbacksRef = useRef(options);
-  useEffect(() => {
-    callbacksRef.current = options;
-  });
+  callbacksRef.current = options;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -29,7 +27,10 @@ export function usePixiRenderer(
     });
     rendererRef.current = renderer;
 
-    void renderer.init();
+    void renderer.init().catch((error: unknown) => {
+      // Surface WebGL/context setup failures until we add UI-level error plumbing.
+      console.error("Failed to initialize Pixi renderer", error);
+    });
 
     const handleResize = () => renderer.resize();
     window.addEventListener("resize", handleResize);
@@ -39,7 +40,7 @@ export function usePixiRenderer(
       renderer.destroy();
       rendererRef.current = null;
     };
-  }, [canvasRef]);
+  }, [canvasRef]); // canvasRef object identity is stable; this effect is intentionally mount/unmount scoped.
 
   return rendererRef;
 }

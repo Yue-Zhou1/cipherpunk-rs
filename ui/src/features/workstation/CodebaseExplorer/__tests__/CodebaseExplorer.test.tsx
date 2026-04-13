@@ -1,7 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockLoadExplorerGraph = vi.fn();
+let pixiRendererInstance: {
+  canvas: HTMLCanvasElement;
+  onNodeClick: (id: string) => void;
+  onPaneClick: () => void;
+} | null = null;
 
 vi.mock("../../../../ipc/commands", () => ({
   loadExplorerGraph: (...args: unknown[]) => mockLoadExplorerGraph(...args),
@@ -27,43 +32,88 @@ vi.mock("elkjs/lib/elk.bundled.js", () => ({
   },
 }));
 
-vi.mock("reactflow", () => {
-  const ReactFlow = ({ nodes, onNodeClick, onPaneClick, children, onInit }: any) => (
-    <div
-      data-testid="mock-reactflow"
-      onClick={(event) => onPaneClick?.(event)}
-      ref={() => {
-        onInit?.({});
-      }}
-    >
-      {nodes?.map((node: any) => (
-        <button
-          key={node.id}
-          data-testid={`rf-node-${node.id}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onNodeClick?.(event, node);
-          }}
-          type="button"
-        >
-          {node.data?.label ?? node.id}
-        </button>
-      ))}
-      {children}
-    </div>
-  );
+vi.mock("../pixi/PixiRenderer", () => ({
+  PixiRenderer: vi.fn().mockImplementation((options: any) => {
+    pixiRendererInstance = {
+      canvas: options.canvas as HTMLCanvasElement,
+      onNodeClick: options.onNodeClick as (id: string) => void,
+      onPaneClick: options.onPaneClick as () => void,
+    };
+    return {
+      init: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn(),
+      resize: vi.fn(),
+      updateGraph: vi.fn(),
+    };
+  }),
+}));
 
-  return {
-    __esModule: true,
-    default: ReactFlow,
-    Background: () => null,
-    Controls: () => null,
-    MiniMap: () => null,
-    Handle: ({ type }: { type: string }) => <span data-testid={`handle-${type}`} />,
-    Position: { Top: "top", Bottom: "bottom" },
-    MarkerType: { ArrowClosed: "arrowclosed" },
-  };
-});
+vi.mock("pixi.js", () => ({
+  Application: vi.fn(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    destroy: vi.fn(),
+    resize: vi.fn(),
+    stage: {
+      addChild: vi.fn(),
+      addChildAt: vi.fn(),
+      x: 0,
+      y: 0,
+      scale: { x: 1, y: 1, set: vi.fn() },
+    },
+    canvas: document.createElement("canvas"),
+    ticker: { add: vi.fn() },
+  })),
+  Container: vi.fn(() => ({
+    addChild: vi.fn(),
+    addChildAt: vi.fn(),
+    removeChild: vi.fn(),
+    destroy: vi.fn(),
+  })),
+  Graphics: vi.fn(() => ({
+    clear: vi.fn().mockReturnThis(),
+    roundRect: vi.fn().mockReturnThis(),
+    fill: vi.fn().mockReturnThis(),
+    stroke: vi.fn().mockReturnThis(),
+    moveTo: vi.fn().mockReturnThis(),
+    bezierCurveTo: vi.fn().mockReturnThis(),
+    lineTo: vi.fn().mockReturnThis(),
+    alpha: 1,
+    destroy: vi.fn(),
+  })),
+  Text: vi.fn(() => ({
+    text: "",
+    x: 0,
+    y: 0,
+    height: 16,
+    alpha: 1,
+    destroy: vi.fn(),
+  })),
+  TextStyle: vi.fn(),
+}));
+
+function simulateNodeClick(nodeId: string): void {
+  if (!pixiRendererInstance) {
+    throw new Error("PixiRenderer instance not ready");
+  }
+  act(() => {
+    pixiRendererInstance!.onNodeClick(nodeId);
+  });
+}
+
+function simulatePaneClick(): void {
+  if (!pixiRendererInstance) {
+    throw new Error("PixiRenderer instance not ready");
+  }
+  act(() => {
+    pixiRendererInstance!.onPaneClick();
+  });
+}
+
+async function waitForPixiRenderer(): Promise<void> {
+  await waitFor(() => {
+    expect(pixiRendererInstance).not.toBeNull();
+  });
+}
 
 import CodebaseExplorer from "../index";
 
@@ -119,6 +169,7 @@ const MOCK_CLUSTER_RESPONSE = {
 describe("CodebaseExplorer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pixiRendererInstance = null;
     mockLoadExplorerGraph.mockImplementation(
       (_sessionId: string, _depth?: "overview" | "full", cluster?: string) =>
         Promise.resolve(cluster ? MOCK_CLUSTER_RESPONSE : MOCK_OVERVIEW_RESPONSE)
@@ -126,12 +177,15 @@ describe("CodebaseExplorer", () => {
   });
 
   async function expandToSymbolLevel(): Promise<void> {
-    const granularity = await screen.findByLabelText("View granularity");
-    fireEvent.change(granularity, { target: { value: "crates" } });
-    fireEvent.click(await screen.findByText("engine-crypto"));
-    fireEvent.click(await screen.findByText("src"));
+    await waitForPixiRenderer();
+    simulateNodeClick("crt_001");
     await waitFor(() => {
-      expect(screen.getByText("verify_signature")).toBeInTheDocument();
+      expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", undefined, "crt_001");
+    });
+
+    simulateNodeClick("mod_002");
+    await waitFor(() => {
+      expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", undefined, "mod_002");
     });
   }
 
@@ -152,35 +206,33 @@ describe("CodebaseExplorer", () => {
     expect(screen.getByText("Retry")).toBeInTheDocument();
   });
 
-  it("renders graph nodes after overview loads", async () => {
+  it("renders canvas after overview loads", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await waitFor(() => {
-      expect(screen.getByText("verify.rs")).toBeInTheDocument();
+      expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", "overview");
     });
-    expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", "overview");
-    expect(screen.queryByText("verify_signature")).toBeNull();
+    expect(screen.getByLabelText("Codebase graph")).toBeInTheDocument();
+    expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
   });
 
   it("shows FOCUS state badge and context panel after node click", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
-    fireEvent.click(await screen.findByText("verify_signature"));
+    simulateNodeClick("sym_004");
 
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
       expect(screen.getByLabelText("Node context")).toBeInTheDocument();
     });
-    expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", undefined, "crt_001");
-    expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", undefined, "mod_002");
   });
 
   it("shows ego banner with node name and counts when a node is focused", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
-    fireEvent.click(await screen.findByText("verify_signature"));
+    simulateNodeClick("sym_004");
 
     await waitFor(() => {
       expect(screen.getByTestId("ego-banner")).toBeInTheDocument();
@@ -195,7 +247,7 @@ describe("CodebaseExplorer", () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
-    fireEvent.click(await screen.findByText("verify_signature"));
+    simulateNodeClick("sym_004");
 
     await waitFor(() => {
       expect(screen.getByText(/← overview/i)).toBeInTheDocument();
@@ -213,7 +265,7 @@ describe("CodebaseExplorer", () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
-    fireEvent.click(await screen.findByText("verify_signature"));
+    simulateNodeClick("sym_004");
 
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
@@ -230,7 +282,7 @@ describe("CodebaseExplorer", () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await expandToSymbolLevel();
-    fireEvent.click(await screen.findByText("verify_signature"));
+    simulateNodeClick("sym_004");
 
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
@@ -248,6 +300,23 @@ describe("CodebaseExplorer", () => {
     await waitFor(() => {
       expect(screen.getByText("FOCUS")).toBeInTheDocument();
       expect(screen.queryByText(/highlighting/i)).toBeNull();
+    });
+  });
+
+  it("clears focus on pane click callback", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    simulateNodeClick("sym_004");
+
+    await waitFor(() => {
+      expect(screen.getByText("FOCUS")).toBeInTheDocument();
+    });
+
+    simulatePaneClick();
+
+    await waitFor(() => {
+      expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
     });
   });
 });
