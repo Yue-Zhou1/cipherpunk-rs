@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Pixi.js requires a real WebGL context in the browser, so mock it in jsdom.
 vi.mock("pixi.js", () => {
+  let initialized = false;
   const stage = {
     addChild: vi.fn(),
     addChildAt: vi.fn(),
@@ -17,11 +18,18 @@ vi.mock("pixi.js", () => {
     getBoundingClientRect: vi.fn(() => ({ left: 0, top: 0 })),
   } as unknown as HTMLCanvasElement;
   const mockApp = {
-    init: vi.fn().mockResolvedValue(undefined),
+    init: vi.fn().mockImplementation(async () => {
+      initialized = true;
+    }),
     resize: vi.fn(),
     destroy: vi.fn(),
     stage,
-    canvas: mockCanvas,
+    get canvas() {
+      if (!initialized) {
+        throw new TypeError("Cannot read properties of undefined (reading 'canvas')");
+      }
+      return mockCanvas;
+    },
     ticker: { add: vi.fn() },
   };
   return {
@@ -113,5 +121,43 @@ describe("PixiRenderer", () => {
       PIXI as unknown as { __mockApp: { resize: ReturnType<typeof vi.fn> } }
     ).__mockApp;
     expect(mockApp.resize).toHaveBeenCalledOnce();
+  });
+
+  it("does not throw when updateGraph is called before init completes", () => {
+    const renderer = new PixiRenderer({
+      canvas,
+      onNodeClick: noop,
+      onNodeRightClick: noop,
+      onPaneClick: noop,
+    });
+
+    const graph = {
+      nodes: [],
+      edges: [],
+    };
+
+    expect(() => renderer.updateGraph(graph)).not.toThrow();
+  });
+
+  it("does not throw when setParticleEdges is called before init completes", () => {
+    const renderer = new PixiRenderer({
+      canvas,
+      onNodeClick: noop,
+      onNodeRightClick: noop,
+      onPaneClick: noop,
+    });
+
+    expect(() => renderer.setParticleEdges([])).not.toThrow();
+  });
+
+  it("does not throw when destroy is called before init completes", () => {
+    const renderer = new PixiRenderer({
+      canvas,
+      onNodeClick: noop,
+      onNodeRightClick: noop,
+      onPaneClick: noop,
+    });
+
+    expect(() => renderer.destroy()).not.toThrow();
   });
 });

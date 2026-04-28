@@ -17,6 +17,10 @@ export class PixiRenderer {
   private options: PixiRendererOptions;
   private nodeLayer!: NodeLayer;
   private edgeLayer!: EdgeLayer;
+  private initPromise: Promise<void> | null = null;
+  private isInitialized = false;
+  private isDestroyed = false;
+  private pendingParticleEdges: RenderEdge[] = [];
   private currentZoom = 1;
   private currentGraph: RenderGraph | null = null;
   private isPanning = false;
@@ -31,52 +35,87 @@ export class PixiRenderer {
   }
 
   async init(): Promise<void> {
-    await this.app.init({
-      canvas: this.options.canvas,
-      background: 0x0a0f1a,
-      antialias: true,
-      autoDensity: true,
-      resolution: window.devicePixelRatio || 1,
-      resizeTo: this.options.canvas.parentElement ?? this.options.canvas,
-    });
+    if (this.initPromise) {
+      return this.initPromise;
+    }
 
-    this.nodeLayer = new NodeLayer(this.app.stage);
-    this.edgeLayer = new EdgeLayer(this.app.stage);
+    this.initPromise = (async () => {
+      await this.app.init({
+        canvas: this.options.canvas,
+        background: 0x0a0f1a,
+        antialias: true,
+        autoDensity: true,
+        resolution: window.devicePixelRatio || 1,
+        resizeTo: this.options.canvas.parentElement ?? this.options.canvas,
+      });
 
-    this.app.canvas.addEventListener("click", this.handleClick);
-    this.app.canvas.addEventListener("contextmenu", this.handleContextMenu);
-    this.app.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
-    this.app.canvas.addEventListener("pointerdown", this.handlePointerDown);
-    this.app.canvas.addEventListener("pointermove", this.handlePointerMove);
-    this.app.canvas.addEventListener("pointerup", this.handlePointerUp);
-    this.app.canvas.addEventListener("pointercancel", this.handlePointerUp);
-
-    this.app.ticker.add((ticker) => {
-      if (!this.currentGraph) {
+      if (this.isDestroyed) {
+        this.app.destroy(false, { children: true });
         return;
       }
-      const nodeById = new Map<string, RenderNode>(
-        this.currentGraph.nodes.map((node) => [node.id, node])
-      );
-      this.edgeLayer.tickParticles(nodeById, ticker.deltaMS);
-    });
+
+      this.nodeLayer = new NodeLayer(this.app.stage);
+      this.edgeLayer = new EdgeLayer(this.app.stage);
+      this.isInitialized = true;
+
+      this.app.canvas.addEventListener("click", this.handleClick);
+      this.app.canvas.addEventListener("contextmenu", this.handleContextMenu);
+      this.app.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
+      this.app.canvas.addEventListener("pointerdown", this.handlePointerDown);
+      this.app.canvas.addEventListener("pointermove", this.handlePointerMove);
+      this.app.canvas.addEventListener("pointerup", this.handlePointerUp);
+      this.app.canvas.addEventListener("pointercancel", this.handlePointerUp);
+
+      this.app.ticker.add((ticker) => {
+        if (!this.currentGraph) {
+          return;
+        }
+        const nodeById = new Map<string, RenderNode>(
+          this.currentGraph.nodes.map((node) => [node.id, node])
+        );
+        this.edgeLayer.tickParticles(nodeById, ticker.deltaMS);
+      });
+
+      if (this.currentGraph) {
+        this.redraw();
+      }
+      if (this.pendingParticleEdges.length > 0) {
+        this.edgeLayer.setParticleEdges(this.pendingParticleEdges);
+      }
+    })();
+
+    return this.initPromise;
   }
 
   resize(): void {
+    if (!this.isInitialized || this.isDestroyed) {
+      return;
+    }
     this.app.resize();
   }
 
   updateGraph(graph: RenderGraph): void {
+    if (this.isDestroyed) {
+      return;
+    }
     this.currentGraph = graph;
-    this.redraw();
+    if (this.isInitialized) {
+      this.redraw();
+    }
   }
 
   setParticleEdges(edges: RenderEdge[]): void {
-    this.edgeLayer.setParticleEdges(edges);
+    if (this.isDestroyed) {
+      return;
+    }
+    this.pendingParticleEdges = edges;
+    if (this.isInitialized) {
+      this.edgeLayer.setParticleEdges(edges);
+    }
   }
 
   private redraw(): void {
-    if (!this.currentGraph) {
+    if (!this.currentGraph || !this.isInitialized || this.isDestroyed) {
       return;
     }
 
@@ -182,15 +221,26 @@ export class PixiRenderer {
   }
 
   destroy(): void {
-    this.app.canvas.removeEventListener("click", this.handleClick);
-    this.app.canvas.removeEventListener("contextmenu", this.handleContextMenu);
-    this.app.canvas.removeEventListener("wheel", this.handleWheel);
-    this.app.canvas.removeEventListener("pointerdown", this.handlePointerDown);
-    this.app.canvas.removeEventListener("pointermove", this.handlePointerMove);
-    this.app.canvas.removeEventListener("pointerup", this.handlePointerUp);
-    this.app.canvas.removeEventListener("pointercancel", this.handlePointerUp);
-    this.nodeLayer?.destroy();
-    this.edgeLayer?.destroy();
+    if (this.isDestroyed) {
+      return;
+    }
+    this.isDestroyed = true;
+
+    if (!this.isInitialized) {
+      return;
+    }
+
+    const canvas = this.app.canvas;
+    canvas.removeEventListener("click", this.handleClick);
+    canvas.removeEventListener("contextmenu", this.handleContextMenu);
+    canvas.removeEventListener("wheel", this.handleWheel);
+    canvas.removeEventListener("pointerdown", this.handlePointerDown);
+    canvas.removeEventListener("pointermove", this.handlePointerMove);
+    canvas.removeEventListener("pointerup", this.handlePointerUp);
+    canvas.removeEventListener("pointercancel", this.handlePointerUp);
+    this.nodeLayer.destroy();
+    this.edgeLayer.destroy();
     this.app.destroy(false, { children: true });
+    this.isInitialized = false;
   }
 }

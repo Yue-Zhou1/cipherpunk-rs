@@ -28,6 +28,11 @@ export function PixiExplorerCanvas() {
     useTraceAlgorithm(ctx.graph, ctx.nodeMap);
   const renderGraph = useRenderGraph(ctx, positions, traceResult);
 
+  useEffect(() => {
+    setContextMenu(null);
+    clearTrace();
+  }, [clearTrace, ctx.sessionId]);
+
   const handleNodeClick = useCallback(
     (nodeId: string) => {
       setContextMenu(null);
@@ -85,7 +90,7 @@ export function PixiExplorerCanvas() {
     };
   }, [clearTrace, ctx, traceResult]);
 
-  const rendererRef = usePixiRenderer(canvasRef, {
+  const { rendererRef, initError } = usePixiRenderer(canvasRef, {
     onNodeClick: handleNodeClick,
     onNodeRightClick: handleNodeRightClick,
     onPaneClick: handlePaneClick,
@@ -157,8 +162,13 @@ export function PixiExplorerCanvas() {
             aria-label="Clear trace"
             className="explorer-trace-close"
           >
-            x
+            ✕
           </button>
+        </div>
+      ) : null}
+      {initError ? (
+        <div className="explorer-canvas-error" role="alert">
+          {initError}
         </div>
       ) : null}
       <canvas

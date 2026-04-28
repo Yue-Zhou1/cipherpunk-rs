@@ -122,53 +122,106 @@ export function ExplorerProvider({
         ? "highlight"
         : "focus";
 
-  const value: ExplorerContextValue = {
-    sessionId,
-    graph,
-    stateKind,
-    nodeMap,
-    isLoading,
-    loadingClusters,
-    loadedClusters,
-    clusterErrors,
-    error,
-    isStale,
-    expandCluster,
-    reload,
-    graphDepth,
-    hasLoadedOverview,
-    focusedNodeId: focus.focusedNodeId,
-    upstreamIds: focus.upstreamIds,
-    downstreamIds: focus.downstreamIds,
-    totalUpstreamCount: focus.totalUpstreamCount,
-    totalDownstreamCount: focus.totalDownstreamCount,
-    focusNode: (nodeId) => {
+  const focusNode = useCallback(
+    (nodeId: string) => {
       trace.clearHighlight();
       focus.focusNode(nodeId);
     },
-    clearFocus: () => {
+    [focus.focusNode, trace.clearHighlight]
+  );
+
+  const clearFocus = useCallback(
+    () => {
       trace.clearHighlight();
       focus.clearFocus();
     },
-    neighborhoodResult: trace.neighborhoodResult,
-    showCallers: trace.showCallers,
-    showCallees: trace.showCallees,
-    clearHighlight: trace.clearHighlight,
-    depth,
-    setDepth,
-    granularity: adaptive.granularity,
-    setGranularity: adaptive.setGranularity,
-    resolvedGranularity: adaptive.resolvedGranularity,
-    thresholds: adaptive.thresholds,
-    setThresholds: adaptive.setThresholds,
-    searchQuery,
-    setSearchQuery,
-    matchingNodeIds,
-    searchHint,
-    expandedClusters,
-    toggleCluster,
-    onNavigateToSource,
-  };
+    [focus.clearFocus, trace.clearHighlight]
+  );
+
+  const value: ExplorerContextValue = useMemo(
+    () => ({
+      sessionId,
+      graph,
+      stateKind,
+      nodeMap,
+      isLoading,
+      loadingClusters,
+      loadedClusters,
+      clusterErrors,
+      error,
+      isStale,
+      expandCluster,
+      reload,
+      graphDepth,
+      hasLoadedOverview,
+      focusedNodeId: focus.focusedNodeId,
+      upstreamIds: focus.upstreamIds,
+      downstreamIds: focus.downstreamIds,
+      totalUpstreamCount: focus.totalUpstreamCount,
+      totalDownstreamCount: focus.totalDownstreamCount,
+      focusNode,
+      clearFocus,
+      neighborhoodResult: trace.neighborhoodResult,
+      showCallers: trace.showCallers,
+      showCallees: trace.showCallees,
+      clearHighlight: trace.clearHighlight,
+      depth,
+      setDepth,
+      granularity: adaptive.granularity,
+      setGranularity: adaptive.setGranularity,
+      resolvedGranularity: adaptive.resolvedGranularity,
+      thresholds: adaptive.thresholds,
+      setThresholds: adaptive.setThresholds,
+      searchQuery,
+      setSearchQuery,
+      matchingNodeIds,
+      searchHint,
+      expandedClusters,
+      toggleCluster,
+      onNavigateToSource,
+    }),
+    [
+      sessionId,
+      graph,
+      stateKind,
+      nodeMap,
+      isLoading,
+      loadingClusters,
+      loadedClusters,
+      clusterErrors,
+      error,
+      isStale,
+      expandCluster,
+      reload,
+      graphDepth,
+      hasLoadedOverview,
+      focus.focusedNodeId,
+      focus.upstreamIds,
+      focus.downstreamIds,
+      focus.totalUpstreamCount,
+      focus.totalDownstreamCount,
+      focusNode,
+      clearFocus,
+      trace.neighborhoodResult,
+      trace.showCallers,
+      trace.showCallees,
+      trace.clearHighlight,
+      depth,
+      setDepth,
+      adaptive.granularity,
+      adaptive.setGranularity,
+      adaptive.resolvedGranularity,
+      adaptive.thresholds,
+      adaptive.setThresholds,
+      searchQuery,
+      setSearchQuery,
+      matchingNodeIds,
+      searchHint,
+      expandedClusters,
+      toggleCluster,
+      onNavigateToSource,
+    ]
+  );
 
   return <ExplorerCtx.Provider value={value}>{children}</ExplorerCtx.Provider>;
 }

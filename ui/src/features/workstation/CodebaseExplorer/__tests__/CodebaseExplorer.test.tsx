@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockLoadExplorerGraph = vi.fn();
+const mockRendererInit = vi.fn();
 let pixiRendererInstance: {
   canvas: HTMLCanvasElement;
   onNodeClick: (id: string) => void;
@@ -42,7 +43,7 @@ vi.mock("../pixi/PixiRenderer", () => ({
       onPaneClick: options.onPaneClick as () => void,
     };
     return {
-      init: vi.fn().mockResolvedValue(undefined),
+      init: (...args: unknown[]) => mockRendererInit(...args),
       destroy: vi.fn(),
       resize: vi.fn(),
       updateGraph: vi.fn(),
@@ -178,10 +179,22 @@ const MOCK_CLUSTER_RESPONSE = {
   ],
 };
 
+const MOCK_SECOND_SESSION_OVERVIEW = {
+  sessionId: "next-session",
+  nodes: [
+    { id: "crt_next", label: "next-crate", kind: "crate", childCount: 1 },
+    { id: "fil_next", label: "main.rs", kind: "file", filePath: "next/src/main.rs" },
+  ],
+  edges: [{ from: "crt_next", to: "fil_next", relation: "contains" }],
+};
+
 describe("CodebaseExplorer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     pixiRendererInstance = null;
+    mockRendererInit.mockReset();
+    mockRendererInit.mockResolvedValue(undefined);
+    mockLoadExplorerGraph.mockReset();
     mockLoadExplorerGraph.mockImplementation(
       (_sessionId: string, _depth?: "overview" | "full", cluster?: string) =>
         Promise.resolve(cluster ? MOCK_CLUSTER_RESPONSE : MOCK_OVERVIEW_RESPONSE)
@@ -218,13 +231,34 @@ describe("CodebaseExplorer", () => {
     expect(screen.getByText("Retry")).toBeInTheDocument();
   });
 
+  it("shows a canvas error banner when Pixi init fails", async () => {
+    mockRendererInit.mockReset();
+    mockRendererInit.mockRejectedValue(new Error("WebGL unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      render(<CodebaseExplorer sessionId="test-session" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Failed to initialize WebGL renderer: WebGL unavailable"
+        );
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("renders canvas after overview loads", async () => {
     render(<CodebaseExplorer sessionId="test-session" />);
 
     await waitFor(() => {
       expect(mockLoadExplorerGraph).toHaveBeenCalledWith("test-session", "overview");
     });
-    expect(screen.getByLabelText("Codebase graph")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Codebase graph")).toBeInTheDocument();
+    });
     expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
   });
 
@@ -266,6 +300,63 @@ describe("CodebaseExplorer", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/attack path:/i)).toBeInTheDocument();
+    });
+  });
+
+  it("Esc clears an active trace banner", async () => {
+    render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    simulateNodeRightClick("sym_005", 320, 260);
+
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: /trace to entry/i,
+      })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/attack path:/i)).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/attack path:/i)).toBeNull();
+    });
+  });
+
+  it("clears active trace state when session changes", async () => {
+    mockLoadExplorerGraph.mockImplementation(
+      (sessionId: string, _depth?: "overview" | "full", cluster?: string) => {
+        if (sessionId === "next-session") {
+          return Promise.resolve(MOCK_SECOND_SESSION_OVERVIEW);
+        }
+        return Promise.resolve(cluster ? MOCK_CLUSTER_RESPONSE : MOCK_OVERVIEW_RESPONSE);
+      }
+    );
+
+    const { rerender } = render(<CodebaseExplorer sessionId="test-session" />);
+
+    await expandToSymbolLevel();
+    simulateNodeRightClick("sym_005", 320, 260);
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: /trace to entry/i,
+      })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/attack path:/i)).toBeInTheDocument();
+    });
+
+    rerender(<CodebaseExplorer sessionId="next-session" />);
+
+    await waitFor(() => {
+      expect(mockLoadExplorerGraph).toHaveBeenCalledWith("next-session", "overview");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/attack path:/i)).toBeNull();
     });
   });
 

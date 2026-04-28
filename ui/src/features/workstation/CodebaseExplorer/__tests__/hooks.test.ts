@@ -362,6 +362,34 @@ describe("useFocusContext", () => {
     expect(result.current.totalUpstreamCount).toBe(2);
     expect(result.current.totalDownstreamCount).toBe(1);
   });
+
+  it("clears focus when the focused node no longer exists in the graph", () => {
+    const graphA: ExplorerGraph = {
+      nodes: [
+        { id: "sym_1", label: "a", kind: "function" },
+        { id: "sym_2", label: "b", kind: "function" },
+      ],
+      edges: [{ from: "sym_1", to: "sym_2", relation: "calls" }],
+    };
+    const graphB: ExplorerGraph = {
+      nodes: [{ id: "other", label: "other", kind: "function" }],
+      edges: [],
+    };
+
+    const { result, rerender } = renderHook(
+      ({ graph }) => useFocusContext(graph, 2),
+      { initialProps: { graph: graphA } }
+    );
+
+    act(() => result.current.focusNode("sym_1"));
+    expect(result.current.focusedNodeId).toBe("sym_1");
+    expect(result.current.stateKind).toBe("focus");
+
+    rerender({ graph: graphB });
+
+    expect(result.current.focusedNodeId).toBeNull();
+    expect(result.current.stateKind).toBe("overview");
+  });
 });
 
 describe("useTrace", () => {

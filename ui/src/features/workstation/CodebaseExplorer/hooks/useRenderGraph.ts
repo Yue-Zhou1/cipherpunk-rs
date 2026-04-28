@@ -55,6 +55,9 @@ function relationColor(relation: ExplorerEdgeRelation): number {
   if (relation === "calls") {
     return 0x4a90d9;
   }
+  if (relation === "invokes_macro") {
+    return 0xfb923c;
+  }
   if (relation === "parameter_flow") {
     return 0xa78bfa;
   }
@@ -83,24 +86,34 @@ export function useRenderGraph(
   positions: PositionMap,
   traceResult: TraceResult | null = null
 ): RenderGraph {
+  const {
+    graph,
+    focusedNodeId,
+    upstreamIds,
+    downstreamIds,
+    stateKind,
+    neighborhoodResult,
+    matchingNodeIds,
+  } = ctx;
+
   return useMemo(() => {
     const tracedNodeIds = new Set(traceResult?.pathNodeIds ?? []);
-    const nodes: RenderNode[] = ctx.graph.nodes.map((node) => {
+    const nodes: RenderNode[] = graph.nodes.map((node) => {
       const pos = positions.get(node.id) ?? { x: 0, y: 0 };
       const dims = nodeDims(node);
-      const isFocused = ctx.focusedNodeId === node.id;
-      const isEgoUpstream = ctx.upstreamIds.has(node.id);
-      const isEgoDownstream = ctx.downstreamIds.has(node.id);
+      const isFocused = focusedNodeId === node.id;
+      const isEgoUpstream = upstreamIds.has(node.id);
+      const isEgoDownstream = downstreamIds.has(node.id);
 
       let opacity = 1;
-      if (ctx.stateKind === "focus") {
+      if (stateKind === "focus") {
         const inEgo = isFocused || isEgoUpstream || isEgoDownstream;
         opacity = inEgo ? 1 : 0.08;
-      } else if (ctx.stateKind === "highlight" && ctx.neighborhoodResult) {
-        opacity = ctx.neighborhoodResult.highlightedIds.has(node.id) ? 1 : 0.08;
+      } else if (stateKind === "highlight" && neighborhoodResult) {
+        opacity = neighborhoodResult.highlightedIds.has(node.id) ? 1 : 0.08;
       }
 
-      if (ctx.matchingNodeIds && !ctx.matchingNodeIds.has(node.id)) {
+      if (matchingNodeIds && !matchingNodeIds.has(node.id)) {
         opacity = Math.min(opacity, 0.1);
       }
 
@@ -148,7 +161,7 @@ export function useRenderGraph(
       };
     });
 
-    const edges: RenderEdge[] = ctx.graph.edges
+    const edges: RenderEdge[] = graph.edges
       .filter((edge) => edge.relation !== "contains")
       .map((edge) => {
         const id = `${edge.from}::${edge.to}::${edge.relation}`;
@@ -183,5 +196,15 @@ export function useRenderGraph(
       });
 
     return { nodes, edges };
-  }, [ctx, positions, traceResult]);
+  }, [
+    graph,
+    focusedNodeId,
+    upstreamIds,
+    downstreamIds,
+    stateKind,
+    neighborhoodResult,
+    matchingNodeIds,
+    positions,
+    traceResult,
+  ]);
 }

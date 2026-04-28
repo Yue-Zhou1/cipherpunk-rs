@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ExplorerGraph, ExplorerStateKind } from "../types";
 
@@ -24,6 +24,16 @@ function bfsNeighbors(startId: string, adjacency: Map<string, string[]>, maxDept
 
 export function useFocusContext(graph: ExplorerGraph, depth: number) {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!focusedNodeId) {
+      return;
+    }
+    const stillExists = graph.nodes.some((node) => node.id === focusedNodeId);
+    if (!stillExists) {
+      setFocusedNodeId(null);
+    }
+  }, [focusedNodeId, graph.nodes]);
 
   const { upstreamAdjacency, downstreamAdjacency } = useMemo(() => {
     const upstream = new Map<string, string[]>();

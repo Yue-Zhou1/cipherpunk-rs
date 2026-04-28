@@ -83,7 +83,18 @@ export function useTraceAlgorithm(
     (nodeId: string) => {
       const { path, found } = findPathToEntry(nodeId, graph);
 
-      if (!found || path.length <= 1) {
+      if (found && path.length === 1 && path[0] === nodeId) {
+        const label = nodeMap.get(nodeId)?.label ?? nodeId;
+        setTraceResult({
+          kind: "attack_path",
+          pathNodeIds: path,
+          pathEdgeIds: new Set<string>(),
+          banner: `${label} is already an entry point.`,
+        });
+        return;
+      }
+
+      if (!found) {
         setTraceResult({
           kind: "attack_path",
           pathNodeIds: path,
@@ -104,7 +115,7 @@ export function useTraceAlgorithm(
         kind: "attack_path",
         pathNodeIds: path,
         pathEdgeIds,
-        banner: `Attack path: ${labels.join(" -> ")} (${path.length - 1} hops)`,
+        banner: `Attack path: ${labels.join(" → ")} (${path.length - 1} hops)`,
       });
     },
     [graph, nodeMap]

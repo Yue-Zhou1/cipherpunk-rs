@@ -456,7 +456,7 @@ export async function loadExplorerGraph(
   depth?: "overview" | "full",
   cluster?: string
 ): Promise<ExplorerGraphResponse> {
-  const timeoutMs = cluster ? 5_000 : depth === "full" ? 15_000 : 3_000;
+  const timeoutMs = cluster ? 20_000 : depth === "full" ? 20_000 : 20_000;
   const result = tauriInvoke<ExplorerGraphResponse>("load_explorer_graph", {
     session_id: sessionId,
     depth,

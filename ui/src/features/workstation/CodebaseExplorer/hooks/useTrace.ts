@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { ExplorerEdge, ExplorerGraph, NeighborhoodResult } from "../types";
 
@@ -44,6 +44,12 @@ function bfsNeighborhood(startId: string, adjacency: Map<string, string[]>): Set
 
 export function useTrace(graph: ExplorerGraph, focusedNodeId: string | null) {
   const [neighborhoodResult, setNeighborhoodResult] = useState<NeighborhoodResult | null>(null);
+
+  useEffect(() => {
+    if (!focusedNodeId) {
+      setNeighborhoodResult(null);
+    }
+  }, [focusedNodeId]);
 
   const showCallers = useCallback(() => {
     if (!focusedNodeId) {

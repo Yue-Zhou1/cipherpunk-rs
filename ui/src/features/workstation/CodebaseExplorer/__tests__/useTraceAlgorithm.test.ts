@@ -40,17 +40,41 @@ describe("useTraceAlgorithm - traceToEntryPoint", () => {
     expect(result.current.traceResult?.banner).toContain("2 hops");
   });
 
-  it("returns no-entry-found message for isolated node", () => {
-    const isolatedGraph: ExplorerGraph = {
-      nodes: [{ id: "iso", label: "iso", kind: "function" }],
+  it("returns already-entry-point message for node without callers", () => {
+    const entryGraph: ExplorerGraph = {
+      nodes: [{ id: "entry", label: "entry_fn", kind: "function" }],
       edges: [],
     };
-    const isolatedNodeMap = new Map([["iso", { label: "iso" }]]);
+    const entryNodeMap = new Map([["entry", { label: "entry_fn" }]]);
     const { result } = renderHook(() =>
-      useTraceAlgorithm(isolatedGraph, isolatedNodeMap)
+      useTraceAlgorithm(entryGraph, entryNodeMap)
     );
 
-    act(() => result.current.traceToEntryPoint("iso"));
+    act(() => result.current.traceToEntryPoint("entry"));
+
+    expect(result.current.traceResult?.banner).toContain("already an entry point");
+  });
+
+  it("returns no-entry-found message for cycle with no entry node", () => {
+    const cyclicGraph: ExplorerGraph = {
+      nodes: [
+        { id: "a", label: "a", kind: "function" },
+        { id: "b", label: "b", kind: "function" },
+      ],
+      edges: [
+        { from: "a", to: "b", relation: "calls" },
+        { from: "b", to: "a", relation: "calls" },
+      ],
+    };
+    const cyclicNodeMap = new Map([
+      ["a", { label: "a" }],
+      ["b", { label: "b" }],
+    ]);
+    const { result } = renderHook(() =>
+      useTraceAlgorithm(cyclicGraph, cyclicNodeMap)
+    );
+
+    act(() => result.current.traceToEntryPoint("a"));
 
     expect(result.current.traceResult?.banner).toContain("No entry point found");
   });

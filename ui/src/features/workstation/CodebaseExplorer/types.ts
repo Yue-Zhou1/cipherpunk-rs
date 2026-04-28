@@ -30,6 +30,7 @@ export type ExplorerNode = {
 export type ExplorerEdgeRelation =
   | "calls"
   | "contains"
+  | "invokes_macro"
   | "parameter_flow"
   | "return_flow"
   | "cfg";
